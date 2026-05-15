@@ -5,6 +5,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
+    "ignore": "latest",
     "tree-sitter-go": "latest",
     "tree-sitter-python": "latest",
     "tree-sitter-rust": "latest",
