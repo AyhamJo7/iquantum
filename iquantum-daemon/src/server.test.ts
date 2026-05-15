@@ -6,6 +6,9 @@ import {
 } from "./server";
 import { SessionNotFoundError } from "./session-controller";
 
+const SESSION_ID = "00000000-0000-0000-0000-000000000001";
+const MISSING_SESSION_ID = "00000000-0000-0000-0000-000000000099";
+
 describe("daemon request handler", () => {
   it("serves the session, task, and approval flow", async () => {
     const { sessions, calls } = fakeSessions();
@@ -19,21 +22,21 @@ describe("daemon request handler", () => {
       method: "POST",
       body: { repoPath: "/repo" },
     });
-    const task = await request(handler, "/sessions/session-1/task", {
+    const task = await request(handler, `/sessions/${SESSION_ID}/task`, {
       method: "POST",
       body: { prompt: "add auth" },
     });
-    const plan = await request(handler, "/sessions/session-1/plan");
-    const approved = await request(handler, "/sessions/session-1/approve", {
+    const plan = await request(handler, `/sessions/${SESSION_ID}/plan`);
+    const approved = await request(handler, `/sessions/${SESSION_ID}/approve`, {
       method: "POST",
     });
-    const rejected = await request(handler, "/sessions/session-1/reject", {
+    const rejected = await request(handler, `/sessions/${SESSION_ID}/reject`, {
       method: "POST",
       body: { feedback: "split it" },
     });
 
     expect(created?.status).toBe(201);
-    expect(await created?.json()).toMatchObject({ id: "session-1" });
+    expect(await created?.json()).toMatchObject({ id: SESSION_ID });
     expect(task?.status).toBe(202);
     expect(await task?.json()).toMatchObject({ id: "plan-1" });
     expect(await plan?.json()).toMatchObject({ id: "plan-1" });
@@ -41,10 +44,10 @@ describe("daemon request handler", () => {
     expect(await rejected?.json()).toMatchObject({ id: "plan-2" });
     expect(calls).toEqual([
       ["createSession", "/repo"],
-      ["startTask", "session-1", "add auth"],
-      ["currentPlan", "session-1"],
-      ["approve", "session-1", undefined],
-      ["reject", "session-1", "split it", undefined],
+      ["startTask", SESSION_ID, "add auth"],
+      ["currentPlan", SESSION_ID],
+      ["approve", SESSION_ID, undefined],
+      ["reject", SESSION_ID, "split it", undefined],
     ]);
   });
 
@@ -60,7 +63,7 @@ describe("daemon request handler", () => {
       method: "POST",
       body: {},
     });
-    const missing = await request(handler, "/sessions/missing");
+    const missing = await request(handler, `/sessions/${MISSING_SESSION_ID}`);
 
     expect(invalid?.status).toBe(400);
     expect(await invalid?.json()).toMatchObject({ error: "invalid_request" });
@@ -73,7 +76,7 @@ function fakeSessions(): { sessions: DaemonSessions; calls: unknown[][] } {
   const calls: unknown[][] = [];
   const plan = {
     id: "plan-1",
-    sessionId: "session-1",
+    sessionId: SESSION_ID,
     content: "plan",
     status: "pending",
   };
@@ -83,10 +86,10 @@ function fakeSessions(): { sessions: DaemonSessions; calls: unknown[][] } {
     sessions: {
       async createSession(repoPath) {
         calls.push(["createSession", repoPath]);
-        return { id: "session-1", repoPath, status: "idle" };
+        return { id: SESSION_ID, repoPath, status: "idle" };
       },
       async getSession(sessionId) {
-        if (sessionId === "missing") {
+        if (sessionId === MISSING_SESSION_ID) {
           throw new SessionNotFoundError(sessionId);
         }
 
