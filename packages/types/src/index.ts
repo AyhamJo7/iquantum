@@ -84,9 +84,15 @@ export interface LLMMessage {
 export interface LLMProvider {
   complete(
     messages: LLMMessage[],
-    options: Record<string, unknown>,
+    options: LLMCompletionOptions,
   ): AsyncIterable<string>;
-  countTokens(messages: LLMMessage[]): number;
+  countTokens(messages: LLMMessage[], model: string): Promise<number>;
+}
+
+export interface LLMCompletionOptions {
+  model: string;
+  maxTokens: number;
+  temperature?: number;
 }
 
 export interface IMcpClient {
