@@ -48,7 +48,7 @@ describe("loadTestCommand", () => {
       JSON.stringify({ scripts: { test: "bun test" } }),
     );
 
-    await expect(loadTestCommand(repoPath)).resolves.toBe("bun test");
+    await expect(loadTestCommand(repoPath)).resolves.toBe("bun run test");
   });
 });
 

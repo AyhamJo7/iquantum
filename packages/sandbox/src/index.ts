@@ -237,7 +237,8 @@ export async function loadTestCommand(
     isStringRecord(packageJson.scripts) &&
     typeof packageJson.scripts.test === "string"
   ) {
-    return packageJson.scripts.test;
+    // Run through bun so the sandbox's node_modules/.bin is on PATH.
+    return "bun run test";
   }
 
   return undefined;
