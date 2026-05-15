@@ -1,0 +1,16 @@
+{
+  "name": "@iquantum/sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "dockerode": "latest"
+  },
+  "devDependencies": {
+    "@types/dockerode": "latest"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}
