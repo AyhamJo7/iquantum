@@ -329,7 +329,7 @@ export class PIVEngine {
       {
         role: "system",
         content:
-          "Write a concise implementation plan. Do not emit code or diffs yet.",
+          "Write a concise implementation plan. Do not emit code or diffs yet. If the task produces an analysis or text output (e.g. summarize, explain, list), plan to write that output to a new file so it can be delivered as a file change.",
       },
       { role: "user", content: userContent },
     ];
@@ -343,7 +343,7 @@ export class PIVEngine {
       {
         role: "system",
         content:
-          "Implement the approved plan. Return only a unified diff suitable for patch application.",
+          "Implement the approved plan. Return ONLY a unified diff (--- a/... +++ b/... format) suitable for patch application. If the task produces text output rather than code changes, write the output to a new file (e.g. SUMMARY.md) and include that file in the diff. Never return prose outside the diff.",
       },
       {
         role: "user",
