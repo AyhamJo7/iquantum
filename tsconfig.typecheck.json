@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "packages/**/*.ts",
+    "iquantum-daemon/**/*.ts",
+    "iquantum-cli/**/*.ts",
+    "vitest.config.ts"
+  ]
+}
