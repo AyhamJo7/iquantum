@@ -1,0 +1,17 @@
+{
+  "name": "@iquantum/repo-map",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "tree-sitter-go": "latest",
+    "tree-sitter-python": "latest",
+    "tree-sitter-rust": "latest",
+    "tree-sitter-typescript": "latest",
+    "web-tree-sitter": "latest"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}
