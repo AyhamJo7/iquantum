@@ -20,7 +20,8 @@
       "@iquantum/types": ["packages/types/src/index.ts"],
       "@iquantum/config": ["packages/config/src/index.ts"],
       "@iquantum/repo-map": ["packages/repo-map/src/index.ts"],
-      "@iquantum/sandbox": ["packages/sandbox/src/index.ts"]
+      "@iquantum/sandbox": ["packages/sandbox/src/index.ts"],
+      "@iquantum/llm": ["packages/llm/src/index.ts"]
     }
   }
 }

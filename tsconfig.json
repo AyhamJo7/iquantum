@@ -5,6 +5,7 @@
     { "path": "./packages/config" },
     { "path": "./packages/repo-map" },
     { "path": "./packages/sandbox" },
+    { "path": "./packages/llm" },
     { "path": "./iquantum-daemon" },
     { "path": "./iquantum-cli" }
   ]
