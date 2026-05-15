@@ -45,9 +45,7 @@ function isValidSessionId(id: string): boolean {
   return SESSION_ID_RE.test(id);
 }
 
-export function createDaemonServer(
-  options: DaemonServerOptions,
-): Bun.Server<undefined> {
+export function createDaemonServer(options: DaemonServerOptions) {
   return Bun.serve({
     unix: options.socketPath,
     fetch: createRequestHandler(options),
@@ -103,6 +101,7 @@ export function createRequestHandler(options: DaemonServerOptions) {
         const encoder = new TextEncoder();
         let detach: (() => void) | undefined;
 
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
         const readable = new ReadableStream<Uint8Array>({
           start(controller) {
             const socket: StreamSocket = {
@@ -114,6 +113,7 @@ export function createRequestHandler(options: DaemonServerOptions) {
                 }
               },
               close() {
+                clearInterval(heartbeat);
                 try {
                   controller.close();
                 } catch {
@@ -127,9 +127,19 @@ export function createRequestHandler(options: DaemonServerOptions) {
             } catch (error) {
               socket.send(JSON.stringify(toErrorFrame(error)));
               controller.close();
+              return;
             }
+
+            heartbeat = setInterval(() => {
+              try {
+                controller.enqueue(encoder.encode(": keepalive\n\n"));
+              } catch {
+                clearInterval(heartbeat);
+              }
+            }, 5000);
           },
           cancel() {
+            clearInterval(heartbeat);
             detach?.();
           },
         });
