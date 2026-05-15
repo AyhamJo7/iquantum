@@ -41,7 +41,7 @@ export class SandboxManager {
 
   constructor(options: SandboxManagerOptions = {}) {
     this.#docker = options.docker ?? new Docker();
-    this.#image = options.image ?? "oven/bun:1.3.14-alpine";
+    this.#image = options.image ?? "iquantum/sandbox:latest";
     this.#seedImage = options.seedImage ?? "alpine:3.20";
   }
 
