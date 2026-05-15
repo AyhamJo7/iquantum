@@ -18,7 +18,8 @@
     "ignoreDeprecations": "6.0",
     "paths": {
       "@iquantum/types": ["packages/types/src/index.ts"],
-      "@iquantum/config": ["packages/config/src/index.ts"]
+      "@iquantum/config": ["packages/config/src/index.ts"],
+      "@iquantum/repo-map": ["packages/repo-map/src/index.ts"]
     }
   }
 }
