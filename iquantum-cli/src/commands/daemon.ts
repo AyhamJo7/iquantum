@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { access, mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DaemonClient } from "../client";
@@ -46,7 +46,20 @@ export async function startDaemon(
   await mkdir(stateDir, { recursive: true });
   const log = logPath(options.socketPath);
   const logFd = await open(log, "a");
-  const proc = spawn(process.execPath, ["run", entry], {
+
+  // Auto-load .env from the repo root (2 levels up from iquantum-daemon/src/).
+  // This lets users run `iq daemon start` without manually exporting env vars.
+  const envFile = resolve(dirname(entry), "../../.env");
+  const runArgs = ["run"];
+  try {
+    await access(envFile);
+    runArgs.push("--env-file", envFile);
+  } catch {
+    // No .env found — rely on already-exported env vars.
+  }
+  runArgs.push(entry);
+
+  const proc = spawn(process.execPath, runArgs, {
     detached: true,
     stdio: ["ignore", logFd.fd, logFd.fd],
     env: process.env,
