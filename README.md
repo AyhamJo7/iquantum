@@ -11,7 +11,7 @@
     <img src="https://github.com/AyhamJo7/iquantum/actions/workflows/ci.yml/badge.svg" alt="CI" />
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" />
+    <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0" />
   </a>
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white" alt="TypeScript" />
   <a href="https://bun.sh">
@@ -307,4 +307,4 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ## License
 
-[MIT](LICENSE) © [Ayham Joumran](https://github.com/AyhamJo7)
+[Apache 2.0](LICENSE) © [Ayham Joumran](https://github.com/AyhamJo7)
