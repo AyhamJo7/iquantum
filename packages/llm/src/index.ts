@@ -58,13 +58,18 @@ export class TokenBudgetExceededError extends Error {
   }
 }
 
+const LLM_REQUEST_TIMEOUT_MS = 120_000;
+
 export class AnthropicProvider implements LLMProvider {
   readonly #client: AnthropicClient;
 
   constructor(options: AnthropicProviderOptions = {}) {
     this.#client =
       options.client ??
-      (new Anthropic({ apiKey: options.apiKey }) satisfies AnthropicClient);
+      (new Anthropic({
+        apiKey: options.apiKey,
+        timeout: LLM_REQUEST_TIMEOUT_MS,
+      }) satisfies AnthropicClient);
   }
 
   async *complete(

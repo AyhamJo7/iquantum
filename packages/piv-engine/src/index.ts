@@ -47,6 +47,7 @@ export interface PIVEngineOptions {
   maxRetries?: number;
   maxPlanTokens?: number;
   maxImplementTokens?: number;
+  testTimeoutMs?: number;
   now?: () => string;
   createId?: () => string;
 }
@@ -98,6 +99,7 @@ export class PIVEngine {
   readonly #maxRetries: number;
   readonly #maxPlanTokens: number;
   readonly #maxImplementTokens: number;
+  readonly #testTimeoutMs: number;
   readonly #now: () => string;
   readonly #createId: () => string;
   #status: SessionStatus = "idle";
@@ -120,6 +122,7 @@ export class PIVEngine {
     this.#maxRetries = options.maxRetries ?? 3;
     this.#maxPlanTokens = options.maxPlanTokens ?? 1200;
     this.#maxImplementTokens = options.maxImplementTokens ?? 2000;
+    this.#testTimeoutMs = options.testTimeoutMs ?? 120_000;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#createId = options.createId ?? (() => crypto.randomUUID());
     // Node treats an unhandled "error" event as a thrown exception. The engine
@@ -245,9 +248,17 @@ export class PIVEngine {
 
   async #validate(): Promise<boolean> {
     await this.#transition("validating");
-    const result = await collectExec(
-      await this.#sandbox.exec(this.#sessionId, this.#testCommand),
-    );
+    const timeoutMs = this.#testTimeoutMs;
+    const result = await Promise.race([
+      this.#sandbox.exec(this.#sessionId, this.#testCommand).then(collectExec),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(new Error(`test command timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        ),
+      ),
+    ]);
     this.#validateAttempt += 1;
 
     const run: ValidateRun = {
