@@ -1,0 +1,14 @@
+```diff
+diff --git a/src/greeter.ts b/src/greeter.ts
+--- a/src/greeter.ts
++++ b/src/greeter.ts
+@@ -5,6 +5,7 @@ export interface Greeter {
+ 
+ export class FriendlyGreeter implements Greeter {
+   greet(name: string): string {
+-    return `Hello, ${name}`;
++    const trimmedName = name.trim();
++    return `Hello, ${trimmedName}`;
+   }
+ }
+```
