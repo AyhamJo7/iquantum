@@ -46,7 +46,7 @@ export async function startDaemon(
   await mkdir(stateDir, { recursive: true });
   const log = logPath(options.socketPath);
   const logFd = await open(log, "a");
-  const proc = spawn("bun", ["run", entry], {
+  const proc = spawn(process.execPath, ["run", entry], {
     detached: true,
     stdio: ["ignore", logFd.fd, logFd.fd],
     env: process.env,
