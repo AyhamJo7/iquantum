@@ -214,7 +214,7 @@ function createHarness(options: HarnessOptions) {
 
   const writer = {
     write: (chunk: string) => output.push(chunk),
-    writeln: (line: string) => output.push(line + "\n"),
+    writeln: (line: string) => output.push(`${line}\n`),
   };
 
   return { calls, client, output, prompt, writer };

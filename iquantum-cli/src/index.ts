@@ -12,7 +12,7 @@ const socketPath = process.env.IQUANTUM_SOCKET ?? DEFAULT_SOCKET;
 
 const stdoutWriter = {
   write: (chunk: string) => process.stdout.write(chunk),
-  writeln: (line: string) => process.stdout.write(line + "\n"),
+  writeln: (line: string) => process.stdout.write(`${line}\n`),
 };
 
 async function readlinePrompt(question: string): Promise<string> {
@@ -49,7 +49,7 @@ program
       );
     } catch (error) {
       process.stderr.write(
-        (error instanceof Error ? error.message : String(error)) + "\n",
+        `${error instanceof Error ? error.message : String(error)}\n`,
       );
       process.exit(1);
     }
