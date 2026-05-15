@@ -22,7 +22,9 @@
       "@iquantum/repo-map": ["packages/repo-map/src/index.ts"],
       "@iquantum/sandbox": ["packages/sandbox/src/index.ts"],
       "@iquantum/llm": ["packages/llm/src/index.ts"],
-      "@iquantum/diff-engine": ["packages/diff-engine/src/index.ts"]
+      "@iquantum/diff-engine": ["packages/diff-engine/src/index.ts"],
+      "@iquantum/git": ["packages/git/src/index.ts"],
+      "@iquantum/piv-engine": ["packages/piv-engine/src/index.ts"]
     }
   }
 }

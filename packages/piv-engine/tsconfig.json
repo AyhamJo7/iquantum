@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../types" },
+    { "path": "../repo-map" },
+    { "path": "../sandbox" },
+    { "path": "../llm" },
+    { "path": "../diff-engine" },
+    { "path": "../git" }
+  ]
+}
