@@ -6,6 +6,7 @@
     { "path": "./packages/repo-map" },
     { "path": "./packages/sandbox" },
     { "path": "./packages/llm" },
+    { "path": "./packages/diff-engine" },
     { "path": "./iquantum-daemon" },
     { "path": "./iquantum-cli" }
   ]

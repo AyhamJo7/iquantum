@@ -33,6 +33,13 @@
         "@iquantum/types": "workspace:*",
       },
     },
+    "packages/diff-engine": {
+      "name": "@iquantum/diff-engine",
+      "version": "0.0.0",
+      "dependencies": {
+        "@iquantum/sandbox": "workspace:*",
+      },
+    },
     "packages/llm": {
       "name": "@iquantum/llm",
       "version": "0.0.0",
@@ -109,6 +116,8 @@
     "@iquantum/config": ["@iquantum/config@workspace:packages/config"],
 
     "@iquantum/daemon": ["@iquantum/daemon@workspace:iquantum-daemon"],
+
+    "@iquantum/diff-engine": ["@iquantum/diff-engine@workspace:packages/diff-engine"],
 
     "@iquantum/llm": ["@iquantum/llm@workspace:packages/llm"],
 
