@@ -16,6 +16,7 @@ export interface OpenAICompatibleProviderOptions {
   client?: OpenAIClient;
   apiKey?: string;
   baseURL?: string;
+  timeoutMs?: number;
   maxRetries?: number;
   baseDelayMs?: number;
   sleep?: (delayMs: number) => Promise<void>;
@@ -123,6 +124,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       new OpenAI({
         apiKey: options.apiKey,
         baseURL: options.baseURL,
+        timeout: options.timeoutMs ?? LLM_REQUEST_TIMEOUT_MS,
       });
     this.#maxRetries = options.maxRetries ?? 3;
     this.#baseDelayMs = options.baseDelayMs ?? 250;

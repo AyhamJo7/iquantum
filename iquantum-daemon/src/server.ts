@@ -40,6 +40,8 @@ const rejectSchema = z.object({ feedback: z.string().min(1) });
 
 const SESSION_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PLAN_ID_RE = SESSION_ID_RE;
+const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
 
 function isValidSessionId(id: string): boolean {
   return SESSION_ID_RE.test(id);
@@ -54,6 +56,9 @@ export function createDaemonServer(options: DaemonServerOptions) {
 
 export function createRequestHandler(options: DaemonServerOptions) {
   return async (request: Request): Promise<Response> => {
+    const requestId =
+      request.headers.get("x-request-id") ?? crypto.randomUUID();
+
     try {
       const url = new URL(request.url);
       const parts = url.pathname.split("/").filter(Boolean);
@@ -188,7 +193,13 @@ export function createRequestHandler(options: DaemonServerOptions) {
         parts[2] === "plans" &&
         parts[4] === "approve"
       ) {
-        await options.sessions.approve(sessionId, parts[3]);
+        const planId = parts[3];
+
+        if (!planId || !PLAN_ID_RE.test(planId)) {
+          return notFound();
+        }
+
+        await options.sessions.approve(sessionId, planId);
         return Response.json({ ok: true });
       }
 
@@ -208,11 +219,17 @@ export function createRequestHandler(options: DaemonServerOptions) {
         parts[2] === "plans" &&
         parts[4] === "reject"
       ) {
+        const planId = parts[3];
+
+        if (!planId || !PLAN_ID_RE.test(planId)) {
+          return notFound();
+        }
+
         const body = rejectSchema.parse(await request.json());
         const plan = await options.sessions.reject(
           sessionId,
           body.feedback,
-          parts[3],
+          planId,
         );
         return Response.json(plan);
       }
@@ -231,13 +248,19 @@ export function createRequestHandler(options: DaemonServerOptions) {
         parts[2] === "checkpoints" &&
         parts[4] === "restore"
       ) {
-        await options.sessions.restore(sessionId, parts[3] ?? "");
+        const hash = parts[3];
+
+        if (!hash || !COMMIT_HASH_RE.test(hash)) {
+          return notFound();
+        }
+
+        await options.sessions.restore(sessionId, hash);
         return Response.json({ ok: true });
       }
 
       return notFound();
     } catch (error) {
-      return toErrorResponse(error);
+      return toErrorResponse(error, requestId);
     }
   };
 }
@@ -246,7 +269,7 @@ function notFound(): Response {
   return Response.json({ error: "not_found" }, { status: 404 });
 }
 
-function toErrorResponse(error: unknown): Response {
+function toErrorResponse(error: unknown, requestId: string): Response {
   if (error instanceof ZodError) {
     return Response.json(
       { error: "invalid_request", issues: error.issues },
@@ -267,6 +290,7 @@ function toErrorResponse(error: unknown): Response {
 
   logger.error({
     msg: "unhandled request error",
+    requestId,
     error: error instanceof Error ? error.message : String(error),
     stack: error instanceof Error ? error.stack : undefined,
   });

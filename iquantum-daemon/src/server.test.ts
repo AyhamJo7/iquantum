@@ -70,6 +70,30 @@ describe("daemon request handler", () => {
     expect(missing?.status).toBe(404);
     expect(await missing?.json()).toEqual({ error: "session_not_found" });
   });
+
+  it("rejects malformed plan IDs and commit hashes before dispatch", async () => {
+    const { sessions, calls } = fakeSessions();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+    });
+
+    const invalidPlan = await request(
+      handler,
+      `/sessions/${SESSION_ID}/plans/not-a-uuid/approve`,
+      { method: "POST" },
+    );
+    const invalidHash = await request(
+      handler,
+      `/sessions/${SESSION_ID}/checkpoints/not-a-hash/restore`,
+      { method: "POST" },
+    );
+
+    expect(invalidPlan.status).toBe(404);
+    expect(invalidHash.status).toBe(404);
+    expect(calls).toEqual([]);
+  });
 });
 
 function fakeSessions(): { sessions: DaemonSessions; calls: unknown[][] } {
