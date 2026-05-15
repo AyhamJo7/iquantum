@@ -16,7 +16,7 @@ import {
 } from "./index";
 
 const fixtureDir = join(import.meta.dirname, "../fixtures");
-const dockerAvailable = await isDockerAvailable();
+const dockerAvailable = !process.env.CI && (await isDockerAvailable());
 const tempDirs: string[] = [];
 const sessionIds: string[] = [];
 

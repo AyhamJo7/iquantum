@@ -6,7 +6,7 @@ import { isDockerAvailable, loadTestCommand, SandboxManager } from "./index";
 
 const tempDirs: string[] = [];
 const sessionIds: string[] = [];
-const dockerAvailable = await isDockerAvailable();
+const dockerAvailable = !process.env.CI && (await isDockerAvailable());
 
 afterEach(async () => {
   const manager = new SandboxManager({ image: "alpine:3.20" });

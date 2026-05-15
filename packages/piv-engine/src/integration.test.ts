@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryPIVStore, PIVEngine } from "./index";
 
 const run = promisify(execFile);
-const dockerAvailable = await isDockerAvailable();
+const dockerAvailable = !process.env.CI && (await isDockerAvailable());
 const tempDirs: string[] = [];
 const sessionIds: string[] = [];
 
