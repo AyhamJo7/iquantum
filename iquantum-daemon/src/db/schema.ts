@@ -2,6 +2,8 @@ import type { Database } from "bun:sqlite";
 
 export function initializeSchema(db: Database): void {
   db.exec(`
+    PRAGMA user_version = 1;
+
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       status TEXT NOT NULL,
@@ -63,5 +65,14 @@ export function initializeSchema(db: Database): void {
       created_at TEXT NOT NULL,
       PRIMARY KEY (repo_path, content_hash)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_messages_session_id
+      ON messages(session_id);
+    CREATE INDEX IF NOT EXISTS idx_plans_session_id
+      ON plans(session_id);
+    CREATE INDEX IF NOT EXISTS idx_validate_runs_session_id
+      ON validate_runs(session_id);
+    CREATE INDEX IF NOT EXISTS idx_git_checkpoints_session_id
+      ON git_checkpoints(session_id);
   `);
 }

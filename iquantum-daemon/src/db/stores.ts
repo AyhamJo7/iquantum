@@ -123,7 +123,8 @@ export class SqlitePIVStore implements PIVStore {
           created_at AS createdAt
         FROM messages
         WHERE session_id = ?
-        ORDER BY created_at, rowid`,
+        ORDER BY created_at, rowid
+        LIMIT 2000`,
       )
       .all(sessionId) as Message[];
   }
@@ -257,7 +258,8 @@ export class SqliteGitCheckpointStore implements GitCheckpointStore {
           created_at AS createdAt
         FROM git_checkpoints
         WHERE session_id = ?
-        ORDER BY created_at, rowid`,
+        ORDER BY created_at, rowid
+        LIMIT 500`,
       )
       .all(sessionId) as GitCheckpoint[];
   }
