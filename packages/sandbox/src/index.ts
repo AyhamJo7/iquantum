@@ -79,7 +79,7 @@ export class SandboxManager {
     // bun is not available (e.g. lightweight test images without bun).
     await this.#runInContainer(
       info.containerName,
-      "command -v bun >/dev/null 2>&1 && [ -f bun.lockb ] && bun install --frozen-lockfile || true",
+      "command -v bun >/dev/null 2>&1 && { [ -f bun.lockb ] || [ -f bun.lock ]; } && bun install --frozen-lockfile || true",
     );
 
     this.#sandboxes.set(sessionId, info);
