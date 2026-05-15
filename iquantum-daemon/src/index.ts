@@ -85,15 +85,22 @@ logger.info({
   pid: process.pid,
 });
 
-async function shutdown(signal: NodeJS.Signals): Promise<void> {
-  logger.info({ msg: "shutdown", signal });
+let shuttingDown = false;
+
+async function shutdown(reason: string, exitCode = 0): Promise<void> {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+  logger.info({ msg: "shutdown", reason, exitCode });
   streams.closeAll();
   await server.stop(true);
   db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
   db.close();
   await rm(config.socketPath, { force: true });
   await rm(pidPath, { force: true });
-  process.exit(0);
+  process.exit(exitCode);
 }
 
 process.once("SIGINT", () => {
@@ -102,4 +109,13 @@ process.once("SIGINT", () => {
 
 process.once("SIGTERM", () => {
   void shutdown("SIGTERM");
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error({
+    msg: "unhandled rejection",
+    error: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+  void shutdown("unhandledRejection", 1);
 });

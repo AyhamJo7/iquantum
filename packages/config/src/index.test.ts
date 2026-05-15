@@ -23,4 +23,15 @@ describe("loadConfig", () => {
   it("rejects missing required variables", () => {
     expect(() => loadConfig({ ...validEnv, ANTHROPIC_API_KEY: "" })).toThrow();
   });
+
+  it("uses release defaults for optional settings", () => {
+    expect(loadConfig({ ANTHROPIC_API_KEY: "test-key" })).toMatchObject({
+      architectModel: "claude-sonnet-4-5",
+      editorModel: "claude-haiku-4-5-20251001",
+      maxRetries: 3,
+    });
+    expect(loadConfig({ ANTHROPIC_API_KEY: "test-key" }).socketPath).toContain(
+      ".iquantum/daemon.sock",
+    );
+  });
 });

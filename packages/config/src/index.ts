@@ -4,10 +4,10 @@ import { z } from "zod";
 
 const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().min(1),
-  IQUANTUM_ARCHITECT_MODEL: z.string().min(1),
-  IQUANTUM_EDITOR_MODEL: z.string().min(1),
-  IQUANTUM_SOCKET: z.string().min(1),
-  MAX_RETRIES: z.coerce.number().int().min(1),
+  IQUANTUM_ARCHITECT_MODEL: z.string().min(1).default("claude-sonnet-4-5"),
+  IQUANTUM_EDITOR_MODEL: z.string().min(1).default("claude-haiku-4-5-20251001"),
+  IQUANTUM_SOCKET: z.string().min(1).default("~/.iquantum/daemon.sock"),
+  MAX_RETRIES: z.coerce.number().int().min(1).default(3),
 });
 
 export interface IquantumConfig {
