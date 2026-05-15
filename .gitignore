@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+.env
+.DS_Store
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.tsbuildinfo
+
+# Internal project docs — not for public repo
+CLAUDE.md
+AGENTS.md
+ARCHITECTURE.md
+TASKS.md
+AI\ Coding\ Assistant\ Comparison.md
