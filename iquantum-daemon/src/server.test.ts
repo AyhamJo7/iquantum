@@ -129,9 +129,6 @@ function fakeStreams(): DaemonStreams {
     attach() {
       return () => undefined;
     },
-    async handleMessage() {
-      return undefined;
-    },
   };
 }
 
@@ -139,7 +136,7 @@ function request(
   handler: ReturnType<typeof createRequestHandler>,
   pathname: string,
   options: { method?: string; body?: unknown } = {},
-): Promise<Response | undefined> {
+): Promise<Response> {
   return handler(
     new Request(`http://localhost${pathname}`, {
       ...(options.method ? { method: options.method } : {}),
@@ -150,10 +147,5 @@ function request(
             headers: { "content-type": "application/json" },
           }),
     }),
-    {
-      upgrade() {
-        return false;
-      },
-    },
   );
 }

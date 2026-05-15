@@ -32,12 +32,6 @@ export interface DaemonSessions {
 
 export interface DaemonStreams {
   attach(sessionId: string, socket: StreamSocket): () => void;
-  handleMessage(sessionId: string, rawMessage: string): Promise<void>;
-}
-
-interface WebSocketData {
-  detach: (() => void) | undefined;
-  sessionId: string;
 }
 
 const createSessionSchema = z.object({ repoPath: z.string().min(1) });
@@ -53,44 +47,15 @@ function isValidSessionId(id: string): boolean {
 
 export function createDaemonServer(
   options: DaemonServerOptions,
-): Bun.Server<WebSocketData> {
-  return Bun.serve<WebSocketData>({
+): Bun.Server<undefined> {
+  return Bun.serve({
     unix: options.socketPath,
     fetch: createRequestHandler(options),
-    websocket: {
-      open(socket) {
-        try {
-          socket.data.detach = options.streams.attach(
-            socket.data.sessionId,
-            socket,
-          );
-        } catch (error) {
-          socket.send(JSON.stringify(toErrorFrame(error)));
-          socket.close(1008, "stream unavailable");
-        }
-      },
-      async message(socket, message) {
-        try {
-          await options.streams.handleMessage(
-            socket.data.sessionId,
-            typeof message === "string" ? message : message.toString(),
-          );
-        } catch (error) {
-          socket.send(JSON.stringify(toErrorFrame(error)));
-        }
-      },
-      close(socket) {
-        socket.data.detach?.();
-      },
-    },
   });
 }
 
 export function createRequestHandler(options: DaemonServerOptions) {
-  return async (
-    request: Request,
-    server: Pick<Bun.Server<WebSocketData>, "upgrade">,
-  ): Promise<Response | undefined> => {
+  return async (request: Request): Promise<Response> => {
     try {
       const url = new URL(request.url);
       const parts = url.pathname.split("/").filter(Boolean);
@@ -135,15 +100,46 @@ export function createRequestHandler(options: DaemonServerOptions) {
         parts.length === 3 &&
         parts[2] === "stream"
       ) {
-        const upgraded = server.upgrade(request, {
-          data: { detach: undefined, sessionId },
+        const encoder = new TextEncoder();
+        let detach: (() => void) | undefined;
+
+        const readable = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const socket: StreamSocket = {
+              send(data: string) {
+                try {
+                  controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+                } catch {
+                  // client disconnected
+                }
+              },
+              close() {
+                try {
+                  controller.close();
+                } catch {
+                  // already closed
+                }
+              },
+            };
+
+            try {
+              detach = options.streams.attach(sessionId, socket);
+            } catch (error) {
+              socket.send(JSON.stringify(toErrorFrame(error)));
+              controller.close();
+            }
+          },
+          cancel() {
+            detach?.();
+          },
         });
-        return upgraded
-          ? undefined
-          : Response.json(
-              { error: "websocket_upgrade_failed" },
-              { status: 500 },
-            );
+
+        return new Response(readable, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+          },
+        });
       }
 
       if (

@@ -12,12 +12,6 @@ describe("StreamController", () => {
       getEngine() {
         return fakeEngine(events);
       },
-      async approve() {
-        return undefined;
-      },
-      async reject() {
-        return fakePlan();
-      },
     });
     const socket = fakeSocket(sent);
     const detach = controller.attach("session-1", socket);
@@ -35,41 +29,6 @@ describe("StreamController", () => {
       { type: "phase_change", phase: "planning" },
       { type: "token", delta: "hello" },
       { type: "plan_ready", planId: "plan-1" },
-    ]);
-  });
-
-  it("accepts approval and rejection client frames", async () => {
-    const events = new EventEmitter<PIVEngineEventMap>();
-    const calls: unknown[][] = [];
-    const controller = new StreamController({
-      getEngine() {
-        return fakeEngine(events);
-      },
-      async approve(sessionId, planId) {
-        calls.push(["approve", sessionId, planId]);
-      },
-      async reject(sessionId, feedback, planId) {
-        calls.push(["reject", sessionId, feedback, planId]);
-        return fakePlan();
-      },
-    });
-
-    await controller.handleMessage(
-      "session-1",
-      JSON.stringify({ type: "approve_plan", planId: "plan-1" }),
-    );
-    await controller.handleMessage(
-      "session-1",
-      JSON.stringify({
-        type: "reject_plan",
-        planId: "plan-1",
-        feedback: "split it",
-      }),
-    );
-
-    expect(calls).toEqual([
-      ["approve", "session-1", "plan-1"],
-      ["reject", "session-1", "split it", "plan-1"],
     ]);
   });
 });
