@@ -10,6 +10,7 @@ import {
   SqlitePIVStore,
   SqliteSessionStore,
 } from "./db/stores";
+import { logger } from "./logger";
 import { createDaemonServer } from "./server";
 import { SessionController } from "./session-controller";
 import { StreamController } from "./stream-controller";
@@ -47,18 +48,45 @@ const sessions = new SessionController({
   },
 });
 const streams = new StreamController(sessions);
+
+async function healthCheck(): Promise<{ db: boolean; docker: boolean }> {
+  let dbOk = false;
+  let dockerOk = false;
+
+  try {
+    db.query("SELECT 1").get();
+    dbOk = true;
+  } catch {}
+
+  try {
+    const proc = Bun.spawn(["docker", "info"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    dockerOk = exitCode === 0;
+  } catch {}
+
+  return { db: dbOk, docker: dockerOk };
+}
+
 const server = createDaemonServer({
   socketPath: config.socketPath,
   sessions,
   streams,
+  healthCheck,
 });
 
 await writeFile(pidPath, String(process.pid), "utf8");
 
-console.log(`iquantum daemon listening on ${config.socketPath}`);
+logger.info({
+  msg: "daemon started",
+  socket: config.socketPath,
+  pid: process.pid,
+});
 
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
-  console.log(`received ${signal}; shutting down`);
+  logger.info({ msg: "shutdown", signal });
   streams.closeAll();
   await server.stop(true);
   db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
