@@ -9,12 +9,17 @@
         "@types/bun": "latest",
         "typescript": "latest",
         "vitest": "latest",
+        "zod": "latest",
       },
     },
     "iquantum-cli": {
       "name": "@iquantum/cli",
       "version": "0.0.0",
+      "bin": {
+        "iq": "./src/index.ts",
+      },
       "dependencies": {
+        "@iquantum/types": "workspace:*",
         "commander": "^14.0.3",
         "ws": "^8.20.1",
       },

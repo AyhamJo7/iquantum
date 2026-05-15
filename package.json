@@ -19,6 +19,7 @@
     "@biomejs/biome": "latest",
     "@types/bun": "latest",
     "typescript": "latest",
-    "vitest": "latest"
+    "vitest": "latest",
+    "zod": "latest"
   }
 }
