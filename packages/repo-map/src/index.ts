@@ -277,7 +277,7 @@ export function trimTobudget(
   for (const { filePath, symbol } of rankedSymbols) {
     const displayPath =
       displayRoot === undefined ? filePath : relative(displayRoot, filePath);
-    const line = `${symbol.signature}  # ${displayPath}:${symbol.startLine}`;
+    const line = `${symbol.signature}  # ${compactDisplayPath(displayPath)}:${symbol.startLine}`;
     const nextTokenCount = roughTokenCount(
       lines.length === 0 ? line : `${lines.join("\n")}\n${line}`,
     );
@@ -761,6 +761,18 @@ function commonPathPrefix(paths: string[]): string | undefined {
   return sharedSegments.length === 0
     ? undefined
     : sharedSegments.join(sep) || sep;
+}
+
+function compactDisplayPath(path: string): string {
+  if (path.startsWith(`packages${sep}`)) {
+    return path.slice(`packages${sep}`.length);
+  }
+
+  if (path.startsWith(`iquantum-`)) {
+    return path.slice("iquantum-".length);
+  }
+
+  return path;
 }
 
 function normalizeScores(scores: Map<string, number>): Map<string, number> {
