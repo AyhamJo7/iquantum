@@ -8,7 +8,14 @@ import { daemonStatus, startDaemon, stopDaemon } from "./commands/daemon";
 import { runTask } from "./commands/task";
 
 const DEFAULT_SOCKET = resolve(homedir(), ".iquantum", "daemon.sock");
-const socketPath = process.env.IQUANTUM_SOCKET ?? DEFAULT_SOCKET;
+
+function expandHome(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return resolve(homedir(), p.slice(2));
+  return p;
+}
+
+const socketPath = expandHome(process.env.IQUANTUM_SOCKET ?? DEFAULT_SOCKET);
 
 const stdoutWriter = {
   write: (chunk: string) => process.stdout.write(chunk),
