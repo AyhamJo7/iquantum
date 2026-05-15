@@ -104,7 +104,15 @@ bun install
 bun run build
 ```
 
-### 2 — Configure
+### 2 — Build the sandbox image
+
+```bash
+docker build -t iquantum/sandbox:latest -f docker/sandbox.Dockerfile docker/
+```
+
+This creates a lightweight Alpine+Bun+Git image used for all sandbox containers. Only needed once.
+
+### 3 — Configure
 
 ```bash
 cp .env.example .env
@@ -120,7 +128,7 @@ IQUANTUM_SOCKET=~/.iquantum/daemon.sock
 MAX_RETRIES=3
 ```
 
-### 3 — Link the `iq` CLI globally
+### 4 — Link the `iq` CLI globally
 
 Run this **once** from inside the repo root:
 
@@ -136,14 +144,14 @@ export PATH="$HOME/.bun/bin:$PATH"
 
 > **Do not** run `bun link @iquantum/cli` — that is for consuming the package from another project, not from the source repo.
 
-### 4 — Start the daemon
+### 5 — Start the daemon
 
 ```bash
-source .env          # load env vars into the current shell
-
-iq daemon start      # starts the background daemon
-iq daemon status     # → daemon is running (pid 12345)
+iq daemon start      # auto-loads .env from the repo root
+iq daemon status     # → daemon is running
 ```
+
+The daemon reads `.env` from the iquantum repo root automatically — no need to `source .env` first.
 
 If `status` says "not running", check the log for the startup error:
 
@@ -151,7 +159,7 @@ If `status` says "not running", check the log for the startup error:
 cat ~/.iquantum/daemon.log
 ```
 
-### 5 — Run your first task
+### 6 — Run your first task
 
 ```bash
 cd /path/to/your/project
