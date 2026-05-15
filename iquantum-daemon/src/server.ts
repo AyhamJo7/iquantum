@@ -11,6 +11,7 @@ export interface DaemonServerOptions {
   socketPath: string;
   sessions: DaemonSessions;
   streams: DaemonStreams;
+  healthCheck?: () => Promise<{ db: boolean; docker: boolean }>;
 }
 
 export interface DaemonSessions {
@@ -42,6 +43,13 @@ interface WebSocketData {
 const createSessionSchema = z.object({ repoPath: z.string().min(1) });
 const taskSchema = z.object({ prompt: z.string().min(1) });
 const rejectSchema = z.object({ feedback: z.string().min(1) });
+
+const SESSION_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidSessionId(id: string): boolean {
+  return SESSION_ID_RE.test(id);
+}
 
 export function createDaemonServer(
   options: DaemonServerOptions,
@@ -88,6 +96,12 @@ export function createRequestHandler(options: DaemonServerOptions) {
       const parts = url.pathname.split("/").filter(Boolean);
 
       if (request.method === "GET" && url.pathname === "/health") {
+        if (options.healthCheck) {
+          const status = await options.healthCheck();
+          const ok = status.db && status.docker;
+          return Response.json({ ok, ...status }, { status: ok ? 200 : 503 });
+        }
+
         return Response.json({ ok: true });
       }
 
@@ -103,7 +117,7 @@ export function createRequestHandler(options: DaemonServerOptions) {
 
       const sessionId = parts[1];
 
-      if (!sessionId) {
+      if (!sessionId || !isValidSessionId(sessionId)) {
         return notFound();
       }
 
@@ -249,10 +263,7 @@ function toErrorResponse(error: unknown): Response {
     return Response.json({ error: error.message }, { status: 422 });
   }
 
-  return Response.json(
-    { error: error instanceof Error ? error.message : "internal_error" },
-    { status: 500 },
-  );
+  return Response.json({ error: "internal_error" }, { status: 500 });
 }
 
 function toErrorFrame(error: unknown): { type: "error"; message: string } {

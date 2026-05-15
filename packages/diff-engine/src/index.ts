@@ -80,6 +80,15 @@ export class DiffEngine {
     for (const patch of patches) {
       const filePath = patchTargetPath(patch);
 
+      if (filePath.includes("..") || filePath.startsWith("/")) {
+        failures.push({
+          filePath,
+          hunkIndex: -1,
+          reason: "path traversal rejected",
+        });
+        continue;
+      }
+
       try {
         const original =
           patch.oldPath === "/dev/null"
