@@ -73,6 +73,15 @@ export class SandboxManager {
     });
 
     await container.start();
+
+    // Install dependencies inside the container. node_modules is excluded from
+    // the seed copy because Bun's .bun/ registry is host-specific. Skip when
+    // bun is not available (e.g. lightweight test images without bun).
+    await this.#runInContainer(
+      info.containerName,
+      "command -v bun >/dev/null 2>&1 && [ -f bun.lockb ] && bun install --frozen-lockfile || true",
+    );
+
     this.#sandboxes.set(sessionId, info);
     return info;
   }
@@ -131,6 +140,27 @@ export class SandboxManager {
 
   // docker cp copies and overwrites but does not mirror deletions.
   // If DiffEngine gains delete support, replace this with a mirror step.
+  async #runInContainer(containerName: string, command: string): Promise<void> {
+    const container = this.#docker.getContainer(containerName);
+    const exec = await container.exec({
+      Cmd: ["sh", "-lc", command],
+      AttachStdout: true,
+      AttachStderr: true,
+      WorkingDir: workspacePath,
+    });
+    const stream = await exec.start({ Detach: false, stdin: false });
+    // Drain the stream so the exec can complete.
+    stream.resume();
+    await onceClosed(stream);
+    const inspection = await exec.inspect();
+
+    if ((inspection.ExitCode ?? 0) !== 0) {
+      throw new Error(
+        `Container command failed (exit ${inspection.ExitCode ?? "?"}): ${command}`,
+      );
+    }
+  }
+
   async syncToHost(sessionId: string): Promise<void> {
     const info = await this.#getSandboxInfo(sessionId);
 
@@ -166,9 +196,16 @@ export class SandboxManager {
   }
 
   async #seedVolume(info: SandboxInfo): Promise<void> {
+    // Exclude node_modules: Bun's .bun/ registry format is host-specific and
+    // will not resolve correctly inside the container. The main container runs
+    // `bun install` after seeding to build a clean, container-native install.
     const seedContainer = await this.#docker.createContainer({
       Image: this.#seedImage,
-      Cmd: ["sh", "-lc", "cp -a /host/. /workspace/ && rm -rf /workspace/.git"],
+      Cmd: [
+        "sh",
+        "-lc",
+        "cp -a /host/. /workspace/ && rm -rf /workspace/.git /workspace/node_modules",
+      ],
       HostConfig: {
         Binds: [
           `${info.repoPath}:/host:ro`,
