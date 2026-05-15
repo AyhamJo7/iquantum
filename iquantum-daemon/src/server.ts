@@ -1,5 +1,6 @@
 import { InvalidTransitionError } from "@iquantum/piv-engine";
 import { ZodError, z } from "zod";
+import { logger } from "./logger";
 import {
   MissingTestCommandError,
   SessionNotFoundError,
@@ -263,6 +264,11 @@ function toErrorResponse(error: unknown): Response {
     return Response.json({ error: error.message }, { status: 422 });
   }
 
+  logger.error({
+    msg: "unhandled request error",
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
   return Response.json({ error: "internal_error" }, { status: 500 });
 }
 
