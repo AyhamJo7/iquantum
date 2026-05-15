@@ -122,6 +122,10 @@ export class PIVEngine {
     this.#maxImplementTokens = options.maxImplementTokens ?? 2000;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#createId = options.createId ?? (() => crypto.randomUUID());
+    // Node treats an unhandled "error" event as a thrown exception. The engine
+    // still rejects the active operation, but it must remain safe when no
+    // StreamController is attached yet.
+    this.events.on("error", () => undefined);
   }
 
   get status(): SessionStatus {

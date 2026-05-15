@@ -20,7 +20,13 @@
       "version": "0.0.0",
       "dependencies": {
         "@iquantum/config": "workspace:*",
+        "@iquantum/diff-engine": "workspace:*",
+        "@iquantum/git": "workspace:*",
+        "@iquantum/llm": "workspace:*",
+        "@iquantum/piv-engine": "workspace:*",
+        "@iquantum/sandbox": "workspace:*",
         "@iquantum/types": "workspace:*",
+        "zod": "latest",
       },
     },
     "packages/config": {

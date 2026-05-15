@@ -7,7 +7,26 @@
   },
   "include": ["src/**/*.ts"],
   "references": [
-    { "path": "../packages/types" },
-    { "path": "../packages/config" }
+    {
+      "path": "../packages/types"
+    },
+    {
+      "path": "../packages/config"
+    },
+    {
+      "path": "../packages/sandbox"
+    },
+    {
+      "path": "../packages/llm"
+    },
+    {
+      "path": "../packages/diff-engine"
+    },
+    {
+      "path": "../packages/git"
+    },
+    {
+      "path": "../packages/piv-engine"
+    }
   ]
 }

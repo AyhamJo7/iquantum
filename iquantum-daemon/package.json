@@ -5,7 +5,13 @@
   "type": "module",
   "dependencies": {
     "@iquantum/config": "workspace:*",
-    "@iquantum/types": "workspace:*"
+    "@iquantum/types": "workspace:*",
+    "@iquantum/diff-engine": "workspace:*",
+    "@iquantum/git": "workspace:*",
+    "@iquantum/llm": "workspace:*",
+    "@iquantum/piv-engine": "workspace:*",
+    "@iquantum/sandbox": "workspace:*",
+    "zod": "latest"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
