@@ -199,6 +199,11 @@ describe("walkRepoFiles", () => {
       "src/ignored.ts",
       "export const ignored = true;",
     );
+    await writeRepoFile(
+      repoRoot,
+      "src/keep.test.ts",
+      "export const testOnly = true;",
+    );
     await writeRepoFile(repoRoot, "dist/out.ts", "export const built = true;");
     await writeRepoFile(
       repoRoot,

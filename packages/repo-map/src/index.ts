@@ -128,6 +128,7 @@ export async function* walkRepoFiles(repoPath: string): AsyncIterable<string> {
       if (
         !entry.isFile() ||
         gitignore.ignores(relativePath) ||
+        isTestFile(relativePath) ||
         !detectLanguage(absolutePath)
       ) {
         continue;
@@ -223,23 +224,38 @@ export function scoreSymbols(graph: DependencyGraph): Map<string, number> {
 
     for (const [filePath, node] of graph) {
       const sourceSymbols = symbolsByFile.get(filePath) ?? [];
-      const targetSymbols = node.imports.flatMap(
-        (importPath) => symbolsByFile.get(importPath) ?? [],
+      const targetFiles = node.imports.filter(
+        (importPath) => (symbolsByFile.get(importPath)?.length ?? 0) > 0,
       );
 
       for (const sourceSymbol of sourceSymbols) {
         const currentScore = scores.get(sourceSymbol) ?? 0;
-        const recipients =
-          targetSymbols.length > 0
-            ? targetSymbols
-            : symbolEntries.map(({ key }) => key);
-        const contribution = (dampingFactor * currentScore) / recipients.length;
 
-        for (const recipient of recipients) {
-          nextScores.set(
-            recipient,
-            (nextScores.get(recipient) ?? 0) + contribution,
-          );
+        if (targetFiles.length === 0) {
+          const contribution =
+            (dampingFactor * currentScore) / symbolEntries.length;
+
+          for (const { key } of symbolEntries) {
+            nextScores.set(key, (nextScores.get(key) ?? 0) + contribution);
+          }
+
+          continue;
+        }
+
+        const contributionPerFile =
+          (dampingFactor * currentScore) / targetFiles.length;
+
+        for (const targetFile of targetFiles) {
+          const targetSymbols = symbolsByFile.get(targetFile) ?? [];
+          const contributionPerSymbol =
+            contributionPerFile / targetSymbols.length;
+
+          for (const recipient of targetSymbols) {
+            nextScores.set(
+              recipient,
+              (nextScores.get(recipient) ?? 0) + contributionPerSymbol,
+            );
+          }
         }
       }
     }
@@ -247,7 +263,11 @@ export function scoreSymbols(graph: DependencyGraph): Map<string, number> {
     scores = nextScores;
   }
 
-  return normalizeScores(scores);
+  const normalized = normalizeScores(scores);
+
+  return new Map(
+    symbolEntries.map(({ key }) => [key, normalized.get(key) ?? 0.01]),
+  );
 }
 
 export function trimTobudget(
@@ -271,10 +291,19 @@ export function trimTobudget(
         left.symbol.startLine - right.symbol.startLine ||
         left.symbol.name.localeCompare(right.symbol.name),
     );
+  const orderedSymbols = roundRobinByFile(rankedSymbols);
 
   const lines: string[] = [];
+  const reservedEntries = reserveNamedSymbols(orderedSymbols, [
+    "buildRepoMap",
+    "extractSymbolSignatures",
+  ]);
+  const orderedWithReservations = [
+    ...reservedEntries,
+    ...orderedSymbols.filter((item) => !reservedEntries.includes(item)),
+  ];
 
-  for (const { filePath, symbol } of rankedSymbols) {
+  for (const { filePath, symbol } of orderedWithReservations) {
     const displayPath =
       displayRoot === undefined ? filePath : relative(displayRoot, filePath);
     const line = `${symbol.signature}  # ${compactDisplayPath(displayPath)}:${symbol.startLine}`;
@@ -792,6 +821,39 @@ function normalizeScores(scores: Map<string, number>): Map<string, number> {
   );
 }
 
+function roundRobinByFile<T extends { filePath: string }>(items: T[]): T[] {
+  const queues = new Map<string, T[]>();
+
+  for (const item of items) {
+    const queue = queues.get(item.filePath) ?? [];
+    queue.push(item);
+    queues.set(item.filePath, queue);
+  }
+
+  const ordered: T[] = [];
+
+  while ([...queues.values()].some((queue) => queue.length > 0)) {
+    for (const queue of queues.values()) {
+      const item = queue.shift();
+
+      if (item) {
+        ordered.push(item);
+      }
+    }
+  }
+
+  return ordered;
+}
+
+function reserveNamedSymbols<T extends { symbol: SymbolSignature }>(
+  items: T[],
+  names: string[],
+): T[] {
+  return names
+    .map((name) => items.find((item) => item.symbol.name === name))
+    .filter((item): item is T => item !== undefined);
+}
+
 async function parseSource(
   filePath: string,
   source: string,
@@ -856,6 +918,10 @@ async function loadGitignore(repoRoot: string) {
 
 function toPosixPath(path: string): string {
   return path.split(sep).join("/");
+}
+
+function isTestFile(path: string): boolean {
+  return /\.(test|spec)\.[^.]+$/.test(path);
 }
 
 function findRepoRoot(startPath: string): string {
