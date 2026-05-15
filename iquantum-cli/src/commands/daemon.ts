@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFile, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DaemonClient } from "../client";
@@ -23,8 +23,14 @@ export interface Writer {
 }
 
 function defaultDaemonEntry(): string {
+  // daemon.ts lives at <repo>/iquantum-cli/src/commands/daemon.ts
+  // Three levels up reaches the repo root, then into iquantum-daemon.
   const cliDir = dirname(fileURLToPath(import.meta.url));
-  return resolve(cliDir, "../../iquantum-daemon/src/index.ts");
+  return resolve(cliDir, "../../../iquantum-daemon/src/index.ts");
+}
+
+function logPath(socketPath: string): string {
+  return join(dirname(socketPath), "daemon.log");
 }
 
 function pidPath(socketPath: string): string {
@@ -36,13 +42,19 @@ export async function startDaemon(
   writer: Writer,
 ): Promise<void> {
   const entry = options.daemonEntry ?? defaultDaemonEntry();
+  const stateDir = dirname(options.socketPath);
+  await mkdir(stateDir, { recursive: true });
+  const log = logPath(options.socketPath);
+  const logFd = await open(log, "a");
   const proc = spawn("bun", ["run", entry], {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd.fd, logFd.fd],
     env: process.env,
   });
   proc.unref();
+  await logFd.close();
   writer.writeln(`daemon started (pid ${proc.pid ?? "?"})`);
+  writer.writeln(`logs: ${log}`);
 }
 
 export async function stopDaemon(

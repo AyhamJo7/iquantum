@@ -95,12 +95,13 @@ The sandbox is a **named Docker volume** (`iquantum-vol-<session-id>`) seeded fr
 
 ## Quick Start
 
-### 1 — Clone and install
+### 1 — Clone, install, and build
 
 ```bash
 git clone https://github.com/AyhamJo7/iquantum.git
 cd iquantum
 bun install
+bun run build
 ```
 
 ### 2 — Configure
@@ -119,22 +120,35 @@ IQUANTUM_SOCKET=~/.iquantum/daemon.sock
 MAX_RETRIES=3
 ```
 
-### 3 — Link the CLI globally
+### 3 — Link the `iq` CLI globally
+
+Run this **once** from inside the repo root:
 
 ```bash
 bun link --cwd iquantum-cli
+```
 
-# Add to your shell profile if not already set:
+Then make sure `~/.bun/bin` is on your PATH (add to `~/.bashrc` or `~/.zshrc`):
+
+```bash
 export PATH="$HOME/.bun/bin:$PATH"
 ```
+
+> **Do not** run `bun link @iquantum/cli` — that is for consuming the package from another project, not from the source repo.
 
 ### 4 — Start the daemon
 
 ```bash
-source .env   # or use direnv
+source .env          # load env vars into the current shell
 
-iq daemon start
-iq daemon status   # → daemon is running (pid 12345)
+iq daemon start      # starts the background daemon
+iq daemon status     # → daemon is running (pid 12345)
+```
+
+If `status` says "not running", check the log for the startup error:
+
+```bash
+cat ~/.iquantum/daemon.log
 ```
 
 ### 5 — Run your first task
