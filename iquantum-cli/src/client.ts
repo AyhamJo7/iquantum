@@ -1,6 +1,5 @@
 import { request as nodeRequest } from "node:http";
 import type { GitCheckpoint, Plan, Session } from "@iquantum/types";
-import WebSocket from "ws";
 
 export type ServerStreamFrame =
   | { type: "token"; delta: string }
@@ -83,10 +82,6 @@ export class HttpDaemonClient implements DaemonClient {
 
   async *openStream(sessionId: string): AsyncGenerator<ServerStreamFrame> {
     const socketPath = this.#socketPath;
-    const ws = new WebSocket(`ws://localhost/sessions/${sessionId}/stream`, {
-      socketPath,
-    });
-
     const queue: Array<ServerStreamFrame | Error | null> = [];
     let wakeResolve: (() => void) | null = null;
 
@@ -95,31 +90,100 @@ export class HttpDaemonClient implements DaemonClient {
       wakeResolve = null;
     };
 
-    ws.on("message", (data) => {
-      try {
-        queue.push(JSON.parse(data.toString()) as ServerStreamFrame);
-      } catch {
-        queue.push(new Error("malformed stream frame"));
-      }
+    // Bun overrides the ws WebSocket class and ignores socketPath.
+    // Use node:http (which respects socketPath) to perform the WebSocket
+    // upgrade manually, then parse frames with ws.Receiver.
+    const wsKey = Buffer.from(
+      crypto.getRandomValues(new Uint8Array(16)),
+    ).toString("base64");
 
-      wake();
+    const req = nodeRequest({
+      socketPath,
+      method: "GET",
+      path: `/sessions/${sessionId}/stream`,
+      headers: {
+        Host: "localhost",
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Key": wsKey,
+        "Sec-WebSocket-Version": "13",
+      },
     });
 
-    ws.on("close", () => {
-      queue.push(null);
-      wake();
+    req.on("upgrade", (_res, socket, head) => {
+      let buf = head.length > 0 ? head : Buffer.alloc(0);
+
+      const flush = (): void => {
+        // Parse all complete WebSocket frames (server→client are never masked).
+        while (buf.length >= 2) {
+          const b0 = buf[0] ?? 0;
+          const b1 = buf[1] ?? 0;
+          const opcode = b0 & 0x0f;
+          let payloadLen = b1 & 0x7f;
+          let headerEnd = 2;
+
+          if (payloadLen === 126) {
+            if (buf.length < 4) break;
+            payloadLen = buf.readUInt16BE(2);
+            headerEnd = 4;
+          } else if (payloadLen === 127) {
+            if (buf.length < 10) break;
+            payloadLen = buf.readUInt32BE(6); // lower 32 bits sufficient
+            headerEnd = 10;
+          }
+
+          if (buf.length < headerEnd + payloadLen) break;
+
+          const payload = buf.slice(headerEnd, headerEnd + payloadLen);
+          buf = buf.slice(headerEnd + payloadLen);
+
+          if (opcode === 0x8) {
+            // close frame
+            queue.push(null);
+            wake();
+            return;
+          }
+
+          if (opcode === 0x1 || opcode === 0x2) {
+            // text or binary
+            try {
+              queue.push(
+                JSON.parse(payload.toString("utf8")) as ServerStreamFrame,
+              );
+            } catch {
+              queue.push(new Error("malformed stream frame"));
+            }
+            wake();
+          }
+        }
+      };
+
+      flush();
+
+      socket.on("data", (chunk: Buffer) => {
+        buf = Buffer.concat([buf, chunk]);
+        flush();
+      });
+      socket.on("close", () => {
+        queue.push(null);
+        wake();
+      });
+      socket.on("error", (err: Error) => {
+        queue.push(err);
+        wake();
+      });
     });
 
-    ws.on("error", (err) => {
+    req.on("error", (err) => {
       queue.push(err instanceof Error ? err : new Error(String(err)));
       wake();
     });
 
+    req.end();
+
     try {
       while (true) {
         while (queue.length > 0) {
-          // queue.length > 0 guarantees shift() returns a value
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           const item = queue.shift() as ServerStreamFrame | Error | null;
 
           if (item === null) {
@@ -138,9 +202,7 @@ export class HttpDaemonClient implements DaemonClient {
         });
       }
     } finally {
-      if (ws.readyState < 2) {
-        ws.close();
-      }
+      req.destroy();
     }
   }
 
