@@ -3,7 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "iq": "./src/index.ts"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  },
+  "dependencies": {
+    "@iquantum/types": "workspace:*",
+    "commander": "^14.0.3",
+    "ws": "^8.20.1"
   }
 }
