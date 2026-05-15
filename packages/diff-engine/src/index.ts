@@ -59,6 +59,16 @@ export class DiffApplyError extends Error {
   }
 }
 
+// Treat a parse failure as an apply failure so the PIV engine feeds the
+// error back to the editor model and retries instead of marking the session
+// as a hard failure.
+export class DiffParseApplyError extends DiffApplyError {
+  constructor(parseError: DiffParseError) {
+    super([{ filePath: "<diff>", hunkIndex: -1, reason: parseError.message }]);
+    this.name = "DiffParseApplyError";
+  }
+}
+
 export class DiffEngine {
   readonly #sandbox: Pick<SandboxManager, "exec">;
 
@@ -71,7 +81,15 @@ export class DiffEngine {
     rawDiff: string,
     options: DiffApplyOptions = {},
   ): Promise<void> {
-    const patches = parseUnifiedDiff(rawDiff);
+    let patches: FilePatch[];
+    try {
+      patches = parseUnifiedDiff(rawDiff);
+    } catch (error) {
+      if (error instanceof DiffParseError) {
+        throw new DiffParseApplyError(error);
+      }
+      throw error;
+    }
     const failures: ApplyFailure[] = [];
 
     // Failures are collected across files; successful patches are written even
