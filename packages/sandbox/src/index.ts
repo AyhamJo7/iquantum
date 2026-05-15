@@ -103,7 +103,7 @@ export class SandboxManager {
       AttachStderr: true,
       WorkingDir: workspacePath,
     });
-    const stream = await exec.start({ hijack: true, stdin: false });
+    const stream = await exec.start({ Detach: false, stdin: false });
     const stdout = new PassThrough();
     const stderr = new PassThrough();
 
