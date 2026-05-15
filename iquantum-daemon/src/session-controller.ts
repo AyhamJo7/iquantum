@@ -170,8 +170,7 @@ export class SessionController {
 
   async approve(sessionId: string, planId?: string): Promise<void> {
     const liveSession = this.#requireLiveSession(sessionId);
-    const targetPlanId =
-      planId ?? (await this.currentPlan(sessionId))?.id;
+    const targetPlanId = planId ?? (await this.currentPlan(sessionId))?.id;
 
     if (!targetPlanId) {
       throw new Error(`Session ${sessionId} has no pending plan`);
@@ -186,8 +185,7 @@ export class SessionController {
     planId?: string,
   ): Promise<Plan> {
     const liveSession = this.#requireLiveSession(sessionId);
-    const targetPlanId =
-      planId ?? (await this.currentPlan(sessionId))?.id;
+    const targetPlanId = planId ?? (await this.currentPlan(sessionId))?.id;
 
     if (!targetPlanId) {
       throw new Error(`Session ${sessionId} has no pending plan`);
