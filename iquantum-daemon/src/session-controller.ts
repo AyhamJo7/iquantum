@@ -59,13 +59,6 @@ export class SessionNotLiveError extends Error {
   }
 }
 
-export class MissingTestCommandError extends Error {
-  constructor(readonly repoPath: string) {
-    super(`No test command configured for ${repoPath}`);
-    this.name = "MissingTestCommandError";
-  }
-}
-
 export class SessionController {
   readonly #sessionStore: SessionStore;
   readonly #pivStore: SessionControllerOptions["pivStore"];
@@ -101,11 +94,7 @@ export class SessionController {
   }
 
   async createSession(repoPath: string): Promise<Session> {
-    const testCommand = await this.#loadTestCommand(repoPath);
-
-    if (!testCommand) {
-      throw new MissingTestCommandError(repoPath);
-    }
+    const testCommand = (await this.#loadTestCommand(repoPath)) ?? "true";
 
     const sessionId = this.#createId();
     const sandboxInfo = await this.#sandbox.createSandbox(sessionId, repoPath);

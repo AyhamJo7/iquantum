@@ -2,7 +2,6 @@ import { InvalidTransitionError } from "@iquantum/piv-engine";
 import { ZodError, z } from "zod";
 import { logger } from "./logger";
 import {
-  MissingTestCommandError,
   SessionNotFoundError,
   SessionNotLiveError,
 } from "./session-controller";
@@ -258,10 +257,6 @@ function toErrorResponse(error: unknown): Response {
     error instanceof InvalidTransitionError
   ) {
     return Response.json({ error: error.message }, { status: 409 });
-  }
-
-  if (error instanceof MissingTestCommandError) {
-    return Response.json({ error: error.message }, { status: 422 });
   }
 
   logger.error({
