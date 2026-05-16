@@ -1,0 +1,63 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          cache: "bun"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/verify-release-version.ts "${{ github.ref_name }}"
+      - run: bun run build
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run test
+      - run: bun run build:dist
+      - run: cd iquantum-cli && npm pack --dry-run
+      - name: Smoke-test packed install
+        run: |
+          PACKAGE_FILE="$(cd iquantum-cli && npm pack --pack-destination /tmp)"
+          PACKAGE_SPEC="/tmp/$PACKAGE_FILE" \
+          SANDBOX_IMAGE="alpine:3.20" \
+          EXPECTED_VERSION="$(node -p "require('./iquantum-cli/package.json').version")" \
+          scripts/smoke-test-install.sh
+      - name: Publish to npm
+        run: cd iquantum-cli && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push sandbox image
+        run: |
+          TAG="${{ github.ref_name }}"
+          IMAGE="ghcr.io/ayhamjo7/iquantum-sandbox"
+          docker build -t "$IMAGE:$TAG" -f docker/sandbox.Dockerfile docker/
+          docker push "$IMAGE:$TAG"
+          if [[ "$TAG" != *-* ]]; then
+            docker tag "$IMAGE:$TAG" "$IMAGE:latest"
+            docker push "$IMAGE:latest"
+          fi
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ "$TAG" == *-* ]]; then
+            gh release create "$TAG" --generate-notes --prerelease
+          else
+            gh release create "$TAG" --generate-notes
+          fi
