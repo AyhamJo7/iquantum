@@ -6,14 +6,15 @@
   "dependencies": {
     "@iquantum/config": "workspace:*",
     "@iquantum/context-window": "workspace:*",
-    "@iquantum/types": "workspace:*",
     "@iquantum/diff-engine": "workspace:*",
     "@iquantum/git": "workspace:*",
     "@iquantum/llm": "workspace:*",
     "@iquantum/piv-engine": "workspace:*",
+    "@iquantum/protocol": "workspace:*",
     "@iquantum/sandbox": "workspace:*",
-    "zod": "latest",
-    "@iquantum/protocol": "workspace:*"
+    "@iquantum/types": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "latest"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
