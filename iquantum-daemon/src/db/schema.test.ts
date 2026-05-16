@@ -18,6 +18,24 @@ describe("initializeSchema", () => {
     expect(statements).toContain("COMMIT;");
   });
 
+  it("upgrades v1 databases with v2 message columns and tool uses", () => {
+    const statements: string[] = [];
+
+    initializeSchema(fakeDb(1, statements));
+
+    expect(
+      statements.some((sql) => sql.includes("ADD COLUMN has_thinking")),
+    ).toBe(true);
+    expect(
+      statements.some((sql) => sql.includes("ADD COLUMN compaction_boundary")),
+    ).toBe(true);
+    expect(
+      statements.some((sql) => sql.includes("CREATE TABLE tool_uses")),
+    ).toBe(true);
+    expect(statements).toContain("PRAGMA user_version = 2;");
+    expect(statements).toContain("PRAGMA user_version = 3;");
+  });
+
   it("does nothing when the schema is already current", () => {
     const statements: string[] = [];
 

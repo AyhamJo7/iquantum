@@ -77,6 +77,35 @@ const migrations: readonly Migration[] = [
       CREATE INDEX idx_git_checkpoints_session_id ON git_checkpoints(session_id);
     `,
   },
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE messages
+        ADD COLUMN has_thinking INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE messages
+        ADD COLUMN compaction_boundary INTEGER NOT NULL DEFAULT 0;
+
+      UPDATE messages
+      SET content = json_array(json_object('type', 'text', 'text', content))
+      WHERE json_valid(content) = 0;
+    `,
+  },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE tool_uses (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id),
+        tool_name TEXT NOT NULL,
+        input TEXT NOT NULL,
+        output TEXT,
+        approved INTEGER,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_tool_uses_message_id ON tool_uses(message_id);
+    `,
+  },
 ];
 
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
