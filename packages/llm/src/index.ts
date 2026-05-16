@@ -1,8 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type {
+  CompletionEvent,
   LLMCompletionOptions,
+  LLMContentBlock,
   LLMMessage,
   LLMProvider,
+  McpTool,
   PIVPhase,
 } from "@iquantum/types";
 import OpenAI, { APIError } from "openai";
@@ -99,6 +102,62 @@ export class AnthropicProvider implements LLMProvider {
     }
   }
 
+  async *completeWithTools(
+    messages: LLMMessage[],
+    tools: readonly McpTool[],
+    options: LLMCompletionOptions,
+  ): AsyncIterable<CompletionEvent> {
+    const { messages: anthropicMessages, system } =
+      toAnthropicMessages(messages);
+    const stream = this.#client.messages.stream({
+      model: options.model,
+      max_tokens: options.maxTokens,
+      messages: anthropicMessages,
+      ...(system ? { system } : {}),
+      ...(options.temperature === undefined
+        ? {}
+        : { temperature: options.temperature }),
+      tools: tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema:
+          t.inputSchema as unknown as Anthropic.Messages.Tool.InputSchema,
+      })),
+    });
+
+    let pendingId: string | null = null;
+    let pendingName: string | null = null;
+    let pendingJson = "";
+
+    for await (const event of stream) {
+      if (event.type === "content_block_start") {
+        if (event.content_block.type === "tool_use") {
+          pendingId = event.content_block.id;
+          pendingName = event.content_block.name;
+          pendingJson = "";
+        }
+      } else if (event.type === "content_block_delta") {
+        if (event.delta.type === "text_delta") {
+          yield { type: "token", delta: event.delta.text };
+        } else if (event.delta.type === "input_json_delta") {
+          pendingJson += event.delta.partial_json;
+        }
+      } else if (event.type === "content_block_stop") {
+        if (pendingId && pendingName) {
+          yield {
+            type: "tool_use",
+            id: pendingId,
+            name: pendingName,
+            input: JSON.parse(pendingJson || "{}") as Record<string, unknown>,
+          };
+          pendingId = null;
+          pendingName = null;
+          pendingJson = "";
+        }
+      }
+    }
+  }
+
   async countTokens(messages: LLMMessage[], model: string): Promise<number> {
     const { messages: anthropicMessages, system } =
       toAnthropicMessages(messages);
@@ -160,7 +219,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   async countTokens(messages: LLMMessage[], _model: string): Promise<number> {
     return roughTokenCount(
       messages
-        .map((message) => `${message.role}:${message.content}`)
+        .map((message) => `${message.role}:${contentToString(message.content)}`)
         .join("\n"),
     );
   }
@@ -224,6 +283,41 @@ export class LLMRouter {
     });
   }
 
+  async *completeWithTools(
+    phase: PIVPhase,
+    messages: LLMMessage[],
+    tools: readonly McpTool[],
+    options: RoutedCompletionOptions,
+  ): AsyncIterable<CompletionEvent> {
+    const route = this.#routeForPhase(phase);
+
+    if (!route.provider.completeWithTools) {
+      throw new Error(
+        `Provider for model ${route.model} does not support tool use`,
+      );
+    }
+
+    const inputTokens = await route.provider.countTokens(messages, route.model);
+
+    if (inputTokens > this.#maxInputTokens) {
+      throw new TokenBudgetExceededError(inputTokens, this.#maxInputTokens);
+    }
+
+    await this.#usageSink?.record({
+      phase,
+      model: route.model,
+      inputTokens,
+    });
+
+    yield* route.provider.completeWithTools(messages, tools, {
+      model: route.model,
+      maxTokens: options.maxTokens,
+      ...(options.temperature === undefined
+        ? {}
+        : { temperature: options.temperature }),
+    });
+  }
+
   #routeForPhase(phase: PIVPhase): LLMRoute {
     if (phase === "plan") {
       return this.#architect;
@@ -236,13 +330,20 @@ export class LLMRouter {
 type AnthropicClient = Pick<Anthropic, "messages">;
 type OpenAIClient = Pick<OpenAI, "chat">;
 
+function contentToString(content: string | LLMContentBlock[]): string {
+  if (typeof content === "string") return content;
+  return content
+    .map((b) => (typeof b.text === "string" ? b.text : ""))
+    .join("\n");
+}
+
 function toAnthropicMessages(messages: LLMMessage[]): {
   messages: Anthropic.Messages.MessageParam[];
   system?: string;
 } {
   const system = messages
     .filter((message) => message.role === "system")
-    .map((message) => message.content)
+    .map((message) => contentToString(message.content))
     .join("\n\n");
   const mappedMessages = messages
     .filter(
@@ -251,7 +352,9 @@ function toAnthropicMessages(messages: LLMMessage[]): {
     )
     .map((message) => ({
       role: message.role,
-      content: message.content,
+      content: message.content as
+        | string
+        | Anthropic.Messages.ContentBlockParam[],
     }));
 
   return {
@@ -265,7 +368,10 @@ function toOpenAIMessage(
 ): OpenAI.Chat.ChatCompletionMessageParam {
   return {
     role: message.role,
-    content: message.content,
+    content:
+      typeof message.content === "string"
+        ? message.content
+        : JSON.stringify(message.content),
   } as OpenAI.Chat.ChatCompletionMessageParam;
 }
 
