@@ -14,6 +14,7 @@ import {
   SqliteSessionStore,
 } from "./db/stores";
 import { logger } from "./logger";
+import { PermissionGate } from "./permission-gate";
 import { createDaemonServer } from "./server";
 import { SessionController } from "./session-controller";
 import { StreamController } from "./stream-controller";
@@ -42,6 +43,12 @@ const llmRouter = new LLMRouter({
   editor: { provider, model: config.editorModel },
   maxInputTokens,
 });
+let streams: StreamController;
+const permissions = new PermissionGate({
+  publish(sessionId, frame) {
+    streams.publish(sessionId, frame);
+  },
+});
 const sessions = new SessionController({
   sessionStore,
   pivStore,
@@ -49,8 +56,9 @@ const sessions = new SessionController({
   sandbox,
   maxRetries: config.maxRetries,
   llmRouterFactory: () => llmRouter,
+  permissionGate: permissions,
 });
-const streams = new StreamController(sessions);
+streams = new StreamController(sessions);
 const conversationCompleter = {
   complete: llmRouter.complete.bind(llmRouter, "plan"),
 };
@@ -94,6 +102,7 @@ const server = createDaemonServer({
   streams,
   conversations,
   compaction,
+  permissions,
   healthCheck,
 });
 
@@ -114,6 +123,7 @@ async function shutdown(reason: string, exitCode = 0): Promise<void> {
 
   shuttingDown = true;
   logger.info({ msg: "shutdown", reason, exitCode });
+  permissions.drainAll();
   streams.closeAll();
   await server.stop(true);
   db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
