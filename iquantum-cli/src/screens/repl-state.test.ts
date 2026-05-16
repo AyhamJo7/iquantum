@@ -190,6 +190,28 @@ describe("reduceREPLViewState", () => {
     expect(afterToken.streamingText).toBe("");
   });
 
+  it("hydrate_history prepends items before current messages", () => {
+    const withMessage = reduceREPLViewState(initialREPLViewState, {
+      type: "submitted",
+      content: "new message",
+    });
+    const hydrated = reduceREPLViewState(withMessage, {
+      type: "hydrate_history",
+      items: [
+        { id: "hist-1", type: "message", role: "user", text: "old" },
+        { id: "hist-sep", type: "session_separator" },
+      ],
+    });
+
+    expect(hydrated.messages[0]).toMatchObject({ id: "hist-1" });
+    expect(hydrated.messages[1]).toMatchObject({ type: "session_separator" });
+    expect(hydrated.messages[2]).toMatchObject({
+      type: "message",
+      role: "user",
+      text: "new message",
+    });
+  });
+
   it("ignores done frames when state has an error", () => {
     const withError = reduceREPLViewState(
       reduceREPLViewState(initialREPLViewState, {

@@ -45,6 +45,10 @@ const TranscriptRow = memo(function TranscriptRow({
   item: TranscriptItem;
   thinkingExpanded: boolean;
 }) {
+  if (item.type === "session_separator") {
+    return <Text dimColor>──────────── resumed ────────────</Text>;
+  }
+
   if (item.type === "compact_boundary") {
     return <Text dimColor>──────────── context compacted ────────────</Text>;
   }

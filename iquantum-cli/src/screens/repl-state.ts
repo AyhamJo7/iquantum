@@ -38,7 +38,8 @@ export type TranscriptItem =
       type: "system_message";
       text: string;
       level: "info" | "error";
-    };
+    }
+  | { id: string; type: "session_separator" };
 
 export interface REPLViewState {
   phase?: Phase | undefined;
@@ -60,6 +61,7 @@ export type REPLAction =
   | { type: "permission_resolved"; requestId: string; approved: boolean }
   | { type: "system_message"; text: string; level?: "info" | "error" }
   | { type: "clear_transcript" }
+  | { type: "hydrate_history"; items: TranscriptItem[] }
   | { type: "frame"; frame: ServerStreamFrame };
 
 export const initialREPLViewState: REPLViewState = {
@@ -139,6 +141,11 @@ export function reduceREPLViewState(
         thinkingText: "",
         error: undefined,
         pendingPermissionId: null,
+      };
+    case "hydrate_history":
+      return {
+        ...state,
+        messages: [...action.items, ...state.messages],
       };
     case "frame":
       return reduceFrame(state, action.frame);
