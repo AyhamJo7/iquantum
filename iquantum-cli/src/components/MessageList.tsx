@@ -57,6 +57,14 @@ const TranscriptRow = memo(function TranscriptRow({
     return <Text dimColor>✓ checkpoint {item.hash.slice(0, 7)}</Text>;
   }
 
+  if (item.type === "system_message") {
+    return (
+      <Text color={item.level === "error" ? "red" : "cyan"} dimColor>
+        {item.text}
+      </Text>
+    );
+  }
+
   if (item.type === "permission_request") {
     if (!item.resolved) {
       return null;

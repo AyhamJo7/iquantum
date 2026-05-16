@@ -145,6 +145,68 @@ describe("reduceREPLViewState", () => {
     });
   });
 
+  it("system_message adds a system_message item", () => {
+    const state = reduceREPLViewState(initialREPLViewState, {
+      type: "system_message",
+      text: "hello world",
+      level: "info",
+    });
+
+    expect(state.messages[0]).toMatchObject({
+      type: "system_message",
+      text: "hello world",
+      level: "info",
+    });
+  });
+
+  it("clear_transcript resets messages and streaming text", () => {
+    const withMessages = reduceREPLViewState(
+      reduceREPLViewState(initialREPLViewState, {
+        type: "submitted",
+        content: "hi",
+      }),
+      { type: "frame", frame: { type: "token", delta: "partial" } },
+    );
+
+    const cleared = reduceREPLViewState(withMessages, {
+      type: "clear_transcript",
+    });
+
+    expect(cleared.messages).toHaveLength(0);
+    expect(cleared.streamingText).toBe("");
+    expect(cleared.error).toBeUndefined();
+  });
+
+  it("ignores token frames when state has an error (post-cancel guard)", () => {
+    const withError = reduceREPLViewState(initialREPLViewState, {
+      type: "submit_error",
+      message: "cancelled",
+    });
+    const afterToken = reduceREPLViewState(withError, {
+      type: "frame",
+      frame: { type: "token", delta: "stale" },
+    });
+
+    expect(afterToken.streamingText).toBe("");
+  });
+
+  it("ignores done frames when state has an error", () => {
+    const withError = reduceREPLViewState(
+      reduceREPLViewState(initialREPLViewState, {
+        type: "submitted",
+        content: "hi",
+      }),
+      { type: "submit_error", message: "cancelled" },
+    );
+    const afterDone = reduceREPLViewState(withError, {
+      type: "frame",
+      frame: { type: "done" },
+    });
+
+    expect(afterDone.isSubmitting).toBe(false); // was already false
+    expect(afterDone.messages).toHaveLength(1); // only the user message
+  });
+
   it("tracks pending permission and resolves it", () => {
     const pending = reduceREPLViewState(initialREPLViewState, {
       type: "frame",

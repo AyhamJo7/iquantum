@@ -32,6 +32,12 @@ export type TranscriptItem =
       id: string;
       type: "checkpoint";
       hash: string;
+    }
+  | {
+      id: string;
+      type: "system_message";
+      text: string;
+      level: "info" | "error";
     };
 
 export interface REPLViewState {
@@ -52,6 +58,8 @@ export type REPLAction =
   | { type: "submit_error"; message: string }
   | { type: "toggle_thinking" }
   | { type: "permission_resolved"; requestId: string; approved: boolean }
+  | { type: "system_message"; text: string; level?: "info" | "error" }
+  | { type: "clear_transcript" }
   | { type: "frame"; frame: ServerStreamFrame };
 
 export const initialREPLViewState: REPLViewState = {
@@ -109,6 +117,29 @@ export function reduceREPLViewState(
             : m,
         ),
       };
+    case "system_message":
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          {
+            id: transcriptId(state.nextTranscriptId),
+            type: "system_message",
+            text: action.text,
+            level: action.level ?? "info",
+          },
+        ],
+        nextTranscriptId: state.nextTranscriptId + 1,
+      };
+    case "clear_transcript":
+      return {
+        ...state,
+        messages: [],
+        streamingText: "",
+        thinkingText: "",
+        error: undefined,
+        pendingPermissionId: null,
+      };
     case "frame":
       return reduceFrame(state, action.frame);
   }
@@ -122,11 +153,13 @@ function reduceFrame(
     case "phase_change":
       return { ...state, phase: frame.phase };
     case "token":
+      if (state.error) return state;
       return {
         ...state,
         streamingText: `${state.streamingText}${frame.delta}`,
       };
     case "thinking":
+      if (state.error) return state;
       return { ...state, thinkingText: `${state.thinkingText}${frame.delta}` };
     case "compact_boundary":
       return {
@@ -143,6 +176,7 @@ function reduceFrame(
         nextTranscriptId: state.nextTranscriptId + 1,
       };
     case "done":
+      if (state.error) return state;
       return finalizeAssistantTurn(state);
     case "error":
       return {
