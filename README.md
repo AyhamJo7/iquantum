@@ -170,6 +170,24 @@ iq task "your task description here"
 
 ## CLI Reference
 
+### `iq` (interactive REPL)
+
+```bash
+iq           # opens the interactive chat REPL
+```
+
+Resumes your last session automatically if the daemon still has it. Starts a fresh session otherwise. The REPL supports slash commands:
+
+| Command | Effect |
+|---|---|
+| `/help` | List all available commands |
+| `/clear` | Clear the transcript (session history stays in daemon) |
+| `/compact` | Summarise and compress the context window |
+| `/mcp` | List connected MCP tools and their status |
+| `/restore [hash]` | Roll back the sandbox to a prior Git checkpoint |
+
+Keyboard shortcuts: `Ctrl-O` toggles thinking output · `Ctrl-L` clears the screen · `Escape` cancels the current request · `Ctrl-C` twice exits.
+
 ### `iq task`
 
 ```
@@ -202,10 +220,12 @@ All configuration is via environment variables. Copy `.env.example` to `.env` �
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | ✅ | — | Anthropic API key |
-| `IQUANTUM_ARCHITECT_MODEL` | ✅ | — | Reasoning model used for planning (e.g. `claude-sonnet-4-5`) |
-| `IQUANTUM_EDITOR_MODEL` | ✅ | — | Fast model used for implementation (e.g. `claude-haiku-4-5-20251001`) |
+| `IQUANTUM_ARCHITECT_MODEL` | — | `claude-sonnet-4-5` | Reasoning model used for planning |
+| `IQUANTUM_EDITOR_MODEL` | — | `claude-haiku-4-5-20251001` | Fast model used for implementation |
 | `IQUANTUM_SOCKET` | — | `~/.iquantum/daemon.sock` | Unix socket path for CLI ↔ daemon communication |
 | `MAX_RETRIES` | — | `3` | Shared retry budget across plan rejections, diff failures, and validation failures |
+| `IQUANTUM_EXEC_TIMEOUT_MS` | — | `120000` | Max duration (ms) for a sandbox command before the container is killed |
+| `IQUANTUM_MCP_SERVERS` | — | `[]` | JSON array of MCP server configs to expose as agent tools |
 | `LOG_LEVEL` | — | `info` | Daemon log level: `error` \| `warn` \| `info` \| `debug` |
 
 ---
@@ -294,18 +314,19 @@ bun test packages/repo-map --test-name-pattern "self-map"
 | **Named sandbox volumes** | `iquantum-vol-<session-id>` — named volumes survive daemon restarts. Anonymous volumes would lose sandbox state on shutdown. |
 | **Shared retry budget** | A single `MAX_RETRIES` counter covers plan rejections, diff failures, and validation failures. A reject costs one retry from the same pool as implementation retries, keeping the ceiling simple and predictable. |
 | **Two-model routing** | Architect and Editor models are configured and called separately — the separation is the core value proposition, not an implementation detail. |
-| **MCP stubbed in v1** | The `IMcpClient` interface ships but no MCP servers are wired up. Stability of the PIV loop comes before external integrations. |
+| **MCP as external tool provider** | `IQUANTUM_MCP_SERVERS` accepts any stdio-transport MCP server. Tools are namespaced `serverName__toolName` and injected into the `iq` REPL tool loop. Servers are started lazily on first use and restarted on error. |
 | **Dogfood validation** | No SWE-bench. iquantum is used to build iquantum. Real-world correctness over benchmark scores. |
 
 ---
 
 ## Roadmap
 
-- [ ] `iq restore <hash>` — roll back to any prior Git checkpoint
-- [ ] Daemon restart recovery — resume live sessions after a daemon crash
+- [x] Session resume — `iq` auto-reconnects to the last session on startup
+- [x] MCP tool integration — stdio MCP servers via `IQUANTUM_MCP_SERVERS`
+- [x] Sandbox exec timeout — configurable kill-on-breach via `IQUANTUM_EXEC_TIMEOUT_MS`
+- [ ] `iq restore <hash>` — roll back to any prior Git checkpoint from the CLI
 - [ ] Multi-repo context — PageRank spanning more than one repository
 - [ ] OpenAI-compatible provider routing — use DeepSeek V3 as the editor model
-- [ ] MCP server integration — live docs, design tokens, external context injection
 - [ ] VS Code extension — visual diff approval, side-by-side plan review
 - [ ] Cloud sandbox tier — hosted Docker, zero local setup required
 
