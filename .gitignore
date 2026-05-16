@@ -1,5 +1,6 @@
 node_modules/
 dist/
+iquantum-cli/dist/
 coverage/
 .env
 .DS_Store

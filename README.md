@@ -85,40 +85,61 @@ The sandbox is a **named Docker volume** (`iquantum-vol-<session-id>`) seeded fr
 
 | Requirement | Version |
 |---|---|
+| [Node.js](https://nodejs.org/) / npm | current LTS (install-time package manager) |
 | [Bun](https://bun.sh) | ≥ 1.3 |
 | [Docker](https://www.docker.com/) | any recent version |
 | Anthropic API key | BYOK |
 
-> **Windows**: Docker Desktop with WSL2 backend is required.
+> **Platform notes**: use Docker Desktop on macOS/Windows and Docker Engine on Linux.
+> Windows users should run iquantum inside WSL2.
 
 ---
 
 ## Quick Start
 
-### 1 — Clone, install, and build
+### 1 — Install iquantum
+
+```bash
+npm install -g @iquantum/cli
+```
+
+### 2 — Run the first-time setup
+
+```bash
+iq
+```
+
+On first launch, iquantum opens a short setup wizard, saves
+`~/.iquantum/config.json`, pulls the sandbox image automatically, starts the daemon, and
+opens the interactive REPL.
+
+### 3 — Run your first task
+
+```bash
+cd /path/to/your/project
+iq task "your task description here"
+```
+
+Environment variables still work and always override saved config values, but installed
+users do not need to create a `.env` file manually.
+
+---
+
+## Development / Contributing
+
+To build iquantum from source:
 
 ```bash
 git clone https://github.com/AyhamJo7/iquantum.git
 cd iquantum
 bun install
 bun run build
-```
-
-### 2 — Build the sandbox image
-
-```bash
 docker build -t iquantum/sandbox:latest -f docker/sandbox.Dockerfile docker/
-```
-
-This creates a lightweight Alpine+Bun+Git image used for all sandbox containers. Only needed once.
-
-### 3 — Configure
-
-```bash
 cp .env.example .env
+bun link --cwd iquantum-cli
 ```
 
-Open `.env` and fill in your keys:
+For local development you can still keep values in `.env`; export them before launching the daemon or CLI:
 
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
@@ -126,44 +147,6 @@ IQUANTUM_ARCHITECT_MODEL=claude-sonnet-4-5
 IQUANTUM_EDITOR_MODEL=claude-haiku-4-5-20251001
 IQUANTUM_SOCKET=~/.iquantum/daemon.sock
 MAX_RETRIES=3
-```
-
-### 4 — Link the `iq` CLI globally
-
-Run this **once** from inside the repo root:
-
-```bash
-bun link --cwd iquantum-cli
-```
-
-Then make sure `~/.bun/bin` is on your PATH (add to `~/.bashrc` or `~/.zshrc`):
-
-```bash
-export PATH="$HOME/.bun/bin:$PATH"
-```
-
-> **Do not** run `bun link @iquantum/cli` — that is for consuming the package from another project, not from the source repo.
-
-### 5 — Start the daemon
-
-```bash
-iq daemon start      # auto-loads .env from the repo root
-iq daemon status     # → daemon is running
-```
-
-The daemon reads `.env` from the iquantum repo root automatically — no need to `source .env` first.
-
-If `status` says "not running", check the log for the startup error:
-
-```bash
-cat ~/.iquantum/daemon.log
-```
-
-### 6 — Run your first task
-
-```bash
-cd /path/to/your/project
-iq task "your task description here"
 ```
 
 ---
@@ -211,11 +194,23 @@ iq daemon stop     Gracefully stop the daemon
 iq daemon status   Check if the daemon is alive
 ```
 
+### Setup, updates, and saved configuration
+
+```bash
+iq init                    Run the first-time setup wizard again
+iq update                  Install the latest released version
+iq config list             Show saved config values (API key redacted)
+iq config get <KEY>        Read one saved config value
+iq config set <KEY> <VAL>  Persist one saved config value
+```
+
 ---
 
 ## Configuration Reference
 
-All configuration is via environment variables. Copy `.env.example` to `.env` — it is gitignored.
+Installed users are configured through `~/.iquantum/config.json`, which the first-run
+wizard creates for you. You can edit it indirectly with `iq config list|get|set`.
+Environment variables remain supported and win over saved values when both are present.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -223,6 +218,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` �
 | `IQUANTUM_ARCHITECT_MODEL` | — | `claude-sonnet-4-5` | Reasoning model used for planning |
 | `IQUANTUM_EDITOR_MODEL` | — | `claude-haiku-4-5-20251001` | Fast model used for implementation |
 | `IQUANTUM_SOCKET` | — | `~/.iquantum/daemon.sock` | Unix socket path for CLI ↔ daemon communication |
+| `IQUANTUM_SANDBOX_IMAGE` | — | `ghcr.io/ayhamjo7/iquantum-sandbox:latest` | Sandbox image, pulled automatically when needed |
 | `MAX_RETRIES` | — | `3` | Shared retry budget across plan rejections, diff failures, and validation failures |
 | `IQUANTUM_EXEC_TIMEOUT_MS` | — | `120000` | Max duration (ms) for a sandbox command before the container is killed |
 | `IQUANTUM_MCP_SERVERS` | — | `[]` | JSON array of MCP server configs to expose as agent tools |
