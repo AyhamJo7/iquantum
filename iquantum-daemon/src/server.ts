@@ -49,6 +49,7 @@ export interface DaemonConversations {
     options?: { before?: string; limit?: number },
   ): Promise<unknown>;
   clear(sessionId: string): Promise<void>;
+  cancel(sessionId: string): void;
 }
 
 export interface DaemonCompaction {
@@ -265,6 +266,17 @@ export function createRequestHandler(options: DaemonServerOptions) {
         await options.sessions.getSession(sessionId);
         await conversations.clear(sessionId);
         return new Response(null, { status: 204 });
+      }
+
+      if (
+        request.method === "POST" &&
+        parts.length === 3 &&
+        parts[2] === "cancel"
+      ) {
+        const conversations = requireConversations(options);
+        await options.sessions.getSession(sessionId);
+        conversations.cancel(sessionId);
+        return Response.json({ ok: true });
       }
 
       if (

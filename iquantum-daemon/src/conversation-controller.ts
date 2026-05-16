@@ -49,6 +49,7 @@ export class ConversationController {
   readonly #now: () => string;
   readonly #createId: () => string;
   readonly #tokenCounter: typeof countTokens;
+  #abortController: AbortController | null = null;
 
   constructor(options: ConversationControllerOptions) {
     this.#store = options.store;
@@ -62,6 +63,10 @@ export class ConversationController {
   }
 
   async addMessage(sessionId: string, content: string): Promise<void> {
+    this.#abortController?.abort();
+    const abortController = new AbortController();
+    this.#abortController = abortController;
+
     await this.#compactor?.maybeCompact(sessionId);
     await this.#store.insert(this.#newMessage(sessionId, "user", content));
 
@@ -83,21 +88,31 @@ export class ConversationController {
       for await (const delta of this.#completer.complete(llmMessages, {
         maxTokens: this.#maxResponseTokens,
       })) {
+        if (abortController.signal.aborted) break;
         response += delta;
         this.#streams.publish(sessionId, { type: "token", delta });
       }
 
-      await this.#store.insert(
-        this.#newMessage(sessionId, "assistant", response),
-      );
-      this.#streams.publish(sessionId, { type: "done" });
+      if (!abortController.signal.aborted) {
+        await this.#store.insert(
+          this.#newMessage(sessionId, "assistant", response),
+        );
+        this.#streams.publish(sessionId, { type: "done" });
+      }
     } catch (error) {
+      if (abortController.signal.aborted) return;
       this.#streams.publish(sessionId, {
         type: "error",
         message: error instanceof Error ? error.message : String(error),
       });
       throw error;
     }
+  }
+
+  cancel(sessionId: string): void {
+    this.#abortController?.abort();
+    this.#abortController = null;
+    this.#streams.publish(sessionId, { type: "done" });
   }
 
   async getMessages(

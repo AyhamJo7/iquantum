@@ -294,6 +294,9 @@ function fakeConversations(): {
       async clear(sessionId) {
         calls.push(["clear", sessionId]);
       },
+      cancel(sessionId) {
+        calls.push(["cancel", sessionId]);
+      },
     },
   };
 }

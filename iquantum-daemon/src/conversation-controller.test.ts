@@ -59,6 +59,40 @@ describe("ConversationController", () => {
     ).resolves.toMatchObject([{ id: "summary" }, { id: "new-user" }]);
   });
 
+  it("cancel aborts the in-flight stream and emits done without the cancelled token", async () => {
+    const frames: unknown[] = [];
+    const store = new InMemoryConversationStore();
+    const controller = new ConversationController({
+      store,
+      completer: {
+        async *complete() {
+          await Promise.resolve(); // yield control so cancel can run first
+          yield "should-not-appear";
+        },
+      },
+      streams: {
+        publish(_sessionId, frame) {
+          frames.push(frame);
+        },
+      },
+      now: () => fixedNow,
+      createId: () => "id-cancel",
+      tokenCounter: () => 0,
+    });
+
+    // addMessage creates the AbortController synchronously before its first
+    // await, so cancel() aborts it before the generator starts.
+    const msgPromise = controller.addMessage("session-1", "hi");
+    controller.cancel("session-1");
+    await msgPromise;
+
+    const tokenFrames = frames.filter(
+      (f) => (f as { type: string }).type === "token",
+    );
+    expect(tokenFrames).toHaveLength(0);
+    expect(frames).toContainEqual({ type: "done" });
+  });
+
   it("keeps tool results in Anthropic-safe user-role context until structured blocks land", async () => {
     const harness = createHarness(["reply"]);
     harness.store.messages.push(
