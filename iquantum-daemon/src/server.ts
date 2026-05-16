@@ -11,6 +11,8 @@ export interface DaemonServerOptions {
   socketPath: string;
   sessions: DaemonSessions;
   streams: DaemonStreams;
+  conversations?: DaemonConversations;
+  compaction?: DaemonCompaction;
   healthCheck?: () => Promise<{ db: boolean; docker: boolean }>;
 }
 
@@ -34,9 +36,27 @@ export interface DaemonStreams {
   attach(sessionId: string, socket: StreamSocket): () => void;
 }
 
+export interface DaemonConversations {
+  addMessage(sessionId: string, content: string): Promise<void>;
+  getMessages(
+    sessionId: string,
+    options?: { before?: string; limit?: number },
+  ): Promise<unknown>;
+  clear(sessionId: string): Promise<void>;
+}
+
+export interface DaemonCompaction {
+  compact(sessionId: string): Promise<unknown | null>;
+}
+
 const createSessionSchema = z.object({ repoPath: z.string().min(1) });
 const taskSchema = z.object({ prompt: z.string().min(1) });
 const rejectSchema = z.object({ feedback: z.string().min(1) });
+const messageSchema = z.object({
+  role: z.literal("user"),
+  content: z.string().min(1),
+});
+const messageLimitSchema = z.coerce.number().int().min(1).max(200);
 
 const SESSION_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -160,6 +180,66 @@ export function createRequestHandler(options: DaemonServerOptions) {
       if (
         request.method === "POST" &&
         parts.length === 3 &&
+        parts[2] === "messages"
+      ) {
+        const body = messageSchema.parse(await request.json());
+        const conversations = requireConversations(options);
+        await options.sessions.getSession(sessionId);
+        void conversations
+          .addMessage(sessionId, body.content)
+          .catch((error: unknown) => {
+            logger.error({
+              msg: "conversation response failed",
+              requestId,
+              sessionId,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            });
+          });
+        return Response.json({ accepted: true }, { status: 202 });
+      }
+
+      if (
+        request.method === "GET" &&
+        parts.length === 3 &&
+        parts[2] === "messages"
+      ) {
+        const conversations = requireConversations(options);
+        await options.sessions.getSession(sessionId);
+        const before = url.searchParams.get("before");
+        return Response.json(
+          await conversations.getMessages(sessionId, {
+            ...(before ? { before } : {}),
+            limit: readMessageLimit(url.searchParams.get("limit")),
+          }),
+        );
+      }
+
+      if (
+        request.method === "DELETE" &&
+        parts.length === 3 &&
+        parts[2] === "messages"
+      ) {
+        const conversations = requireConversations(options);
+        await options.sessions.getSession(sessionId);
+        await conversations.clear(sessionId);
+        return new Response(null, { status: 204 });
+      }
+
+      if (
+        request.method === "POST" &&
+        parts.length === 3 &&
+        parts[2] === "compact"
+      ) {
+        const compaction = requireCompaction(options);
+        await options.sessions.getSession(sessionId);
+        const summary = await compaction.compact(sessionId);
+        return Response.json({ compacted: summary !== null, summary });
+      }
+
+      if (
+        request.method === "POST" &&
+        parts.length === 3 &&
         (parts[2] === "task" || parts[2] === "tasks")
       ) {
         const body = taskSchema.parse(await request.json());
@@ -263,6 +343,32 @@ export function createRequestHandler(options: DaemonServerOptions) {
       return toErrorResponse(error, requestId);
     }
   };
+}
+
+function requireConversations(
+  options: DaemonServerOptions,
+): DaemonConversations {
+  if (!options.conversations) {
+    throw new Error("ConversationController is not configured");
+  }
+
+  return options.conversations;
+}
+
+function requireCompaction(options: DaemonServerOptions): DaemonCompaction {
+  if (!options.compaction) {
+    throw new Error("CompactionService is not configured");
+  }
+
+  return options.compaction;
+}
+
+function readMessageLimit(value: string | null): number {
+  if (value === null) {
+    return 50;
+  }
+
+  return messageLimitSchema.parse(value);
 }
 
 function notFound(): Response {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   createRequestHandler,
+  type DaemonCompaction,
+  type DaemonConversations,
   type DaemonSessions,
   type DaemonStreams,
 } from "./server";
@@ -94,6 +96,68 @@ describe("daemon request handler", () => {
     expect(invalidHash.status).toBe(404);
     expect(calls).toEqual([]);
   });
+
+  it("accepts messages, paginates history, and clears conversation state", async () => {
+    const { sessions } = fakeSessions();
+    const { conversations, calls } = fakeConversations();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+      conversations,
+      compaction: fakeCompaction(),
+    });
+
+    const accepted = await request(
+      handler,
+      `/sessions/${SESSION_ID}/messages`,
+      {
+        method: "POST",
+        body: { role: "user", content: "hello" },
+      },
+    );
+    const history = await request(
+      handler,
+      `/sessions/${SESSION_ID}/messages?before=message-3&limit=2`,
+    );
+    const cleared = await request(handler, `/sessions/${SESSION_ID}/messages`, {
+      method: "DELETE",
+    });
+
+    expect(accepted.status).toBe(202);
+    expect(await accepted.json()).toEqual({ accepted: true });
+    expect(await history.json()).toEqual({
+      messages: [{ id: "message-1" }, { id: "message-2" }],
+      nextCursor: "message-1",
+    });
+    expect(cleared.status).toBe(204);
+    expect(calls).toEqual([
+      ["addMessage", SESSION_ID, "hello"],
+      ["getMessages", SESSION_ID, { before: "message-3", limit: 2 }],
+      ["clear", SESSION_ID],
+    ]);
+  });
+
+  it("returns 404 for message routes on missing sessions", async () => {
+    const { sessions } = fakeSessions();
+    const { conversations, calls } = fakeConversations();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+      conversations,
+      compaction: fakeCompaction(),
+    });
+
+    const missing = await request(
+      handler,
+      `/sessions/${MISSING_SESSION_ID}/messages`,
+    );
+
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: "session_not_found" });
+    expect(calls).toEqual([]);
+  });
 });
 
 function fakeSessions(): { sessions: DaemonSessions; calls: unknown[][] } {
@@ -152,6 +216,40 @@ function fakeStreams(): DaemonStreams {
   return {
     attach() {
       return () => undefined;
+    },
+  };
+}
+
+function fakeConversations(): {
+  conversations: DaemonConversations;
+  calls: unknown[][];
+} {
+  const calls: unknown[][] = [];
+
+  return {
+    calls,
+    conversations: {
+      async addMessage(sessionId, content) {
+        calls.push(["addMessage", sessionId, content]);
+      },
+      async getMessages(sessionId, options) {
+        calls.push(["getMessages", sessionId, options]);
+        return {
+          messages: [{ id: "message-1" }, { id: "message-2" }],
+          nextCursor: "message-1",
+        };
+      },
+      async clear(sessionId) {
+        calls.push(["clear", sessionId]);
+      },
+    },
+  };
+}
+
+function fakeCompaction(): DaemonCompaction {
+  return {
+    async compact() {
+      return null;
     },
   };
 }
