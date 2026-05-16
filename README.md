@@ -134,16 +134,18 @@ git clone https://github.com/AyhamJo7/iquantum.git
 cd iquantum
 bun install
 bun run build
-docker build -t iquantum/sandbox:latest -f docker/sandbox.Dockerfile docker/
+docker build -t iquantum/sandbox:local -f docker/sandbox.Dockerfile docker/
 cp .env.example .env
+# Point the daemon at the locally-built image instead of the GHCR release:
+echo "IQUANTUM_SANDBOX_IMAGE=iquantum/sandbox:local" >> .env
 bun link --cwd iquantum-cli
 ```
 
-For local development you can still keep values in `.env`; export them before launching the daemon or CLI:
+For local development you can keep values in `.env`; export them before launching the daemon or CLI:
 
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
-IQUANTUM_ARCHITECT_MODEL=claude-sonnet-4-5
+IQUANTUM_ARCHITECT_MODEL=claude-sonnet-4-6
 IQUANTUM_EDITOR_MODEL=claude-haiku-4-5-20251001
 IQUANTUM_SOCKET=~/.iquantum/daemon.sock
 MAX_RETRIES=3
@@ -215,7 +217,7 @@ Environment variables remain supported and win over saved values when both are p
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | ✅ | — | Anthropic API key |
-| `IQUANTUM_ARCHITECT_MODEL` | — | `claude-sonnet-4-5` | Reasoning model used for planning |
+| `IQUANTUM_ARCHITECT_MODEL` | — | `claude-sonnet-4-6` | Reasoning model used for planning |
 | `IQUANTUM_EDITOR_MODEL` | — | `claude-haiku-4-5-20251001` | Fast model used for implementation |
 | `IQUANTUM_SOCKET` | — | `~/.iquantum/daemon.sock` | Unix socket path for CLI ↔ daemon communication |
 | `IQUANTUM_SANDBOX_IMAGE` | — | `ghcr.io/ayhamjo7/iquantum-sandbox:latest` | Sandbox image, pulled automatically when needed |

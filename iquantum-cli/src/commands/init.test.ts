@@ -24,7 +24,7 @@ describe("resolveInitValues", () => {
       }),
     ).toEqual({
       apiKey: "sk-ant-test",
-      architectModel: "claude-sonnet-4-5",
+      architectModel: "claude-sonnet-4-6",
       editorModel: "claude-haiku-4-5-20251001",
       sandboxImage: "ghcr.io/ayhamjo7/iquantum-sandbox:latest",
     });
@@ -76,7 +76,7 @@ describe("runInit", () => {
         "/tmp/iq",
         {
           ANTHROPIC_API_KEY: "sk-ant-test",
-          IQUANTUM_ARCHITECT_MODEL: "claude-sonnet-4-5",
+          IQUANTUM_ARCHITECT_MODEL: "claude-sonnet-4-6",
           IQUANTUM_EDITOR_MODEL: "claude-haiku-4-5-20251001",
           IQUANTUM_SANDBOX_IMAGE: "ghcr.io/ayhamjo7/iquantum-sandbox:latest",
         },
