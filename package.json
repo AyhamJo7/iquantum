@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "tsc -b",
+    "build:dist": "bun scripts/build-dist.ts",
     "dev": "cd iquantum-daemon && bun run dev",
     "test": "vitest run",
     "lint": "biome check .",

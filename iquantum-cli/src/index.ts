@@ -7,6 +7,7 @@ import { renderAndRun } from "./app";
 import { HttpDaemonClient } from "./client";
 import { daemonStatus, startDaemon, stopDaemon } from "./commands/daemon";
 import { runTask } from "./commands/task";
+import { VERSION } from "./version";
 
 const DEFAULT_SOCKET = resolve(homedir(), ".iquantum", "daemon.sock");
 
@@ -40,12 +41,12 @@ async function readlinePrompt(question: string): Promise<string> {
 const program = new Command()
   .name("iq")
   .description("iquantum — AI coding agent CLI")
-  .version("0.0.0")
+  .version(VERSION)
   .action(async () => {
     await renderAndRun({
       socketPath,
       modelName: process.env.IQUANTUM_ARCHITECT_MODEL ?? "claude-sonnet-4-5",
-      version: "0.0.0",
+      version: VERSION,
     });
   });
 
