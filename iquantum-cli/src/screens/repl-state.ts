@@ -12,6 +12,26 @@ export type TranscriptItem =
       id: string;
       type: "compact_boundary";
       summary: string;
+    }
+  | {
+      id: string;
+      type: "diff_preview";
+      file: string;
+      patch: string;
+    }
+  | {
+      id: string;
+      type: "permission_request";
+      requestId: string;
+      tool: string;
+      input: unknown;
+      resolved: boolean;
+      approved?: boolean;
+    }
+  | {
+      id: string;
+      type: "checkpoint";
+      hash: string;
     };
 
 export interface REPLViewState {
@@ -24,12 +44,14 @@ export interface REPLViewState {
   thinkingText: string;
   thinkingExpanded: boolean;
   nextTranscriptId: number;
+  pendingPermissionId: string | null;
 }
 
 export type REPLAction =
   | { type: "submitted"; content: string }
   | { type: "submit_error"; message: string }
   | { type: "toggle_thinking" }
+  | { type: "permission_resolved"; requestId: string; approved: boolean }
   | { type: "frame"; frame: ServerStreamFrame };
 
 export const initialREPLViewState: REPLViewState = {
@@ -40,6 +62,7 @@ export const initialREPLViewState: REPLViewState = {
   thinkingText: "",
   thinkingExpanded: false,
   nextTranscriptId: 1,
+  pendingPermissionId: null,
 };
 
 export function reduceREPLViewState(
@@ -75,6 +98,16 @@ export function reduceREPLViewState(
       return {
         ...state,
         thinkingExpanded: !state.thinkingExpanded,
+      };
+    case "permission_resolved":
+      return {
+        ...state,
+        pendingPermissionId: null,
+        messages: state.messages.map((m) =>
+          m.type === "permission_request" && m.requestId === action.requestId
+            ? { ...m, resolved: true, approved: action.approved }
+            : m,
+        ),
       };
     case "frame":
       return reduceFrame(state, action.frame);
@@ -120,10 +153,51 @@ function reduceFrame(
         streamingText: "",
         thinkingText: "",
       };
-    case "checkpoint":
     case "diff_preview":
-    case "mcp_tool_call":
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          {
+            id: transcriptId(state.nextTranscriptId),
+            type: "diff_preview",
+            file: frame.file,
+            patch: frame.patch,
+          },
+        ],
+        nextTranscriptId: state.nextTranscriptId + 1,
+      };
     case "permission_request":
+      return {
+        ...state,
+        pendingPermissionId: frame.requestId,
+        messages: [
+          ...state.messages,
+          {
+            id: transcriptId(state.nextTranscriptId),
+            type: "permission_request",
+            requestId: frame.requestId,
+            tool: frame.tool,
+            input: frame.input,
+            resolved: false,
+          },
+        ],
+        nextTranscriptId: state.nextTranscriptId + 1,
+      };
+    case "checkpoint":
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          {
+            id: transcriptId(state.nextTranscriptId),
+            type: "checkpoint",
+            hash: frame.hash,
+          },
+        ],
+        nextTranscriptId: state.nextTranscriptId + 1,
+      };
+    case "mcp_tool_call":
     case "plan_ready":
     case "validate_result":
       return state;

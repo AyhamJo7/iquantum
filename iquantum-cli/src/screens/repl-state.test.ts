@@ -114,4 +114,67 @@ describe("reduceREPLViewState", () => {
     expect(done.messages[0]).toMatchObject({ role: "user", text: "ping" });
     expect(done.isSubmitting).toBe(false);
   });
+
+  it("adds a diff_preview item to transcript", () => {
+    const state = reduceREPLViewState(initialREPLViewState, {
+      type: "frame",
+      frame: {
+        type: "diff_preview",
+        file: "src/foo.ts",
+        patch: "@@ -1 +1 @@\n-old\n+new",
+      },
+    });
+
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]).toMatchObject({
+      type: "diff_preview",
+      file: "src/foo.ts",
+      patch: "@@ -1 +1 @@\n-old\n+new",
+    });
+  });
+
+  it("adds a checkpoint row to transcript", () => {
+    const state = reduceREPLViewState(initialREPLViewState, {
+      type: "frame",
+      frame: { type: "checkpoint", hash: "abc1234def" },
+    });
+
+    expect(state.messages[0]).toMatchObject({
+      type: "checkpoint",
+      hash: "abc1234def",
+    });
+  });
+
+  it("tracks pending permission and resolves it", () => {
+    const pending = reduceREPLViewState(initialREPLViewState, {
+      type: "frame",
+      frame: {
+        type: "permission_request",
+        requestId: "req-1",
+        tool: "bash",
+        input: { command: "ls" },
+      },
+    });
+
+    expect(pending.pendingPermissionId).toBe("req-1");
+    expect(pending.messages[0]).toMatchObject({
+      type: "permission_request",
+      requestId: "req-1",
+      tool: "bash",
+      resolved: false,
+    });
+
+    const resolved = reduceREPLViewState(pending, {
+      type: "permission_resolved",
+      requestId: "req-1",
+      approved: true,
+    });
+
+    expect(resolved.pendingPermissionId).toBeNull();
+    expect(resolved.messages[0]).toMatchObject({
+      type: "permission_request",
+      resolved: true,
+      approved: true,
+    });
+  });
 });
