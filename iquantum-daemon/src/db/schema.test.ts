@@ -18,7 +18,7 @@ describe("initializeSchema", () => {
     expect(statements).toContain("COMMIT;");
   });
 
-  it("upgrades v1 databases with v2 message columns and tool uses", () => {
+  it("upgrades v1 databases with v2 message columns, tools, and task scope", () => {
     const statements: string[] = [];
 
     initializeSchema(fakeDb(1, statements));
@@ -32,8 +32,12 @@ describe("initializeSchema", () => {
     expect(
       statements.some((sql) => sql.includes("CREATE TABLE tool_uses")),
     ).toBe(true);
+    expect(statements.some((sql) => sql.includes("ADD COLUMN task_id"))).toBe(
+      true,
+    );
     expect(statements).toContain("PRAGMA user_version = 2;");
     expect(statements).toContain("PRAGMA user_version = 3;");
+    expect(statements).toContain("PRAGMA user_version = 4;");
   });
 
   it("does nothing when the schema is already current", () => {

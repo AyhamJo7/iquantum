@@ -27,11 +27,14 @@ export interface Session {
 export interface Message {
   id: string;
   sessionId: string;
+  taskId: string | null;
   role: MessageRole;
   phase: PIVPhase;
   model: string | null;
   content: string;
+  hasThinking: boolean;
   tokenCount: number;
+  compactionBoundary: boolean;
   createdAt: string;
 }
 

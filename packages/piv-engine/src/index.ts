@@ -21,7 +21,7 @@ import type {
 export interface PIVStore {
   updateSessionStatus(sessionId: string, status: SessionStatus): Promise<void>;
   insertMessage(message: Message): Promise<void>;
-  listMessagesBySession(sessionId: string): Promise<Message[]>;
+  listMessagesByTask(sessionId: string, taskId: string): Promise<Message[]>;
   insertPlan(plan: Plan): Promise<void>;
   getPlan(planId: string): Promise<Plan | null>;
   updatePlan(
@@ -106,6 +106,7 @@ export class PIVEngine {
   #taskPrompt: string | undefined;
   #repoMap: string | undefined;
   #currentPlan: Plan | undefined;
+  #currentTaskId: string | undefined;
   #retryCount = 0;
   #validateAttempt = 0;
 
@@ -145,7 +146,6 @@ export class PIVEngine {
     }
 
     this.#taskPrompt = prompt;
-    await this.#insertMessage("user", "plan", prompt);
     return this.#guard(() => this.#plan());
   }
 
@@ -182,16 +182,16 @@ export class PIVEngine {
 
   async #plan(feedback?: string): Promise<Plan> {
     await this.#transition("planning");
+    const planId = this.#createId();
     this.#repoMap ??= (await this.#repoMapBuilder(this.#repoPath)).map;
 
     const content = await this.#complete("plan", this.#planMessages(feedback), {
       maxTokens: this.#maxPlanTokens,
     });
     await this.#writeWorkspaceFile("PLAN.md", content);
-    await this.#insertMessage("assistant", "plan", content);
 
     const plan: Plan = {
-      id: this.#createId(),
+      id: planId,
       sessionId: this.#sessionId,
       content,
       status: "pending",
@@ -201,6 +201,9 @@ export class PIVEngine {
     };
 
     await this.#store.insertPlan(plan);
+    this.#currentTaskId = planId;
+    await this.#insertMessage("user", "plan", this.#taskPrompt ?? "");
+    await this.#insertMessage("assistant", "plan", content);
     this.#currentPlan = plan;
     await this.#transition("awaiting_approval");
     this.events.emit("plan_ready", plan);
@@ -336,7 +339,10 @@ export class PIVEngine {
   }
 
   async #implementMessages(): Promise<LLMMessage[]> {
-    const history = await this.#store.listMessagesBySession(this.#sessionId);
+    const history = await this.#store.listMessagesByTask(
+      this.#sessionId,
+      this.#approvedPlan().id,
+    );
     const conversation = history.map(toLLMMessage);
 
     return [
@@ -433,11 +439,14 @@ export class PIVEngine {
     await this.#store.insertMessage({
       id: this.#createId(),
       sessionId: this.#sessionId,
+      taskId: this.#currentTaskId ?? null,
       role,
       phase,
       model: null,
       content,
+      hasThinking: false,
       tokenCount: roughTokenCount(content),
+      compactionBoundary: false,
       createdAt: this.#now(),
     });
   }
@@ -472,8 +481,13 @@ export class InMemoryPIVStore implements PIVStore {
     this.messages.push(message);
   }
 
-  async listMessagesBySession(sessionId: string): Promise<Message[]> {
-    return this.messages.filter((message) => message.sessionId === sessionId);
+  async listMessagesByTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<Message[]> {
+    return this.messages.filter(
+      (message) => message.sessionId === sessionId && message.taskId === taskId,
+    );
   }
 
   async insertPlan(plan: Plan): Promise<void> {

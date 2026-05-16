@@ -106,6 +106,16 @@ const migrations: readonly Migration[] = [
       CREATE INDEX idx_tool_uses_message_id ON tool_uses(message_id);
     `,
   },
+  {
+    version: 4,
+    sql: `
+      ALTER TABLE messages
+        ADD COLUMN task_id TEXT REFERENCES plans(id);
+
+      CREATE INDEX idx_messages_session_task_id
+        ON messages(session_id, task_id);
+    `,
+  },
 ];
 
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;

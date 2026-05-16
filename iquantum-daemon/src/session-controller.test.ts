@@ -87,7 +87,7 @@ function createHarness() {
     async insertMessage() {
       return undefined;
     },
-    async listMessagesBySession() {
+    async listMessagesByTask() {
       return [];
     },
     async insertPlan(nextPlan) {
