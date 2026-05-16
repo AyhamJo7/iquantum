@@ -17,6 +17,7 @@ describe("loadConfig", () => {
       editorModel: "editor",
       socketPath: "/tmp/iquantum.sock",
       maxRetries: 3,
+      mcpServers: [],
     });
   });
 

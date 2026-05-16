@@ -21,5 +21,5 @@ export type ServerStreamFrame =
       input: unknown;
     }
   | { type: "compact_boundary"; summary: string; tokenCount: number }
-  | { type: "mcp_tool_call"; server: string; tool: string }
+  | { type: "mcp_tool_call"; server: string; tool: string; input: unknown }
   | { type: "done" };

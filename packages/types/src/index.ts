@@ -79,16 +79,41 @@ export interface RepoMapCache {
 
 export type LLMRole = "user" | "assistant" | "system" | "tool";
 
+export interface LLMContentBlock {
+  type: string;
+  [key: string]: unknown;
+}
+
 export interface LLMMessage {
   role: LLMRole;
-  content: string;
+  content: string | LLMContentBlock[];
 }
+
+export interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export type CompletionEvent =
+  | { type: "token"; delta: string }
+  | {
+      type: "tool_use";
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+    };
 
 export interface LLMProvider {
   complete(
     messages: LLMMessage[],
     options: LLMCompletionOptions,
   ): AsyncIterable<string>;
+  completeWithTools?(
+    messages: LLMMessage[],
+    tools: readonly McpTool[],
+    options: LLMCompletionOptions,
+  ): AsyncIterable<CompletionEvent>;
   countTokens(messages: LLMMessage[], model: string): Promise<number>;
 }
 
@@ -98,7 +123,14 @@ export interface LLMCompletionOptions {
   temperature?: number;
 }
 
+export interface McpServerConfig {
+  name: string;
+  command: string;
+  args?: string[] | undefined;
+  env?: Record<string, string> | undefined;
+}
+
 export interface IMcpClient {
-  listTools(): Promise<readonly string[]>;
-  callTool(name: string, args: Record<string, unknown>): Promise<unknown>;
+  listTools(): Promise<readonly McpTool[]>;
+  callTool(name: string, args: Record<string, unknown>): Promise<string>;
 }
