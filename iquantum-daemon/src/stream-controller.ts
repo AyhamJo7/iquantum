@@ -40,6 +40,7 @@ export class StreamController {
         this.#send(socket, {
           type: "checkpoint",
           hash: checkpoint.commitHash,
+          message: checkpoint.commitMessage,
         });
         this.#send(socket, { type: "done" });
       },

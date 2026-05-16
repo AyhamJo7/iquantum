@@ -54,7 +54,7 @@ describe("StreamController", () => {
 
     expect(sent.map((frame) => JSON.parse(frame) as unknown)).toEqual([
       { type: "token", delta: "chat" },
-      { type: "checkpoint", hash: "abc1234" },
+      { type: "checkpoint", hash: "abc1234", message: "done" },
       { type: "done" },
     ]);
   });
