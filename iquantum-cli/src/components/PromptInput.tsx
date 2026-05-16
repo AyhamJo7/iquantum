@@ -1,22 +1,39 @@
 import { Box, Text, useInput } from "ink";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CommandRegistry } from "../commands/registry";
 import { navigateHistory } from "./prompt-history";
+import { COPY, STATUS_COLORS } from "./theme";
 
 export interface PromptInputProps {
   disabled?: boolean;
   onSubmit(value: string): void | Promise<void>;
   registry?: CommandRegistry;
+  isFirstSubmit: boolean;
 }
 
 export function PromptInput({
   disabled = false,
   onSubmit,
   registry,
+  isFirstSubmit,
 }: PromptInputProps) {
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const [cursorVisible, setCursorVisible] = useState(true);
+
+  useEffect(() => {
+    if (disabled) {
+      setCursorVisible(false);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setCursorVisible((current) => !current);
+    }, 530);
+
+    return () => clearInterval(timer);
+  }, [disabled]);
 
   const completionPrefix =
     value.startsWith("/") && registry ? value.slice(1) : null;
@@ -97,9 +114,15 @@ export function PromptInput({
           ))}
         </Box>
       ) : null}
+      {!isFirstSubmit && value === "" ? (
+        <Text dimColor>{COPY.hintIdle}</Text>
+      ) : null}
       <Box>
-        <Text color="green">&gt; </Text>
-        {value ? <Text>{value}</Text> : <Text dimColor> </Text>}
+        <Text color={STATUS_COLORS.success}>&gt; </Text>
+        <Text>
+          {value}
+          {disabled || !cursorVisible ? " " : "█"}
+        </Text>
       </Box>
     </Box>
   );
