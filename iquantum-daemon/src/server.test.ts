@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { InvalidConversationCursorError } from "./db/stores";
 import {
   createRequestHandler,
   type DaemonCompaction,
   type DaemonConversations,
+  type DaemonPermissions,
   type DaemonSessions,
   type DaemonStreams,
 } from "./server";
@@ -45,7 +47,7 @@ describe("daemon request handler", () => {
     expect(await approved?.json()).toEqual({ ok: true });
     expect(await rejected?.json()).toMatchObject({ id: "plan-2" });
     expect(calls).toEqual([
-      ["createSession", "/repo"],
+      ["createSession", "/repo", {}],
       ["startTask", SESSION_ID, "add auth"],
       ["currentPlan", SESSION_ID],
       ["approve", SESSION_ID, undefined],
@@ -138,6 +140,32 @@ describe("daemon request handler", () => {
     ]);
   });
 
+  it("resolves permission requests through the permission endpoint", async () => {
+    const { sessions } = fakeSessions();
+    const { permissions, calls } = fakePermissions();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+      permissions,
+    });
+
+    const response = await request(
+      handler,
+      `/sessions/${SESSION_ID}/permission`,
+      {
+        method: "POST",
+        body: { requestId: "request-1", approved: true },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(calls).toEqual([
+      ["resolvePermission", SESSION_ID, "request-1", true],
+    ]);
+  });
+
   it("returns 404 for message routes on missing sessions", async () => {
     const { sessions } = fakeSessions();
     const { conversations, calls } = fakeConversations();
@@ -158,6 +186,30 @@ describe("daemon request handler", () => {
     expect(await missing.json()).toEqual({ error: "session_not_found" });
     expect(calls).toEqual([]);
   });
+
+  it("returns 400 for a conversation cursor outside the session", async () => {
+    const { sessions } = fakeSessions();
+    const { conversations } = fakeConversations();
+    conversations.getMessages = async () => {
+      throw new InvalidConversationCursorError("foreign-message");
+    };
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+      conversations,
+    });
+
+    const response = await request(
+      handler,
+      `/sessions/${SESSION_ID}/messages?before=foreign-message`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "invalid_conversation_cursor",
+    });
+  });
 });
 
 function fakeSessions(): { sessions: DaemonSessions; calls: unknown[][] } {
@@ -172,8 +224,8 @@ function fakeSessions(): { sessions: DaemonSessions; calls: unknown[][] } {
   return {
     calls,
     sessions: {
-      async createSession(repoPath) {
-        calls.push(["createSession", repoPath]);
+      async createSession(repoPath, options) {
+        calls.push(["createSession", repoPath, options]);
         return { id: SESSION_ID, repoPath, status: "idle" };
       },
       async getSession(sessionId) {
@@ -250,6 +302,22 @@ function fakeCompaction(): DaemonCompaction {
   return {
     async compact() {
       return null;
+    },
+  };
+}
+
+function fakePermissions(): {
+  permissions: DaemonPermissions;
+  calls: unknown[][];
+} {
+  const calls: unknown[][] = [];
+
+  return {
+    calls,
+    permissions: {
+      resolvePermission(sessionId, requestId, approved) {
+        calls.push(["resolvePermission", sessionId, requestId, approved]);
+      },
     },
   };
 }

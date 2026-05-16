@@ -1,6 +1,8 @@
 import { InvalidTransitionError } from "@iquantum/piv-engine";
 import { ZodError, z } from "zod";
+import { InvalidConversationCursorError } from "./db/stores";
 import { logger } from "./logger";
+import { PermissionRequestNotFoundError } from "./permission-gate";
 import {
   SessionNotFoundError,
   SessionNotLiveError,
@@ -13,11 +15,15 @@ export interface DaemonServerOptions {
   streams: DaemonStreams;
   conversations?: DaemonConversations;
   compaction?: DaemonCompaction;
+  permissions?: DaemonPermissions;
   healthCheck?: () => Promise<{ db: boolean; docker: boolean }>;
 }
 
 export interface DaemonSessions {
-  createSession(repoPath: string): Promise<unknown>;
+  createSession(
+    repoPath: string,
+    options?: { requireApproval?: boolean; autoApprove?: boolean },
+  ): Promise<unknown>;
   getSession(sessionId: string): Promise<unknown>;
   destroySession(sessionId: string): Promise<void>;
   startTask(sessionId: string, prompt: string): Promise<unknown>;
@@ -49,7 +55,19 @@ export interface DaemonCompaction {
   compact(sessionId: string): Promise<unknown | null>;
 }
 
-const createSessionSchema = z.object({ repoPath: z.string().min(1) });
+export interface DaemonPermissions {
+  resolvePermission(
+    sessionId: string,
+    requestId: string,
+    approved: boolean,
+  ): void;
+}
+
+const createSessionSchema = z.object({
+  repoPath: z.string().min(1),
+  requireApproval: z.boolean().optional(),
+  autoApprove: z.boolean().optional(),
+});
 const taskSchema = z.object({ prompt: z.string().min(1) });
 const rejectSchema = z.object({ feedback: z.string().min(1) });
 const messageSchema = z.object({
@@ -57,6 +75,10 @@ const messageSchema = z.object({
   content: z.string().min(1),
 });
 const messageLimitSchema = z.coerce.number().int().min(1).max(200);
+const permissionSchema = z.object({
+  requestId: z.string().min(1),
+  approved: z.boolean(),
+});
 
 const SESSION_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -99,7 +121,14 @@ export function createRequestHandler(options: DaemonServerOptions) {
 
       if (request.method === "POST" && parts.length === 1) {
         const body = createSessionSchema.parse(await request.json());
-        const session = await options.sessions.createSession(body.repoPath);
+        const session = await options.sessions.createSession(body.repoPath, {
+          ...(body.requireApproval === undefined
+            ? {}
+            : { requireApproval: body.requireApproval }),
+          ...(body.autoApprove === undefined
+            ? {}
+            : { autoApprove: body.autoApprove }),
+        });
         return Response.json(session, { status: 201 });
       }
 
@@ -175,6 +204,18 @@ export function createRequestHandler(options: DaemonServerOptions) {
             "Cache-Control": "no-cache",
           },
         });
+      }
+
+      if (
+        request.method === "POST" &&
+        parts.length === 3 &&
+        parts[2] === "permission"
+      ) {
+        const body = permissionSchema.parse(await request.json());
+        const permissions = requirePermissions(options);
+        await options.sessions.getSession(sessionId);
+        permissions.resolvePermission(sessionId, body.requestId, body.approved);
+        return Response.json({ ok: true });
       }
 
       if (
@@ -363,6 +404,14 @@ function requireCompaction(options: DaemonServerOptions): DaemonCompaction {
   return options.compaction;
 }
 
+function requirePermissions(options: DaemonServerOptions): DaemonPermissions {
+  if (!options.permissions) {
+    throw new Error("PermissionGate is not configured");
+  }
+
+  return options.permissions;
+}
+
 function readMessageLimit(value: string | null): number {
   if (value === null) {
     return 50;
@@ -385,6 +434,20 @@ function toErrorResponse(error: unknown, requestId: string): Response {
 
   if (error instanceof SessionNotFoundError) {
     return Response.json({ error: "session_not_found" }, { status: 404 });
+  }
+
+  if (error instanceof PermissionRequestNotFoundError) {
+    return Response.json(
+      { error: "permission_request_not_found" },
+      { status: 404 },
+    );
+  }
+
+  if (error instanceof InvalidConversationCursorError) {
+    return Response.json(
+      { error: "invalid_conversation_cursor" },
+      { status: 400 },
+    );
   }
 
   if (
