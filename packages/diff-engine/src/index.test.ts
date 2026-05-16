@@ -12,6 +12,7 @@ import {
   DiffApplyError,
   DiffEngine,
   type FilePatch,
+  formatFilePatch,
   parseUnifiedDiff,
 } from "./index";
 
@@ -64,6 +65,14 @@ describe("parseUnifiedDiff", () => {
       type: "context",
       content: "}",
     });
+  });
+
+  it("formats a single-file preview diff", async () => {
+    const patch = onlyPatch(await fixture("greeter.exact.diff"));
+
+    expect(formatFilePatch(patch)).toContain("--- a/src/greeter.ts");
+    expect(formatFilePatch(patch)).toContain("+++ b/src/greeter.ts");
+    expect(formatFilePatch(patch)).toContain("@@ -4,6 +4,7 @@");
   });
 });
 

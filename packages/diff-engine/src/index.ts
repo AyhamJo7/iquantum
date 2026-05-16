@@ -339,14 +339,40 @@ function normalizeDiffPath(path: string): string {
   return trimmed.replace(/^[ab]\//, "");
 }
 
-function patchTargetPath(patch: FilePatch): string {
+export function patchTargetPath(patch: FilePatch): string {
   return patch.newPath === "/dev/null" ? patch.oldPath : patch.newPath;
+}
+
+export function formatFilePatch(patch: FilePatch): string {
+  return [
+    `--- ${formatPatchPath(patch.oldPath, "a")}`,
+    `+++ ${formatPatchPath(patch.newPath, "b")}`,
+    ...patch.hunks.flatMap((hunk) => [
+      `@@ -${hunk.originalStart},${hunk.originalCount} +${hunk.newStart},${hunk.newCount} @@${hunk.section ? ` ${hunk.section}` : ""}`,
+      ...hunk.lines.map((line) => `${diffPrefix(line.type)}${line.content}`),
+    ]),
+  ].join("\n");
 }
 
 function hunkSourceLines(hunk: Hunk): string[] {
   return hunk.lines
     .filter((line) => line.type !== "add")
     .map((line) => line.content);
+}
+
+function formatPatchPath(path: string, prefix: "a" | "b"): string {
+  return path === "/dev/null" ? path : `${prefix}/${path}`;
+}
+
+function diffPrefix(type: DiffLineType): string {
+  switch (type) {
+    case "add":
+      return "+";
+    case "context":
+      return " ";
+    case "remove":
+      return "-";
+  }
 }
 
 function hunkReplacementLines(

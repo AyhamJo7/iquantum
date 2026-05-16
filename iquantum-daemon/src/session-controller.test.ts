@@ -24,7 +24,11 @@ describe("SessionController", () => {
       id: "session-1",
       repoPath: "/repo",
       status: "idle",
-      config: { testCommand: "bun test" },
+      config: {
+        testCommand: "bun test",
+        requireApproval: false,
+        autoApprove: false,
+      },
     });
     expect(harness.createdSandboxes).toEqual([["session-1", "/repo"]]);
     expect(harness.engineOptions).toMatchObject({
@@ -36,6 +40,24 @@ describe("SessionController", () => {
     await expect(harness.controller.getSession("session-1")).resolves.toEqual(
       session,
     );
+  });
+
+  it("passes approval settings into the persisted session and engine", async () => {
+    const harness = createHarness();
+
+    const session = await harness.controller.createSession("/repo", {
+      requireApproval: true,
+      autoApprove: true,
+    });
+
+    expect(session.config).toMatchObject({
+      requireApproval: true,
+      autoApprove: true,
+    });
+    expect(harness.engineOptions).toMatchObject({
+      requireApproval: true,
+      autoApprove: true,
+    });
   });
 
   it("delegates plan actions to the live engine and reads the pending plan", async () => {

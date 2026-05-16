@@ -43,6 +43,12 @@ export class StreamController {
         });
         this.#send(socket, { type: "done" });
       },
+      diff_preview: (preview) =>
+        this.#send(socket, {
+          type: "diff_preview",
+          file: preview.file,
+          patch: preview.patch,
+        }),
       error: (error) =>
         this.#send(socket, { type: "error", message: error.message }),
     });

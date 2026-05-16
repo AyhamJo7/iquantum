@@ -1,5 +1,11 @@
 import { EventEmitter } from "node:events";
-import { DiffApplyError, type DiffEngine } from "@iquantum/diff-engine";
+import {
+  DiffApplyError,
+  type DiffEngine,
+  formatFilePatch,
+  parseUnifiedDiff,
+  patchTargetPath,
+} from "@iquantum/diff-engine";
 import type { GitManager } from "@iquantum/git";
 import type { LLMRouter } from "@iquantum/llm";
 import {
@@ -40,6 +46,9 @@ export interface PIVEngineOptions {
   diffEngine: Pick<DiffEngine, "apply">;
   sandbox: Pick<SandboxManager, "exec" | "syncToHost">;
   gitManager: Pick<GitManager, "checkpoint">;
+  permissionGate?: PermissionRequester;
+  requireApproval?: boolean;
+  autoApprove?: boolean;
   repoMapBuilder?: (
     repoPath: string,
     options?: BuildRepoMapOptions,
@@ -62,12 +71,28 @@ export interface TokenEvent {
   token: string;
 }
 
+export interface DiffPreviewEvent {
+  file: string;
+  patch: string;
+}
+
+export interface PermissionRequester {
+  requestPermission(
+    sessionId: string,
+    requestId: string,
+    tool: string,
+    input: unknown,
+    options?: { autoApprove?: boolean },
+  ): Promise<boolean>;
+}
+
 export interface PIVEngineEventMap {
   phase_change: [PhaseChangeEvent];
   token: [TokenEvent];
   plan_ready: [Plan];
   validate_result: [ValidateRun];
   checkpoint: [GitCheckpoint];
+  diff_preview: [DiffPreviewEvent];
   error: [Error];
 }
 
@@ -95,6 +120,9 @@ export class PIVEngine {
   readonly #diffEngine: Pick<DiffEngine, "apply">;
   readonly #sandbox: Pick<SandboxManager, "exec" | "syncToHost">;
   readonly #gitManager: Pick<GitManager, "checkpoint">;
+  readonly #permissionGate: PermissionRequester | undefined;
+  readonly #requireApproval: boolean;
+  readonly #autoApprove: boolean;
   readonly #repoMapBuilder: NonNullable<PIVEngineOptions["repoMapBuilder"]>;
   readonly #maxRetries: number;
   readonly #maxPlanTokens: number;
@@ -119,6 +147,9 @@ export class PIVEngine {
     this.#diffEngine = options.diffEngine;
     this.#sandbox = options.sandbox;
     this.#gitManager = options.gitManager;
+    this.#permissionGate = options.permissionGate;
+    this.#requireApproval = options.requireApproval ?? false;
+    this.#autoApprove = options.autoApprove ?? false;
     this.#repoMapBuilder = options.repoMapBuilder ?? buildRepoMap;
     this.#maxRetries = options.maxRetries ?? 3;
     this.#maxPlanTokens = options.maxPlanTokens ?? 1200;
@@ -235,6 +266,25 @@ export class PIVEngine {
     );
     await this.#insertMessage("assistant", "implement", content);
 
+    const previews = this.#previewDiff(content);
+    for (const preview of previews) {
+      this.events.emit("diff_preview", preview);
+    }
+
+    if (
+      this.#requireApproval &&
+      previews.length > 0 &&
+      !(await this.#approveDiff(previews))
+    ) {
+      await this.#insertMessage(
+        "tool_result",
+        "implement",
+        "User rejected the proposed diff before it was applied.",
+      );
+      await this.#consumeRetry();
+      return false;
+    }
+
     try {
       await this.#diffEngine.apply(this.#sessionId, content);
       return true;
@@ -247,6 +297,35 @@ export class PIVEngine {
       await this.#consumeRetry();
       return false;
     }
+  }
+
+  #previewDiff(content: string): DiffPreviewEvent[] {
+    try {
+      return parseUnifiedDiff(content).map((patch) => ({
+        file: patchTargetPath(patch),
+        patch: formatFilePatch(patch),
+      }));
+    } catch {
+      // DiffEngine.apply converts parse failures into retryable apply errors.
+      // Let that existing path handle malformed model output uniformly.
+      return [];
+    }
+  }
+
+  async #approveDiff(previews: DiffPreviewEvent[]): Promise<boolean> {
+    if (!this.#permissionGate) {
+      throw new Error("Diff approval is required but no PermissionGate exists");
+    }
+
+    return this.#permissionGate.requestPermission(
+      this.#sessionId,
+      this.#createId(),
+      "apply_diff",
+      {
+        files: previews.map((preview) => preview.file),
+      },
+      { autoApprove: this.#autoApprove },
+    );
   }
 
   async #validate(): Promise<boolean> {

@@ -33,12 +33,18 @@ export interface SessionControllerOptions {
     "createSandbox" | "destroySandbox" | "exec" | "syncToHost"
   >;
   llmRouterFactory: () => Pick<LLMRouter, "complete">;
+  permissionGate?: PIVEngineOptions["permissionGate"];
   createEngine?: (options: PIVEngineOptions) => SessionEngine;
   createGitManager?: (repoPath: string) => SessionGitManager;
   maxRetries?: number;
   now?: () => string;
   createId?: () => string;
   loadTestCommand?: (repoPath: string) => Promise<string | undefined>;
+}
+
+export interface CreateSessionOptions {
+  requireApproval?: boolean;
+  autoApprove?: boolean;
 }
 
 export interface CurrentPlanStore {
@@ -64,6 +70,7 @@ export class SessionController {
   readonly #pivStore: SessionControllerOptions["pivStore"];
   readonly #sandbox: SessionControllerOptions["sandbox"];
   readonly #llmRouterFactory: SessionControllerOptions["llmRouterFactory"];
+  readonly #permissionGate: PIVEngineOptions["permissionGate"];
   readonly #createEngine: NonNullable<SessionControllerOptions["createEngine"]>;
   readonly #createGitManager: NonNullable<
     SessionControllerOptions["createGitManager"]
@@ -81,6 +88,7 @@ export class SessionController {
     this.#pivStore = options.pivStore;
     this.#sandbox = options.sandbox;
     this.#llmRouterFactory = options.llmRouterFactory;
+    this.#permissionGate = options.permissionGate;
     this.#createEngine =
       options.createEngine ?? ((engineOptions) => new PIVEngine(engineOptions));
     this.#createGitManager =
@@ -93,7 +101,10 @@ export class SessionController {
     this.#loadTestCommand = options.loadTestCommand ?? loadTestCommand;
   }
 
-  async createSession(repoPath: string): Promise<Session> {
+  async createSession(
+    repoPath: string,
+    options: CreateSessionOptions = {},
+  ): Promise<Session> {
     const testCommand = (await this.#loadTestCommand(repoPath)) ?? "true";
 
     const sessionId = this.#createId();
@@ -105,7 +116,11 @@ export class SessionController {
       repoPath,
       containerId: sandboxInfo.containerName,
       volumeId: sandboxInfo.volumeName,
-      config: { testCommand },
+      config: {
+        testCommand,
+        requireApproval: options.requireApproval ?? false,
+        autoApprove: options.autoApprove ?? false,
+      },
       createdAt,
       updatedAt: createdAt,
     };
@@ -127,6 +142,11 @@ export class SessionController {
       diffEngine: new DiffEngine(this.#sandbox),
       sandbox: this.#sandbox,
       gitManager,
+      ...(this.#permissionGate === undefined
+        ? {}
+        : { permissionGate: this.#permissionGate }),
+      requireApproval: options.requireApproval ?? false,
+      autoApprove: options.autoApprove ?? false,
       ...(this.#maxRetries === undefined
         ? {}
         : { maxRetries: this.#maxRetries }),

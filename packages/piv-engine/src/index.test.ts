@@ -133,6 +133,50 @@ describe("PIVEngine", () => {
     ).toBe(true);
   });
 
+  it("previews diffs and waits for approval before applying them", async () => {
+    const harness = createHarness({
+      completions: ["plan", validDiff()],
+      requireApproval: true,
+    });
+    const previews: Array<{ file: string; patch: string }> = [];
+    harness.engine.events.on("diff_preview", (preview) => {
+      previews.push(preview);
+    });
+
+    const plan = await harness.engine.startTask("edit code");
+    await harness.engine.approve(plan.id);
+
+    expect(previews).toMatchObject([{ file: "src/a.ts" }]);
+    expect(harness.permissionRequests).toEqual([
+      {
+        sessionId: "session-1",
+        requestId: "id-5",
+        tool: "apply_diff",
+        input: { files: ["src/a.ts"] },
+        options: { autoApprove: false },
+      },
+    ]);
+    expect(harness.diffCalls).toEqual([validDiff()]);
+  });
+
+  it("retries implementation without writing when the user rejects a diff", async () => {
+    const harness = createHarness({
+      completions: ["plan", validDiff(), validDiff("next")],
+      requireApproval: true,
+      permissionResults: [false, true],
+    });
+
+    const plan = await harness.engine.startTask("edit code");
+    await harness.engine.approve(plan.id);
+
+    expect(harness.diffCalls).toEqual([validDiff("next")]);
+    expect(
+      harness.store.messages.some((message) =>
+        message.content.includes("User rejected"),
+      ),
+    ).toBe(true);
+  });
+
   it("enters error on unexpected planning failures", async () => {
     const harness = createHarness({
       completions: ["unused"],
@@ -150,6 +194,8 @@ interface HarnessOptions {
   completions: string[];
   diffFailures?: Error[];
   maxRetries?: number;
+  permissionResults?: boolean[];
+  requireApproval?: boolean;
   repoMapError?: Error;
   validationResults?: ExecResult[];
 }
@@ -162,11 +208,13 @@ function createHarness(options: HarnessOptions) {
   const syncedSessions: string[] = [];
   const checkpointCalls: string[][] = [];
   const transitions: Array<[string, string]> = [];
+  const permissionRequests: unknown[] = [];
   const completions = [...options.completions];
   const diffFailures = [...(options.diffFailures ?? [])];
   const validationResults = [
     ...(options.validationResults ?? [execResult("ok", "", 0)]),
   ];
+  const permissionResults = [...(options.permissionResults ?? [true])];
 
   const engine = new PIVEngine({
     sessionId: "session-1",
@@ -214,6 +262,21 @@ function createHarness(options: HarnessOptions) {
         };
       },
     },
+    permissionGate: {
+      async requestPermission(sessionId, requestId, tool, input, options) {
+        permissionRequests.push({
+          sessionId,
+          requestId,
+          tool,
+          input,
+          options,
+        });
+        return permissionResults.shift() ?? true;
+      },
+    },
+    ...(options.requireApproval === undefined
+      ? {}
+      : { requireApproval: options.requireApproval }),
     repoMapBuilder: async () => {
       if (options.repoMapError) {
         throw options.repoMapError;
@@ -244,7 +307,18 @@ function createHarness(options: HarnessOptions) {
     store,
     syncedSessions,
     transitions,
+    permissionRequests,
   };
+}
+
+function validDiff(replacement = "next"): string {
+  return [
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,1 +1,1 @@",
+    "-old",
+    `+${replacement}`,
+  ].join("\n");
 }
 
 function execResult(
