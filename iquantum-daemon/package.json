@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@iquantum/config": "workspace:*",
+    "@iquantum/context-window": "workspace:*",
     "@iquantum/types": "workspace:*",
     "@iquantum/diff-engine": "workspace:*",
     "@iquantum/git": "workspace:*",

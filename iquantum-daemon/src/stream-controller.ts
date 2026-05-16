@@ -11,6 +11,7 @@ export interface StreamSocket {
 export class StreamController {
   readonly #sessions: StreamSessions;
   readonly #sockets = new Set<StreamSocket>();
+  readonly #socketsBySession = new Map<string, Set<StreamSocket>>();
 
   constructor(sessions: StreamSessions) {
     this.#sessions = sessions;
@@ -35,13 +36,21 @@ export class StreamController {
           passed: run.passed,
           attempt: run.attempt,
         }),
-      checkpoint: (checkpoint) =>
-        this.#send(socket, { type: "checkpoint", hash: checkpoint.commitHash }),
+      checkpoint: (checkpoint) => {
+        this.#send(socket, {
+          type: "checkpoint",
+          hash: checkpoint.commitHash,
+        });
+        this.#send(socket, { type: "done" });
+      },
       error: (error) =>
         this.#send(socket, { type: "error", message: error.message }),
     });
 
     this.#sockets.add(socket);
+    const sessionSockets = this.#socketsBySession.get(sessionId) ?? new Set();
+    sessionSockets.add(socket);
+    this.#socketsBySession.set(sessionId, sessionSockets);
 
     return () => {
       for (const unsubscribe of subscriptions) {
@@ -49,7 +58,18 @@ export class StreamController {
       }
 
       this.#sockets.delete(socket);
+      sessionSockets.delete(socket);
+
+      if (sessionSockets.size === 0) {
+        this.#socketsBySession.delete(sessionId);
+      }
     };
+  }
+
+  publish(sessionId: string, frame: ServerStreamFrame): void {
+    for (const socket of this.#socketsBySession.get(sessionId) ?? []) {
+      this.#send(socket, frame);
+    }
   }
 
   closeAll(): void {
@@ -58,6 +78,7 @@ export class StreamController {
     }
 
     this.#sockets.clear();
+    this.#socketsBySession.clear();
   }
 
   #send(socket: StreamSocket, frame: ServerStreamFrame): void {

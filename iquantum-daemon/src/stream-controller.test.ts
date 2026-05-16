@@ -31,6 +31,33 @@ describe("StreamController", () => {
       { type: "plan_ready", planId: "plan-1" },
     ]);
   });
+
+  it("publishes direct frames and closes a clean PIV stream after checkpointing", () => {
+    const events = new EventEmitter<PIVEngineEventMap>();
+    const sent: string[] = [];
+    const controller = new StreamController({
+      getEngine() {
+        return fakeEngine(events);
+      },
+    });
+    controller.attach("session-1", fakeSocket(sent));
+
+    controller.publish("session-1", { type: "token", delta: "chat" });
+    events.emit("checkpoint", {
+      id: "checkpoint-1",
+      sessionId: "session-1",
+      validateRunId: "run-1",
+      commitHash: "abc1234",
+      commitMessage: "done",
+      createdAt: "2026-05-16T00:00:00.000Z",
+    });
+
+    expect(sent.map((frame) => JSON.parse(frame) as unknown)).toEqual([
+      { type: "token", delta: "chat" },
+      { type: "checkpoint", hash: "abc1234" },
+      { type: "done" },
+    ]);
+  });
 });
 
 function fakeSocket(sent: string[]): StreamSocket {

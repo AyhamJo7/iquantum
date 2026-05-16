@@ -33,6 +33,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@iquantum/config": "workspace:*",
+        "@iquantum/context-window": "workspace:*",
         "@iquantum/diff-engine": "workspace:*",
         "@iquantum/git": "workspace:*",
         "@iquantum/llm": "workspace:*",

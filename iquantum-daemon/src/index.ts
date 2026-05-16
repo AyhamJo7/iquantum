@@ -4,8 +4,11 @@ import { dirname, join } from "node:path";
 import { loadConfig } from "@iquantum/config";
 import { AnthropicProvider, LLMRouter } from "@iquantum/llm";
 import { SandboxManager } from "@iquantum/sandbox";
+import { CompactionService } from "./compaction-service";
+import { ConversationController } from "./conversation-controller";
 import { initializeSchema } from "./db/schema";
 import {
+  SqliteConversationStore,
   SqliteGitCheckpointStore,
   SqlitePIVStore,
   SqliteSessionStore,
@@ -29,25 +32,40 @@ initializeSchema(db);
 
 const sessionStore = new SqliteSessionStore(db);
 const pivStore = new SqlitePIVStore(db);
+const conversationStore = new SqliteConversationStore(db);
 const checkpointStore = new SqliteGitCheckpointStore(db);
 const sandbox = new SandboxManager();
+const provider = new AnthropicProvider({ apiKey: config.anthropicApiKey });
+const maxInputTokens = 32_000;
+const llmRouter = new LLMRouter({
+  architect: { provider, model: config.architectModel },
+  editor: { provider, model: config.editorModel },
+  maxInputTokens,
+});
 const sessions = new SessionController({
   sessionStore,
   pivStore,
   gitCheckpointStore: checkpointStore,
   sandbox,
   maxRetries: config.maxRetries,
-  llmRouterFactory: () => {
-    const provider = new AnthropicProvider({ apiKey: config.anthropicApiKey });
-
-    return new LLMRouter({
-      architect: { provider, model: config.architectModel },
-      editor: { provider, model: config.editorModel },
-      maxInputTokens: 32_000,
-    });
-  },
+  llmRouterFactory: () => llmRouter,
 });
 const streams = new StreamController(sessions);
+const conversationCompleter = {
+  complete: llmRouter.complete.bind(llmRouter, "plan"),
+};
+const compaction = new CompactionService({
+  store: conversationStore,
+  completer: conversationCompleter,
+  streams,
+  modelContextWindow: maxInputTokens,
+});
+const conversations = new ConversationController({
+  store: conversationStore,
+  completer: conversationCompleter,
+  streams,
+  compactor: compaction,
+});
 
 async function healthCheck(): Promise<{ db: boolean; docker: boolean }> {
   let dbOk = false;
@@ -74,6 +92,8 @@ const server = createDaemonServer({
   socketPath: config.socketPath,
   sessions,
   streams,
+  conversations,
+  compaction,
   healthCheck,
 });
 

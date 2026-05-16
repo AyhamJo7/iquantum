@@ -30,6 +30,9 @@
     },
     {
       "path": "../packages/protocol"
+    },
+    {
+      "path": "../packages/context-window"
     }
   ]
 }
