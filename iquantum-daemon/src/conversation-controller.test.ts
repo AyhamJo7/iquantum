@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import type { CompletionEvent, McpTool } from "@iquantum/types";
+import { describe, expect, it, vi } from "vitest";
+import type { PermissionChecker } from "./conversation-controller";
 import { ConversationController } from "./conversation-controller";
 import {
   InMemoryConversationStore,
@@ -108,11 +110,173 @@ describe("ConversationController", () => {
   });
 });
 
+describe("ConversationController — tool loop", () => {
+  const fakeTool: McpTool = {
+    name: "fs__read",
+    description: "Read a file",
+    inputSchema: { type: "object" },
+  };
+
+  function makeToolCompleter(
+    events: CompletionEvent[][],
+  ): (
+    messages: unknown,
+    tools: unknown,
+    opts: unknown,
+  ) => AsyncIterable<CompletionEvent> {
+    let call = 0;
+    return async function* () {
+      const batch = events[call++] ?? [];
+      for (const e of batch) yield e;
+    };
+  }
+
+  it("executes tool call, appends result, and loops to final answer", async () => {
+    const frames: unknown[] = [];
+    const store = new InMemoryConversationStore();
+    let nextId = 1;
+
+    // Turn 1: LLM wants to call a tool
+    // Turn 2: LLM gives final answer after seeing tool result
+    const completeWithTools = makeToolCompleter([
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "fs__read",
+          input: { path: "/tmp/a" },
+        },
+      ],
+      [{ type: "token", delta: "final answer" }],
+    ]);
+
+    const mcpClient = {
+      listTools: vi.fn().mockResolvedValue([fakeTool]),
+      callTool: vi.fn().mockResolvedValue("file contents"),
+    };
+    const permissionChecker: PermissionChecker = {
+      requestPermission: vi.fn().mockResolvedValue(true),
+    };
+
+    const controller = new ConversationController({
+      store,
+      completer: {
+        async *complete() {
+          yield "";
+        },
+        completeWithTools,
+      },
+      streams: { publish: (_s, f) => frames.push(f) },
+      mcpClient,
+      permissionChecker,
+      now: () => fixedNow,
+      createId: () => `id-${nextId++}`,
+      tokenCounter: () => 0,
+    });
+
+    await controller.addMessage("session-1", "hello");
+
+    // Stored messages: user, assistant (with tool_use blocks), tool_result, assistant (final)
+    const roles = store.messages.map((m) => m.role);
+    expect(roles).toEqual(["user", "assistant", "tool_result", "assistant"]);
+
+    // Tool was called
+    expect(mcpClient.callTool).toHaveBeenCalledWith("fs__read", {
+      path: "/tmp/a",
+    });
+
+    // Final token was streamed
+    expect(frames).toContainEqual({ type: "token", delta: "final answer" });
+    expect(frames).toContainEqual({ type: "done" });
+  });
+
+  it("stores tool rejection when permission is denied", async () => {
+    const store = new InMemoryConversationStore();
+    let nextId = 1;
+
+    const mcpClient = {
+      listTools: vi.fn().mockResolvedValue([fakeTool]),
+      callTool: vi.fn(),
+    };
+    const permissionChecker: PermissionChecker = {
+      requestPermission: vi.fn().mockResolvedValue(false),
+    };
+
+    const completeWithTools = makeToolCompleter([
+      [{ type: "tool_use", id: "c1", name: "fs__read", input: {} }],
+      [], // final turn with no tool calls
+    ]);
+
+    const controller = new ConversationController({
+      store,
+      completer: {
+        async *complete() {
+          yield "";
+        },
+        completeWithTools,
+      },
+      streams: { publish: () => {} },
+      mcpClient,
+      permissionChecker,
+      now: () => fixedNow,
+      createId: () => `id-${nextId++}`,
+      tokenCounter: () => 0,
+    });
+
+    await controller.addMessage("session-1", "run tool");
+
+    // Tool was NOT called because permission was denied
+    expect(mcpClient.callTool).not.toHaveBeenCalled();
+
+    // The tool_result message should contain the rejection text
+    const toolResultMsg = store.messages.find((m) => m.role === "tool_result");
+    const text = toolResultMsg?.content
+      .map((b) =>
+        typeof b.content === "string"
+          ? b.content
+          : typeof b.text === "string"
+            ? b.text
+            : "",
+      )
+      .join("");
+    expect(text).toContain("rejected");
+  });
+
+  it("falls back to text loop when completer has no completeWithTools", async () => {
+    const frames: unknown[] = [];
+    const store = new InMemoryConversationStore();
+    let nextId = 1;
+
+    const mcpClient = {
+      listTools: vi.fn().mockResolvedValue([fakeTool]),
+      callTool: vi.fn(),
+    };
+
+    const controller = new ConversationController({
+      store,
+      // no completeWithTools
+      completer: {
+        async *complete() {
+          yield "fallback";
+        },
+      },
+      streams: { publish: (_s, f) => frames.push(f) },
+      mcpClient,
+      now: () => fixedNow,
+      createId: () => `id-${nextId++}`,
+      tokenCounter: () => 0,
+    });
+
+    await controller.addMessage("session-1", "hello");
+    expect(frames).toContainEqual({ type: "token", delta: "fallback" });
+    expect(mcpClient.callTool).not.toHaveBeenCalled();
+  });
+});
+
 function createHarness(completions: string[]) {
   let nextId = 1;
   const store = new InMemoryConversationStore();
-  const calls: Array<{ messages: Array<{ role: string; content: string }> }> =
-    [];
+  const calls: Array<{ messages: import("@iquantum/types").LLMMessage[] }> = [];
   const frames: unknown[] = [];
   const controller = new ConversationController({
     store,

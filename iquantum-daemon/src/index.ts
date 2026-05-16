@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { loadConfig } from "@iquantum/config";
 import { AnthropicProvider, LLMRouter } from "@iquantum/llm";
 import { SandboxManager } from "@iquantum/sandbox";
+import type { McpTool } from "@iquantum/types";
 import { CompactionService } from "./compaction-service";
 import { ConversationController } from "./conversation-controller";
 import { initializeSchema } from "./db/schema";
@@ -14,7 +15,9 @@ import {
   SqliteSessionStore,
 } from "./db/stores";
 import { logger } from "./logger";
+import { McpClient, McpRegistry } from "./mcp-client";
 import { PermissionGate } from "./permission-gate";
+import type { DaemonMcpRegistry } from "./server";
 import { createDaemonServer } from "./server";
 import { SessionController } from "./session-controller";
 import { StreamController } from "./stream-controller";
@@ -61,6 +64,11 @@ const sessions = new SessionController({
 streams = new StreamController(sessions);
 const conversationCompleter = {
   complete: llmRouter.complete.bind(llmRouter, "plan"),
+  completeWithTools: (
+    messages: Parameters<typeof llmRouter.completeWithTools>[1],
+    tools: Parameters<typeof llmRouter.completeWithTools>[2],
+    options: Parameters<typeof llmRouter.completeWithTools>[3],
+  ) => llmRouter.completeWithTools("plan", messages, tools, options),
 };
 const compaction = new CompactionService({
   store: conversationStore,
@@ -68,11 +76,35 @@ const compaction = new CompactionService({
   streams,
   modelContextWindow: maxInputTokens,
 });
+
+const mcpClients = config.mcpServers.map((srv) => new McpClient(srv));
+const mcpRegistry =
+  mcpClients.length > 0 ? new McpRegistry(mcpClients) : undefined;
+
+const daemonMcpRegistry: DaemonMcpRegistry | undefined = mcpRegistry
+  ? {
+      async listAllTools() {
+        const tools: McpTool[] = (await mcpRegistry.listTools()) as McpTool[];
+        return tools.map((t) => {
+          const sepIdx = t.name.indexOf("__");
+          return {
+            serverName: sepIdx !== -1 ? t.name.slice(0, sepIdx) : "mcp",
+            name: sepIdx !== -1 ? t.name.slice(sepIdx + 2) : t.name,
+            description: t.description,
+            inputSchema: t.inputSchema,
+          };
+        });
+      },
+    }
+  : undefined;
+
 const conversations = new ConversationController({
   store: conversationStore,
   completer: conversationCompleter,
   streams,
   compactor: compaction,
+  ...(mcpRegistry ? { mcpClient: mcpRegistry } : {}),
+  permissionChecker: permissions,
 });
 
 async function healthCheck(): Promise<{ db: boolean; docker: boolean }> {
@@ -103,6 +135,7 @@ const server = createDaemonServer({
   conversations,
   compaction,
   permissions,
+  ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
   healthCheck,
 });
 
@@ -125,6 +158,7 @@ async function shutdown(reason: string, exitCode = 0): Promise<void> {
   logger.info({ msg: "shutdown", reason, exitCode });
   permissions.drainAll();
   streams.closeAll();
+  await mcpRegistry?.closeAll();
   await server.stop(true);
   db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
   db.close();

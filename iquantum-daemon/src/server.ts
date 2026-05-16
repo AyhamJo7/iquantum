@@ -9,6 +9,17 @@ import {
 } from "./session-controller";
 import type { StreamSocket } from "./stream-controller";
 
+export interface DaemonMcpRegistry {
+  listAllTools(): Promise<
+    Array<{
+      serverName: string;
+      name: string;
+      description: string;
+      inputSchema: Record<string, unknown>;
+    }>
+  >;
+}
+
 export interface DaemonServerOptions {
   socketPath: string;
   sessions: DaemonSessions;
@@ -16,6 +27,7 @@ export interface DaemonServerOptions {
   conversations?: DaemonConversations;
   compaction?: DaemonCompaction;
   permissions?: DaemonPermissions;
+  mcpRegistry?: DaemonMcpRegistry;
   healthCheck?: () => Promise<{ db: boolean; docker: boolean }>;
 }
 
@@ -114,6 +126,18 @@ export function createRequestHandler(options: DaemonServerOptions) {
         }
 
         return Response.json({ ok: true });
+      }
+
+      if (
+        request.method === "GET" &&
+        parts.length === 2 &&
+        parts[0] === "mcp" &&
+        parts[1] === "tools"
+      ) {
+        const tools = options.mcpRegistry
+          ? await options.mcpRegistry.listAllTools()
+          : [];
+        return Response.json(tools);
       }
 
       if (parts[0] !== "sessions") {

@@ -4,6 +4,7 @@ import {
   createRequestHandler,
   type DaemonCompaction,
   type DaemonConversations,
+  type DaemonMcpRegistry,
   type DaemonPermissions,
   type DaemonSessions,
   type DaemonStreams,
@@ -185,6 +186,46 @@ describe("daemon request handler", () => {
     expect(missing.status).toBe(404);
     expect(await missing.json()).toEqual({ error: "session_not_found" });
     expect(calls).toEqual([]);
+  });
+
+  it("GET /mcp/tools returns empty array when no registry is configured", async () => {
+    const { sessions } = fakeSessions();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+    });
+
+    const response = await request(handler, "/mcp/tools");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+  });
+
+  it("GET /mcp/tools returns tools from the registry", async () => {
+    const { sessions } = fakeSessions();
+    const mcpRegistry: DaemonMcpRegistry = {
+      async listAllTools() {
+        return [
+          {
+            serverName: "fs",
+            name: "read_file",
+            description: "Read",
+            inputSchema: {},
+          },
+        ];
+      },
+    };
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+      mcpRegistry,
+    });
+
+    const response = await request(handler, "/mcp/tools");
+    expect(response.status).toBe(200);
+    const tools = await response.json();
+    expect(tools).toMatchObject([{ serverName: "fs", name: "read_file" }]);
   });
 
   it("returns 400 for a conversation cursor outside the session", async () => {
