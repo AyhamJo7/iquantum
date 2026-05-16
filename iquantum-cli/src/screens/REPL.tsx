@@ -2,12 +2,14 @@ import type { Session } from "@iquantum/types";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import type { DaemonClient } from "../client";
+import { isDaemonNotRunning } from "../client";
 import type { CommandRegistry } from "../commands/registry";
 import { PermissionRequest } from "../components/PermissionRequest";
 import { PromptInput } from "../components/PromptInput";
 import { SpinnerWithPhase } from "../components/SpinnerWithPhase";
 import { StatusBar } from "../components/StatusBar";
 import { VirtualMessageList } from "../components/VirtualMessageList";
+import type { TranscriptItem } from "./repl-state";
 import { initialREPLViewState, reduceREPLViewState } from "./repl-state";
 
 export interface REPLProps {
@@ -15,12 +17,20 @@ export interface REPLProps {
   session: Session;
   modelName: string;
   registry?: CommandRegistry;
+  initialMessages?: TranscriptItem[];
 }
 
-export function REPL({ client, session, modelName, registry }: REPLProps) {
+export function REPL({
+  client,
+  session,
+  modelName,
+  registry,
+  initialMessages = [],
+}: REPLProps) {
   const [state, dispatch] = useReducer(
     reduceREPLViewState,
-    initialREPLViewState,
+    initialMessages,
+    (msgs) => ({ ...initialREPLViewState, messages: msgs }),
   );
   const submittingRef = useRef(false);
   const lastCtrlCRef = useRef(0);
@@ -85,8 +95,9 @@ export function REPL({ client, session, modelName, registry }: REPLProps) {
         if (active) {
           dispatch({
             type: "submit_error",
-            message:
-              streamError instanceof Error
+            message: isDaemonNotRunning(streamError)
+              ? "Daemon disconnected. Run `iq daemon start` to reconnect."
+              : streamError instanceof Error
                 ? streamError.message
                 : String(streamError),
           });

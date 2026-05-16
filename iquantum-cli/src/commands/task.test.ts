@@ -213,6 +213,9 @@ function createHarness(options: HarnessOptions) {
     async listMcpTools() {
       return [];
     },
+    async getMessages() {
+      return { messages: [], nextCursor: null };
+    },
     openStream(sessionId) {
       calls.push(["openStream", sessionId]);
       const frames = options.frames;

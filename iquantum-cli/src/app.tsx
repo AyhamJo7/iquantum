@@ -1,12 +1,19 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Session } from "@iquantum/types";
 import { Box, render, Text } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DaemonClient } from "./client";
+import type { ConversationEntry, DaemonClient } from "./client";
 import { HttpDaemonClient } from "./client";
 import { startDaemon } from "./commands/daemon";
 import { makeCommandRegistry } from "./commands/slash-commands";
 import { Splash } from "./components/Splash";
 import { REPL } from "./screens/REPL";
+import type { TranscriptItem } from "./screens/repl-state";
+import {
+  readLastSession as defaultReadLastSession,
+  writeLastSession as defaultWriteLastSession,
+} from "./session-persist";
 import { defaultSleep, ensureDaemonReady } from "./startup";
 
 export interface IQAppProps {
@@ -15,9 +22,12 @@ export interface IQAppProps {
   modelName: string;
   version: string;
   repoPath: string;
+  iquantumDir?: string;
   skipSplash?: boolean;
   startDaemonFn?: () => Promise<void>;
   sleep?: (delayMs: number) => Promise<void>;
+  readLastSession?: (dir: string) => Promise<string | null>;
+  writeLastSession?: (dir: string, id: string) => Promise<void>;
 }
 
 export function IQApp({
@@ -26,15 +36,21 @@ export function IQApp({
   modelName,
   version,
   repoPath,
+  iquantumDir,
   skipSplash = false,
   startDaemonFn,
   sleep,
+  readLastSession = defaultReadLastSession,
+  writeLastSession = defaultWriteLastSession,
 }: IQAppProps) {
   const [session, setSession] = useState<Session>();
+  const [initialMessages, setInitialMessages] = useState<TranscriptItem[]>([]);
   const [showRepl, setShowRepl] = useState(skipSplash);
   const registryRef = useRef(makeCommandRegistry());
   const [error, setError] = useState<string>();
   const completeSplash = useCallback(() => setShowRepl(true), []);
+
+  const persistDir = iquantumDir ?? join(homedir(), ".iquantum");
 
   useEffect(() => {
     let active = true;
@@ -47,13 +63,43 @@ export function IQApp({
             (() => startDaemon({ socketPath }, { writeln: () => undefined })),
           sleep ?? defaultSleep,
         );
-        const createdSession = await client.createSession(repoPath, {
-          requireApproval: true,
-          autoApprove: false,
-        });
+
+        let resolvedSession: Session | undefined;
+        let isResume = false;
+
+        const savedId = await readLastSession(persistDir);
+        if (savedId) {
+          try {
+            resolvedSession = (await client.getSession(savedId)) as Session;
+            isResume = true;
+          } catch {
+            // session no longer exists; fall through to create a new one
+          }
+        }
+
+        if (!resolvedSession) {
+          resolvedSession = await client.createSession(repoPath, {
+            requireApproval: true,
+            autoApprove: false,
+          });
+          await writeLastSession(persistDir, resolvedSession.id).catch(
+            () => undefined,
+          );
+        }
+
+        if (isResume && resolvedSession) {
+          const page = await client
+            .getMessages(resolvedSession.id, { limit: 50 })
+            .catch(() => null);
+          if (page && page.messages.length > 0 && active) {
+            setInitialMessages(
+              buildHistoryItems(page.messages, resolvedSession.id),
+            );
+          }
+        }
 
         if (active) {
-          setSession(createdSession);
+          setSession(resolvedSession);
         }
       } catch (startupError) {
         if (active) {
@@ -69,7 +115,16 @@ export function IQApp({
     return () => {
       active = false;
     };
-  }, [client, repoPath, sleep, socketPath, startDaemonFn]);
+  }, [
+    client,
+    persistDir,
+    readLastSession,
+    repoPath,
+    sleep,
+    socketPath,
+    startDaemonFn,
+    writeLastSession,
+  ]);
 
   if (error) {
     return <Text color="red">{error}</Text>;
@@ -98,9 +153,33 @@ export function IQApp({
         session={session}
         modelName={modelName}
         registry={registryRef.current}
+        initialMessages={initialMessages}
       />
     </Box>
   );
+}
+
+function buildHistoryItems(
+  entries: ConversationEntry[],
+  sessionId: string,
+): TranscriptItem[] {
+  let counter = 0;
+  const items: TranscriptItem[] = entries
+    .filter((e) => e.role === "user" || e.role === "assistant")
+    .map((e) => ({
+      id: `history-${sessionId}-${counter++}`,
+      type: "message" as const,
+      role: (e.role === "assistant" ? "assistant" : "user") as
+        | "user"
+        | "assistant",
+      text: e.content
+        .map((b) => (typeof b.text === "string" ? b.text : ""))
+        .join("\n")
+        .trim(),
+    }));
+
+  items.push({ id: `history-sep-${sessionId}`, type: "session_separator" });
+  return items;
 }
 
 export interface RenderAndRunOptions {
