@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MissingApiKeyError, loadConfig } from "./index";
+import { loadConfig, MissingApiKeyError } from "./index";
 
 const validEnv = {
   ANTHROPIC_API_KEY: "test-key",
@@ -29,15 +29,13 @@ describe("loadConfig", () => {
 
   it("throws MissingApiKeyError when API key is absent", () => {
     expect(() => loadConfig({})).toThrow(MissingApiKeyError);
-    expect(() => loadConfig({})).toThrow(
-      "ANTHROPIC_API_KEY is not set",
-    );
+    expect(() => loadConfig({})).toThrow("ANTHROPIC_API_KEY is not set");
   });
 
   it("throws MissingApiKeyError (not a raw ZodError) when key is empty string", () => {
-    expect(() =>
-      loadConfig({ ...validEnv, ANTHROPIC_API_KEY: "" }),
-    ).toThrow(MissingApiKeyError);
+    expect(() => loadConfig({ ...validEnv, ANTHROPIC_API_KEY: "" })).toThrow(
+      MissingApiKeyError,
+    );
   });
 
   it("uses release defaults for optional settings", () => {

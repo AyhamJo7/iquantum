@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import ignore from "ignore";
 import { Language, type Node, Parser } from "web-tree-sitter";
 
@@ -45,13 +46,26 @@ export interface RepoMapResult {
 const require = createRequire(import.meta.url);
 
 const wasmPathByLanguage: Record<SupportedLanguage, string> = {
-  go: require.resolve("tree-sitter-go/tree-sitter-go.wasm"),
-  python: require.resolve("tree-sitter-python/tree-sitter-python.wasm"),
-  rust: require.resolve("tree-sitter-rust/tree-sitter-rust.wasm"),
-  typescript: require.resolve(
-    "tree-sitter-typescript/tree-sitter-typescript.wasm",
+  go: resolveGrammarWasm(
+    "tree-sitter-go/tree-sitter-go.wasm",
+    "tree-sitter-go.wasm",
   ),
-  tsx: require.resolve("tree-sitter-typescript/tree-sitter-tsx.wasm"),
+  python: resolveGrammarWasm(
+    "tree-sitter-python/tree-sitter-python.wasm",
+    "tree-sitter-python.wasm",
+  ),
+  rust: resolveGrammarWasm(
+    "tree-sitter-rust/tree-sitter-rust.wasm",
+    "tree-sitter-rust.wasm",
+  ),
+  typescript: resolveGrammarWasm(
+    "tree-sitter-typescript/tree-sitter-typescript.wasm",
+    "tree-sitter-typescript.wasm",
+  ),
+  tsx: resolveGrammarWasm(
+    "tree-sitter-typescript/tree-sitter-tsx.wasm",
+    "tree-sitter-tsx.wasm",
+  ),
 };
 
 const languageByExtension: Record<string, SupportedLanguage> = {
@@ -79,6 +93,17 @@ const defaultIgnoredDirectories = new Set([
 
 const languageCache = new Map<SupportedLanguage, Promise<Language>>();
 let parserInitialization: Promise<void> | undefined;
+
+function resolveGrammarWasm(
+  packagePath: string,
+  bundledFileName: string,
+): string {
+  try {
+    return require.resolve(packagePath);
+  } catch {
+    return fileURLToPath(new URL(`./${bundledFileName}`, import.meta.url));
+  }
+}
 
 export function detectLanguage(
   filePath: string,

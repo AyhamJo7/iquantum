@@ -1,7 +1,10 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, open, readFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readConfigFileSync } from "@iquantum/config";
 import type { DaemonClient } from "../client";
 
 export interface DaemonStartOptions {
@@ -22,11 +25,21 @@ export interface Writer {
   writeln(line: string): void;
 }
 
+export function resolveDaemonEntry(
+  cliDir: string,
+  sourceExists: (path: string) => boolean = existsSync,
+): string {
+  const sourceEntry = resolve(cliDir, "../../../iquantum-daemon/src/index.ts");
+
+  if (sourceExists(sourceEntry)) {
+    return sourceEntry;
+  }
+
+  return resolve(cliDir, "daemon.js");
+}
+
 function defaultDaemonEntry(): string {
-  // daemon.ts lives at <repo>/iquantum-cli/src/commands/daemon.ts
-  // Three levels up reaches the repo root, then into iquantum-daemon.
-  const cliDir = dirname(fileURLToPath(import.meta.url));
-  return resolve(cliDir, "../../../iquantum-daemon/src/index.ts");
+  return resolveDaemonEntry(dirname(fileURLToPath(import.meta.url)));
 }
 
 function logPath(socketPath: string): string {
@@ -46,28 +59,27 @@ export async function startDaemon(
   await mkdir(stateDir, { recursive: true });
   const log = logPath(options.socketPath);
   const logFd = await open(log, "a");
-
-  // Auto-load .env from the repo root (2 levels up from iquantum-daemon/src/).
-  // This lets users run `iq daemon start` without manually exporting env vars.
-  const envFile = resolve(dirname(entry), "../../.env");
-  const runArgs = ["run"];
-  try {
-    await access(envFile);
-    runArgs.push("--env-file", envFile);
-  } catch {
-    // No .env found — rely on already-exported env vars.
-  }
-  runArgs.push(entry);
+  const runArgs = ["run", entry];
 
   const proc = spawn(process.execPath, runArgs, {
     detached: true,
     stdio: ["ignore", logFd.fd, logFd.fd],
-    env: process.env,
+    env: daemonChildEnv(),
   });
   proc.unref();
   await logFd.close();
   writer.writeln(`daemon started (pid ${proc.pid ?? "?"})`);
   writer.writeln(`logs: ${log}`);
+}
+
+export function daemonChildEnv(
+  configDir = join(homedir(), ".iquantum"),
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return {
+    ...readConfigFileSync(configDir),
+    ...env,
+  };
 }
 
 export async function stopDaemon(

@@ -52,8 +52,7 @@ export class SandboxManager {
 
   constructor(options: SandboxManagerOptions = {}) {
     this.#docker = options.docker ?? new Docker();
-    this.#image =
-      options.image ?? "ghcr.io/ayhamjo7/iquantum-sandbox:latest";
+    this.#image = options.image ?? "ghcr.io/ayhamjo7/iquantum-sandbox:latest";
     this.#seedImage = options.seedImage ?? "alpine:3.20";
     this.#execTimeoutMs = options.execTimeoutMs ?? 120_000;
 

@@ -19,7 +19,10 @@ describe("config commands", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = join(tmpdir(), `iq-cfg-test-${Math.random().toString(36).slice(2)}`);
+    tmpDir = join(
+      tmpdir(),
+      `iq-cfg-test-${Math.random().toString(36).slice(2)}`,
+    );
     await mkdir(tmpDir, { recursive: true });
   });
 
@@ -29,7 +32,12 @@ describe("config commands", () => {
 
   describe("configList", () => {
     it("shows all keys from config file", async () => {
-      await configSet("ANTHROPIC_API_KEY", "sk-ant-testkey", makeWriter().writer, tmpDir);
+      await configSet(
+        "ANTHROPIC_API_KEY",
+        "sk-ant-testkey",
+        makeWriter().writer,
+        tmpDir,
+      );
       await configSet("MAX_RETRIES", "5", makeWriter().writer, tmpDir);
       const { writer, lines } = makeWriter();
       configList(writer, tmpDir);
@@ -37,7 +45,12 @@ describe("config commands", () => {
     });
 
     it("redacts the API key", async () => {
-      await configSet("ANTHROPIC_API_KEY", "sk-ant-supersecret1234", makeWriter().writer, tmpDir);
+      await configSet(
+        "ANTHROPIC_API_KEY",
+        "sk-ant-supersecret1234",
+        makeWriter().writer,
+        tmpDir,
+      );
       const { writer, lines } = makeWriter();
       configList(writer, tmpDir);
       const output = lines.join("\n");
@@ -87,7 +100,12 @@ describe("config commands", () => {
     });
 
     it("redacts API key in get output", async () => {
-      await configSet("ANTHROPIC_API_KEY", "sk-ant-secret5678", makeWriter().writer, tmpDir);
+      await configSet(
+        "ANTHROPIC_API_KEY",
+        "sk-ant-secret5678",
+        makeWriter().writer,
+        tmpDir,
+      );
       const { writer, lines } = makeWriter();
       configGet("ANTHROPIC_API_KEY", writer, tmpDir);
       expect(lines.join("\n")).toContain("sk-...");

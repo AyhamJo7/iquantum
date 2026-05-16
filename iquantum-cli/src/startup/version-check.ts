@@ -1,5 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 interface UpdateCache {
@@ -47,8 +46,7 @@ export function checkForUpdate(
 
   const staleCutoff = 24 * 60 * 60 * 1000;
   const isStale =
-    !cached ||
-    Date.now() - new Date(cached.checkedAt).getTime() > staleCutoff;
+    !cached || Date.now() - new Date(cached.checkedAt).getTime() > staleCutoff;
 
   if (isStale) {
     // Fire and forget — never awaited.

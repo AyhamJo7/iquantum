@@ -29,9 +29,17 @@ describe("checkForUpdate", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = join(tmpdir(), `iq-vc-test-${Math.random().toString(36).slice(2)}`);
+    tmpDir = join(
+      tmpdir(),
+      `iq-vc-test-${Math.random().toString(36).slice(2)}`,
+    );
     await mkdir(tmpDir, { recursive: true });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: () => Promise.resolve({ version: "9.9.9" }) }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        json: () => Promise.resolve({ version: "9.9.9" }),
+      }),
+    );
   });
 
   afterEach(async () => {
@@ -47,7 +55,10 @@ describe("checkForUpdate", () => {
   it("returns no update when cached version equals current", async () => {
     await writeFile(
       join(tmpDir, "update-check.json"),
-      JSON.stringify({ checkedAt: new Date().toISOString(), latestVersion: "1.0.0" }),
+      JSON.stringify({
+        checkedAt: new Date().toISOString(),
+        latestVersion: "1.0.0",
+      }),
     );
     const status = checkForUpdate("1.0.0", tmpDir);
     expect(status).toEqual({ updateAvailable: false, latestVersion: "1.0.0" });
@@ -57,7 +68,10 @@ describe("checkForUpdate", () => {
   it("returns updateAvailable when cached version is newer", async () => {
     await writeFile(
       join(tmpDir, "update-check.json"),
-      JSON.stringify({ checkedAt: new Date().toISOString(), latestVersion: "1.0.1" }),
+      JSON.stringify({
+        checkedAt: new Date().toISOString(),
+        latestVersion: "1.0.1",
+      }),
     );
     const status = checkForUpdate("1.0.0", tmpDir);
     expect(status).toEqual({ updateAvailable: true, latestVersion: "1.0.1" });
@@ -77,7 +91,10 @@ describe("checkForUpdate", () => {
   it("does not fire fetch when cache is fresh", async () => {
     await writeFile(
       join(tmpDir, "update-check.json"),
-      JSON.stringify({ checkedAt: new Date().toISOString(), latestVersion: "1.0.0" }),
+      JSON.stringify({
+        checkedAt: new Date().toISOString(),
+        latestVersion: "1.0.0",
+      }),
     );
     checkForUpdate("1.0.0", tmpDir);
     expect(fetch).not.toHaveBeenCalled();
