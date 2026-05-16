@@ -42,12 +42,15 @@ export function validateApiKey(value: string): string | null {
   return null;
 }
 
-export function resolveInitValues(values: InitValues): ResolvedInitValues {
+export function resolveInitValues(
+  values: InitValues,
+  env: NodeJS.ProcessEnv = process.env,
+): ResolvedInitValues {
   return {
     apiKey: values.apiKey.trim(),
     architectModel: values.architectModel.trim() || DEFAULT_ARCHITECT_MODEL,
     editorModel: values.editorModel.trim() || DEFAULT_EDITOR_MODEL,
-    sandboxImage: DEFAULT_SANDBOX_IMAGE,
+    sandboxImage: env.IQUANTUM_SANDBOX_IMAGE?.trim() || DEFAULT_SANDBOX_IMAGE,
   };
 }
 

@@ -41,16 +41,12 @@ const commandDefs: LocalCommand[] = [
     name: "model",
     description: "Show current model configuration",
     run(_, ctx) {
-      const arch =
-        process.env.IQUANTUM_ARCHITECT_MODEL ?? "(unset — using default)";
-      const editor =
-        process.env.IQUANTUM_EDITOR_MODEL ?? "(unset — using default)";
       sysInfo(
         ctx,
         [
-          `Architect : ${arch}`,
-          `Editor    : ${editor}`,
-          "Hint: set IQUANTUM_ARCHITECT_MODEL or IQUANTUM_EDITOR_MODEL to override",
+          `Architect : ${ctx.modelName}`,
+          `Editor    : ${ctx.editorModel}`,
+          "Hint: use `iq config set` or environment variables to override",
         ].join("\n"),
       );
     },

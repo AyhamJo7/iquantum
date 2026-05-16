@@ -8,6 +8,7 @@ export interface CommandContext {
   dispatch: (action: REPLAction) => void;
   tokenCount: number;
   modelName: string;
+  editorModel: string;
 }
 
 export interface LocalCommand {

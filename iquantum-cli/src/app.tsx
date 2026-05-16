@@ -25,6 +25,7 @@ export interface IQAppProps {
   client: DaemonClient;
   socketPath: string;
   modelName: string;
+  editorModel: string;
   version: string;
   repoPath: string;
   iquantumDir?: string;
@@ -39,6 +40,7 @@ export function IQApp({
   client,
   socketPath,
   modelName,
+  editorModel,
   version,
   repoPath,
   iquantumDir,
@@ -78,10 +80,16 @@ export function IQApp({
         const savedId = await readLastSession(persistDir);
         if (savedId) {
           try {
-            resolvedSession = (await client.getSession(savedId)) as Session;
+            const candidateSession = (await client.getSession(
+              savedId,
+            )) as Session;
+            // Sessions persist in SQLite, but only sessions recreated in the
+            // current daemon process are actually resumable.
+            await client.listCheckpoints(savedId);
+            resolvedSession = candidateSession;
             isResume = true;
           } catch {
-            // session no longer exists; fall through to create a new one
+            // session no longer exists or is not live; create a fresh one
           }
         }
 
@@ -165,6 +173,7 @@ export function IQApp({
         client={client}
         session={session}
         modelName={modelName}
+        editorModel={editorModel}
         registry={registryRef.current}
         initialMessages={initialMessages}
       />
@@ -230,6 +239,7 @@ export function StartupApp({
       client={client}
       socketPath={config.socketPath}
       modelName={config.architectModel}
+      editorModel={config.editorModel}
       version={version}
       repoPath={repoPath}
       iquantumDir={persistDir}

@@ -31,6 +31,7 @@ function makeContext(overrides?: Partial<CommandContext>): CommandContext {
     dispatch: (action) => dispatched.push(action),
     tokenCount: 42,
     modelName: "test-model",
+    editorModel: "test-editor-model",
     ...overrides,
   };
   return { ...ctx, dispatched } as CommandContext & {
@@ -57,6 +58,15 @@ describe("slash commands", () => {
     const text = (ctx.dispatched[0] as { text: string }).text;
     expect(text).toContain("session-1");
     expect(text).toContain("42");
+  });
+
+  it("/model reports the effective configured models", async () => {
+    const ctx = makeContext() as CommandContext & { dispatched: REPLAction[] };
+    await getCmd("model").run("", ctx);
+
+    const text = (ctx.dispatched[0] as { text: string }).text;
+    expect(text).toContain("test-model");
+    expect(text).toContain("test-editor-model");
   });
 
   it("/clear dispatches clear_transcript on success", async () => {

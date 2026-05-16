@@ -47,6 +47,10 @@ export function InitWizard({
   const [statuses, setStatuses] = useState<string[]>([]);
 
   useInput((input, key) => {
+    if (key.ctrl && input === "c") {
+      process.exit(0);
+    }
+
     if (step === "submitting" || step === "done") {
       return;
     }
@@ -170,6 +174,10 @@ async function pullSandboxImage(
   image: string,
   onOutput: (chunk: string) => void = () => undefined,
 ): Promise<void> {
+  if (await hasLocalImage(image)) {
+    return;
+  }
+
   await new Promise<void>((resolvePromise, rejectPromise) => {
     const child = spawn("docker", ["pull", image], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -187,6 +195,19 @@ async function pullSandboxImage(
       }
 
       rejectPromise(new Error(`docker pull exited with code ${code ?? "?"}`));
+    });
+  });
+}
+
+async function hasLocalImage(image: string): Promise<boolean> {
+  return new Promise<boolean>((resolvePromise, rejectPromise) => {
+    const child = spawn("docker", ["image", "inspect", image], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+
+    child.once("error", rejectPromise);
+    child.once("close", (code) => {
+      resolvePromise(code === 0);
     });
   });
 }

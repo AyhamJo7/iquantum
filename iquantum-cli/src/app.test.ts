@@ -64,4 +64,32 @@ describe("ensureDaemonReady", () => {
       ),
     ).rejects.toThrow("daemon did not become ready");
   });
+
+  it("treats Bun's missing Unix socket error as a startup transient", async () => {
+    let checks = 0;
+    let launches = 0;
+
+    await ensureDaemonReady(
+      {
+        async health() {
+          checks += 1;
+
+          if (checks === 1) {
+            const error = new Error("Was there a typo in the url or port?");
+            (error as NodeJS.ErrnoException).code = "FailedToOpenSocket";
+            throw error;
+          }
+
+          return { ok: true };
+        },
+      },
+      async () => {
+        launches += 1;
+      },
+      async () => undefined,
+      { attempts: 2, pollIntervalMs: 1 },
+    );
+
+    expect(launches).toBe(1);
+  });
 });
