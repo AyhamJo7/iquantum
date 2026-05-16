@@ -16,6 +16,40 @@ export interface SessionStore {
   delete(sessionId: string): Promise<void>;
 }
 
+export type ConversationRole = "user" | "assistant" | "tool_result";
+
+export interface ConversationContentBlock {
+  type: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
+export interface ConversationMessage {
+  id: string;
+  sessionId: string;
+  role: ConversationRole;
+  content: ConversationContentBlock[];
+  hasThinking: boolean;
+  tokenCount: number;
+  compactionBoundary: boolean;
+  createdAt: string;
+}
+
+export interface ConversationPage {
+  messages: ConversationMessage[];
+  nextCursor: string | null;
+}
+
+export interface ConversationStore {
+  insert(message: ConversationMessage): Promise<void>;
+  listPage(
+    sessionId: string,
+    options: { before?: string; limit: number },
+  ): Promise<ConversationPage>;
+  listAll(sessionId: string): Promise<ConversationMessage[]>;
+  deleteAll(sessionId: string): Promise<void>;
+}
+
 export class SqliteSessionStore implements SessionStore {
   readonly #db: Database;
 
@@ -94,39 +128,51 @@ export class SqlitePIVStore implements PIVStore {
     this.#db
       .query(
         `INSERT INTO messages (
-          id, session_id, role, phase, model, content, token_count, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, session_id, task_id, role, phase, model, content,
+          has_thinking, token_count, compaction_boundary, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
         message.sessionId,
+        message.taskId,
         message.role,
         message.phase,
         message.model,
-        message.content,
+        encodeTextContent(message.content),
+        Number(message.hasThinking),
         message.tokenCount,
+        Number(message.compactionBoundary),
         message.createdAt,
       );
   }
 
-  async listMessagesBySession(sessionId: string): Promise<Message[]> {
-    return this.#db
+  async listMessagesByTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<Message[]> {
+    const rows = this.#db
       .query(
         `SELECT
           id,
           session_id AS sessionId,
+          task_id AS taskId,
           role,
           phase,
           model,
           content,
+          has_thinking AS hasThinking,
           token_count AS tokenCount,
+          compaction_boundary AS compactionBoundary,
           created_at AS createdAt
         FROM messages
-        WHERE session_id = ?
+        WHERE session_id = ? AND task_id = ?
         ORDER BY created_at, rowid
         LIMIT 2000`,
       )
-      .all(sessionId) as Message[];
+      .all(sessionId, taskId) as MessageRow[];
+
+    return rows.map(toMessage);
   }
 
   async insertPlan(plan: Plan): Promise<void> {
@@ -222,6 +268,99 @@ export class SqlitePIVStore implements PIVStore {
   }
 }
 
+export class SqliteConversationStore implements ConversationStore {
+  readonly #db: Database;
+
+  constructor(db: Database) {
+    this.#db = db;
+  }
+
+  async insert(message: ConversationMessage): Promise<void> {
+    this.#db
+      .query(
+        `INSERT INTO messages (
+          id, session_id, task_id, role, phase, model, content,
+          has_thinking, token_count, compaction_boundary, created_at
+        ) VALUES (?, ?, NULL, ?, 'plan', NULL, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        message.id,
+        message.sessionId,
+        message.role,
+        JSON.stringify(message.content),
+        Number(message.hasThinking),
+        message.tokenCount,
+        Number(message.compactionBoundary),
+        message.createdAt,
+      );
+  }
+
+  async listPage(
+    sessionId: string,
+    options: { before?: string; limit: number },
+  ): Promise<ConversationPage> {
+    const beforeClause = options.before
+      ? "AND rowid < (SELECT rowid FROM messages WHERE id = ? AND session_id = ? AND task_id IS NULL)"
+      : "";
+    const params = options.before
+      ? [sessionId, options.before, sessionId, options.limit + 1]
+      : [sessionId, options.limit + 1];
+    const rows = this.#db
+      .query(
+        `SELECT
+          id,
+          session_id AS sessionId,
+          role,
+          content,
+          has_thinking AS hasThinking,
+          token_count AS tokenCount,
+          compaction_boundary AS compactionBoundary,
+          created_at AS createdAt
+        FROM messages
+        WHERE session_id = ? AND task_id IS NULL
+        ${beforeClause}
+        ORDER BY rowid DESC
+        LIMIT ?`,
+      )
+      .all(...params) as ConversationMessageRow[];
+    const hasMore = rows.length > options.limit;
+    const pageRows = rows.slice(0, options.limit);
+    const messages = pageRows.reverse().map(toConversationMessage);
+
+    return {
+      messages,
+      nextCursor: hasMore ? (messages[0]?.id ?? null) : null,
+    };
+  }
+
+  async listAll(sessionId: string): Promise<ConversationMessage[]> {
+    const rows = this.#db
+      .query(
+        `SELECT
+          id,
+          session_id AS sessionId,
+          role,
+          content,
+          has_thinking AS hasThinking,
+          token_count AS tokenCount,
+          compaction_boundary AS compactionBoundary,
+          created_at AS createdAt
+        FROM messages
+        WHERE session_id = ? AND task_id IS NULL
+        ORDER BY rowid`,
+      )
+      .all(sessionId) as ConversationMessageRow[];
+
+    return rows.map(toConversationMessage);
+  }
+
+  async deleteAll(sessionId: string): Promise<void> {
+    this.#db
+      .query("DELETE FROM messages WHERE session_id = ? AND task_id IS NULL")
+      .run(sessionId);
+  }
+}
+
 export class SqliteGitCheckpointStore implements GitCheckpointStore {
   readonly #db: Database;
 
@@ -266,3 +405,78 @@ export class SqliteGitCheckpointStore implements GitCheckpointStore {
 }
 
 type SessionRow = Omit<Session, "config"> & { config: string };
+type MessageRow = Omit<
+  Message,
+  "content" | "hasThinking" | "compactionBoundary"
+> & {
+  content: string;
+  hasThinking: number;
+  compactionBoundary: number;
+};
+type ConversationMessageRow = Omit<
+  ConversationMessage,
+  "content" | "hasThinking" | "compactionBoundary"
+> & {
+  content: string;
+  hasThinking: number;
+  compactionBoundary: number;
+};
+
+function encodeTextContent(content: string): string {
+  return JSON.stringify([{ type: "text", text: content }]);
+}
+
+function decodeTextContent(content: string): string {
+  try {
+    const blocks = JSON.parse(content) as Array<{ text?: unknown }>;
+    return blocks
+      .map((block) => (typeof block.text === "string" ? block.text : ""))
+      .join("\n");
+  } catch {
+    return content;
+  }
+}
+
+function toMessage(row: MessageRow): Message {
+  return {
+    ...row,
+    content: decodeTextContent(row.content),
+    hasThinking: Boolean(row.hasThinking),
+    compactionBoundary: Boolean(row.compactionBoundary),
+  };
+}
+
+function toConversationMessage(
+  row: ConversationMessageRow,
+): ConversationMessage {
+  return {
+    ...row,
+    content: decodeContentBlocks(row.content),
+    hasThinking: Boolean(row.hasThinking),
+    compactionBoundary: Boolean(row.compactionBoundary),
+  };
+}
+
+function decodeContentBlocks(content: string): ConversationContentBlock[] {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+
+    if (Array.isArray(parsed)) {
+      return parsed.filter(isConversationContentBlock);
+    }
+  } catch {
+    // Fall through to the v1 plain-text compatibility shape.
+  }
+
+  return [{ type: "text", text: content }];
+}
+
+function isConversationContentBlock(
+  value: unknown,
+): value is ConversationContentBlock {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { type?: unknown }).type === "string"
+  );
+}
