@@ -1,13 +1,13 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type IquantumConfig, loadConfig } from "@iquantum/config";
 import type { Session } from "@iquantum/types";
 import { Box, render, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { checkForUpdate } from "./startup/version-check";
-import { VERSION } from "./version";
 import type { ConversationEntry, DaemonClient } from "./client";
 import { HttpDaemonClient } from "./client";
 import { startDaemon } from "./commands/daemon";
+import { InitWizard } from "./commands/init";
 import { makeCommandRegistry } from "./commands/slash-commands";
 import { Splash } from "./components/Splash";
 import { REPL } from "./screens/REPL";
@@ -17,6 +17,9 @@ import {
   writeLastSession as defaultWriteLastSession,
 } from "./session-persist";
 import { defaultSleep, ensureDaemonReady } from "./startup";
+import { type LoadConfigFn, resolveStartupConfig } from "./startup/config";
+import { checkForUpdate } from "./startup/version-check";
+import { VERSION } from "./version";
 
 export interface IQAppProps {
   client: DaemonClient;
@@ -169,6 +172,74 @@ export function IQApp({
   );
 }
 
+export interface StartupAppProps {
+  version: string;
+  repoPath: string;
+  iquantumDir?: string;
+  loadConfigFn?: LoadConfigFn;
+  clientFactory?: (socketPath: string) => DaemonClient;
+  startDaemonFn?: (socketPath: string) => Promise<void>;
+}
+
+export function StartupApp({
+  version,
+  repoPath,
+  iquantumDir,
+  loadConfigFn = loadConfig,
+  clientFactory = (socketPath) => new HttpDaemonClient(socketPath),
+  startDaemonFn,
+}: StartupAppProps) {
+  const persistDir = iquantumDir ?? join(homedir(), ".iquantum");
+  const [config, setConfig] = useState<IquantumConfig | null>(() =>
+    resolveStartupConfig(loadConfigFn, persistDir),
+  );
+  const [error, setError] = useState<string>();
+  const client = useMemo(
+    () => (config ? clientFactory(config.socketPath) : null),
+    [clientFactory, config],
+  );
+
+  const completeInit = useCallback(() => {
+    try {
+      setConfig(resolveStartupConfig(loadConfigFn, persistDir));
+    } catch (startupError) {
+      setError(
+        startupError instanceof Error
+          ? startupError.message
+          : String(startupError),
+      );
+    }
+  }, [loadConfigFn, persistDir]);
+
+  if (error) {
+    return <Text color="red">{error}</Text>;
+  }
+
+  if (!config || !client) {
+    return (
+      <InitWizard
+        configDir={persistDir}
+        onComplete={completeInit}
+        {...(startDaemonFn ? { startDaemonFn } : {})}
+      />
+    );
+  }
+
+  return (
+    <IQApp
+      client={client}
+      socketPath={config.socketPath}
+      modelName={config.architectModel}
+      version={version}
+      repoPath={repoPath}
+      iquantumDir={persistDir}
+      {...(startDaemonFn
+        ? { startDaemonFn: () => startDaemonFn(config.socketPath) }
+        : {})}
+    />
+  );
+}
+
 function buildHistoryItems(
   entries: ConversationEntry[],
   sessionId: string,
@@ -193,23 +264,29 @@ function buildHistoryItems(
 }
 
 export interface RenderAndRunOptions {
-  socketPath: string;
-  modelName: string;
   version: string;
   repoPath?: string;
-  client?: DaemonClient;
+  iquantumDir?: string;
+  loadConfigFn?: LoadConfigFn;
+  clientFactory?: (socketPath: string) => DaemonClient;
+  startDaemonFn?: (socketPath: string) => Promise<void>;
 }
 
 export async function renderAndRun(
   options: RenderAndRunOptions,
 ): Promise<void> {
   const app = render(
-    <IQApp
-      client={options.client ?? new HttpDaemonClient(options.socketPath)}
-      socketPath={options.socketPath}
-      modelName={options.modelName}
+    <StartupApp
       version={options.version}
       repoPath={options.repoPath ?? process.cwd()}
+      {...(options.iquantumDir ? { iquantumDir: options.iquantumDir } : {})}
+      {...(options.loadConfigFn ? { loadConfigFn: options.loadConfigFn } : {})}
+      {...(options.clientFactory
+        ? { clientFactory: options.clientFactory }
+        : {})}
+      {...(options.startDaemonFn
+        ? { startDaemonFn: options.startDaemonFn }
+        : {})}
     />,
     { exitOnCtrlC: false },
   );

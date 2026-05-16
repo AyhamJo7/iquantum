@@ -2,12 +2,16 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import readline from "node:readline";
+import { loadConfig, MissingApiKeyError } from "@iquantum/config";
 import { Command } from "commander";
+import { render } from "ink";
+import { createElement } from "react";
 import { renderAndRun } from "./app";
 import { HttpDaemonClient } from "./client";
-import { daemonStatus, startDaemon, stopDaemon } from "./commands/daemon";
-import { runTask } from "./commands/task";
 import { configGet, configList, configSet } from "./commands/config";
+import { daemonStatus, startDaemon, stopDaemon } from "./commands/daemon";
+import { InitWizard } from "./commands/init";
+import { runTask } from "./commands/task";
 import { runUpdate } from "./commands/update";
 import { VERSION } from "./version";
 
@@ -19,7 +23,17 @@ function expandHome(p: string): string {
   return p;
 }
 
-const socketPath = expandHome(process.env.IQUANTUM_SOCKET ?? DEFAULT_SOCKET);
+function configuredSocketPath(): string {
+  try {
+    return loadConfig().socketPath;
+  } catch (error) {
+    if (error instanceof MissingApiKeyError) {
+      return expandHome(process.env.IQUANTUM_SOCKET ?? DEFAULT_SOCKET);
+    }
+
+    throw error;
+  }
+}
 
 const stdoutWriter = {
   write: (chunk: string) => process.stdout.write(chunk),
@@ -46,8 +60,6 @@ const program = new Command()
   .version(VERSION)
   .action(async () => {
     await renderAndRun({
-      socketPath,
-      modelName: process.env.IQUANTUM_ARCHITECT_MODEL ?? "claude-sonnet-4-5",
       version: VERSION,
     });
   });
@@ -61,7 +73,7 @@ program
       await runTask(
         prompt,
         opts,
-        new HttpDaemonClient(socketPath),
+        new HttpDaemonClient(configuredSocketPath()),
         readlinePrompt,
         stdoutWriter,
       );
@@ -79,14 +91,14 @@ daemon
   .command("start")
   .description("Start the daemon in the background")
   .action(async () => {
-    await startDaemon({ socketPath }, stdoutWriter);
+    await startDaemon({ socketPath: configuredSocketPath() }, stdoutWriter);
   });
 
 daemon
   .command("stop")
   .description("Stop the running daemon")
   .action(async () => {
-    await stopDaemon({ socketPath }, stdoutWriter);
+    await stopDaemon({ socketPath: configuredSocketPath() }, stdoutWriter);
   });
 
 daemon
@@ -94,7 +106,7 @@ daemon
   .description("Check whether the daemon is running")
   .action(async () => {
     await daemonStatus(
-      { client: new HttpDaemonClient(socketPath) },
+      { client: new HttpDaemonClient(configuredSocketPath()) },
       stdoutWriter,
     );
   });
@@ -122,6 +134,24 @@ config
   .description("Get a config value")
   .action((key: string) => {
     configGet(key, stdoutWriter);
+  });
+
+program
+  .command("init")
+  .description("Run first-time setup")
+  .action(async () => {
+    try {
+      const app = render(
+        createElement(InitWizard, { onComplete: () => app.unmount() }),
+        { exitOnCtrlC: false },
+      );
+      await app.waitUntilExit();
+    } catch (error) {
+      process.stderr.write(
+        `${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      process.exit(1);
+    }
   });
 
 program
