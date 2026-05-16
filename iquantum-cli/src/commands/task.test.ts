@@ -14,7 +14,7 @@ describe("runTask", () => {
         { type: "plan_ready", planId: "plan-1" },
         { type: "phase_change", phase: "implementing" },
         { type: "validate_result", passed: true, attempt: 1 },
-        { type: "checkpoint", hash: "abc123" },
+        { type: "checkpoint", hash: "abc123", message: "done" },
       ],
       plans: [fakePlan()],
       promptAnswers: ["y"],
@@ -48,7 +48,7 @@ describe("runTask", () => {
         { type: "plan_ready", planId: "plan-1" },
         { type: "token", delta: "revised" },
         { type: "plan_ready", planId: "plan-2" },
-        { type: "checkpoint", hash: "def456" },
+        { type: "checkpoint", hash: "def456", message: "done" },
       ],
       plans: [fakePlan("plan-1"), fakePlan("plan-2", "revised plan")],
       promptAnswers: ["n", "please split the work", "y"],
@@ -121,7 +121,7 @@ describe("runTask", () => {
     const harness = createHarness({
       frames: [
         { type: "plan_ready", planId: "plan-1" },
-        { type: "checkpoint", hash: "abc" },
+        { type: "checkpoint", hash: "abc", message: "done" },
       ],
       plans: [fakePlan()],
       promptAnswers: ["y"],

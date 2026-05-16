@@ -1,4 +1,5 @@
 import type { Phase, ServerStreamFrame } from "@iquantum/protocol";
+import { countDiffChanges } from "../components/diff-parser";
 
 export type TranscriptItem =
   | {
@@ -18,6 +19,8 @@ export type TranscriptItem =
       type: "diff_preview";
       file: string;
       patch: string;
+      addCount: number;
+      delCount: number;
     }
   | {
       id: string;
@@ -32,6 +35,7 @@ export type TranscriptItem =
       id: string;
       type: "checkpoint";
       hash: string;
+      message: string;
     }
   | {
       id: string;
@@ -52,6 +56,9 @@ export interface REPLViewState {
   thinkingExpanded: boolean;
   nextTranscriptId: number;
   pendingPermissionId: string | null;
+  completedPhases: Set<Phase>;
+  retryCount: number;
+  isFirstSubmit: boolean;
 }
 
 export type REPLAction =
@@ -73,6 +80,9 @@ export const initialREPLViewState: REPLViewState = {
   thinkingExpanded: false,
   nextTranscriptId: 1,
   pendingPermissionId: null,
+  completedPhases: new Set(),
+  retryCount: 0,
+  isFirstSubmit: false,
 };
 
 export function reduceREPLViewState(
@@ -97,6 +107,9 @@ export function reduceREPLViewState(
           },
         ],
         nextTranscriptId: state.nextTranscriptId + 1,
+        completedPhases: new Set(),
+        retryCount: 0,
+        isFirstSubmit: true,
       };
     case "submit_error":
       return {
@@ -142,11 +155,19 @@ export function reduceREPLViewState(
         error: undefined,
         pendingPermissionId: null,
       };
-    case "hydrate_history":
+    case "hydrate_history": {
+      const hasCheckpoint = action.items.some(
+        (item) => item.type === "checkpoint",
+      );
+
       return {
         ...state,
         messages: [...action.items, ...state.messages],
+        completedPhases: hasCheckpoint
+          ? new Set(PIV_PHASES)
+          : state.completedPhases,
       };
+    }
     case "frame":
       return reduceFrame(state, action.frame);
   }
@@ -158,7 +179,15 @@ function reduceFrame(
 ): REPLViewState {
   switch (frame.type) {
     case "phase_change":
-      return { ...state, phase: frame.phase };
+      return {
+        ...state,
+        phase: frame.phase,
+        completedPhases: withCompletedPreviousPhase(
+          state.completedPhases,
+          state.phase,
+          frame.phase,
+        ),
+      };
     case "token":
       if (state.error) return state;
       return {
@@ -194,7 +223,9 @@ function reduceFrame(
         streamingText: "",
         thinkingText: "",
       };
-    case "diff_preview":
+    case "diff_preview": {
+      const { addCount, delCount } = countDiffChanges(frame.patch);
+
       return {
         ...state,
         messages: [
@@ -204,10 +235,13 @@ function reduceFrame(
             type: "diff_preview",
             file: frame.file,
             patch: frame.patch,
+            addCount,
+            delCount,
           },
         ],
         nextTranscriptId: state.nextTranscriptId + 1,
       };
+    }
     case "permission_request":
       return {
         ...state,
@@ -228,20 +262,28 @@ function reduceFrame(
     case "checkpoint":
       return {
         ...state,
+        completedPhases: new Set(PIV_PHASES),
         messages: [
           ...state.messages,
           {
             id: transcriptId(state.nextTranscriptId),
             type: "checkpoint",
             hash: frame.hash,
+            message: frame.message,
           },
         ],
         nextTranscriptId: state.nextTranscriptId + 1,
       };
     case "mcp_tool_call":
     case "plan_ready":
-    case "validate_result":
       return state;
+    case "validate_result":
+      return frame.passed
+        ? state
+        : {
+            ...state,
+            retryCount: state.retryCount + 1,
+          };
   }
 }
 
@@ -271,6 +313,35 @@ function finalizeAssistantTurn(state: REPLViewState): REPLViewState {
       ? state.nextTranscriptId + 1
       : state.nextTranscriptId,
   };
+}
+
+const PIV_PHASES = [
+  "planning",
+  "implementing",
+  "validating",
+] as const satisfies readonly Phase[];
+
+function withCompletedPreviousPhase(
+  completedPhases: Set<Phase>,
+  previousPhase: Phase | undefined,
+  nextPhase: Phase,
+): Set<Phase> {
+  if (!previousPhase) {
+    return completedPhases;
+  }
+
+  const previousIndex = PIV_PHASES.indexOf(
+    previousPhase as (typeof PIV_PHASES)[number],
+  );
+  const nextIndex = PIV_PHASES.indexOf(
+    nextPhase as (typeof PIV_PHASES)[number],
+  );
+
+  if (previousIndex === -1 || nextIndex === -1 || nextIndex <= previousIndex) {
+    return completedPhases;
+  }
+
+  return new Set([...completedPhases, previousPhase]);
 }
 
 function transcriptId(nextId: number): string {
