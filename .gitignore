@@ -12,6 +12,4 @@ coverage/
 # Internal project docs — not for public repo
 CLAUDE.md
 AGENTS.md
-ARCHITECTURE.md
-TASKS.md
-AI\ Coding\ Assistant\ Comparison.md
+docs/
