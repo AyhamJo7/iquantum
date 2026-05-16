@@ -1,15 +1,19 @@
 import { Box, Text } from "ink";
 import { memo } from "react";
 import type { TranscriptItem } from "../screens/repl-state";
+import { CommitCard } from "./CommitCard";
+import { ErrorCard } from "./ErrorCard";
 import { renderMarkdownToAnsi } from "./markdown";
 import { StructuredDiff } from "./StructuredDiff";
 import { ThinkingBlock } from "./ThinkingBlock";
+import { COPY } from "./theme";
 
 export interface MessageListProps {
   items: TranscriptItem[];
   streamingText?: string;
   thinkingText?: string;
   thinkingExpanded: boolean;
+  thinkingStreaming?: boolean;
 }
 
 export function MessageList({
@@ -17,6 +21,7 @@ export function MessageList({
   streamingText = "",
   thinkingText = "",
   thinkingExpanded,
+  thinkingStreaming = false,
 }: MessageListProps) {
   return (
     <Box flexDirection="column" minHeight={1}>
@@ -25,6 +30,7 @@ export function MessageList({
           key={item.id}
           item={item}
           thinkingExpanded={thinkingExpanded}
+          thinkingStreaming={thinkingStreaming}
         />
       ))}
       {thinkingText || streamingText ? (
@@ -32,6 +38,7 @@ export function MessageList({
           text={streamingText}
           thinking={thinkingText}
           thinkingExpanded={thinkingExpanded}
+          thinkingStreaming={thinkingStreaming}
         />
       ) : null}
     </Box>
@@ -41,29 +48,42 @@ export function MessageList({
 const TranscriptRow = memo(function TranscriptRow({
   item,
   thinkingExpanded,
+  thinkingStreaming,
 }: {
   item: TranscriptItem;
   thinkingExpanded: boolean;
+  thinkingStreaming: boolean;
 }) {
   if (item.type === "session_separator") {
-    return <Text dimColor>──────────── resumed ────────────</Text>;
+    return <Text dimColor>──────────── {COPY.resumed} ────────────</Text>;
   }
 
   if (item.type === "compact_boundary") {
-    return <Text dimColor>──────────── context compacted ────────────</Text>;
+    return <Text dimColor>──────────── {COPY.compacted} ────────────</Text>;
   }
 
   if (item.type === "diff_preview") {
-    return <StructuredDiff file={item.file} patch={item.patch} />;
+    return (
+      <StructuredDiff
+        file={item.file}
+        patch={item.patch}
+        addCount={item.addCount}
+        delCount={item.delCount}
+      />
+    );
   }
 
   if (item.type === "checkpoint") {
-    return <Text dimColor>✓ checkpoint {item.hash.slice(0, 7)}</Text>;
+    return <CommitCard hash={item.hash} message={item.message} />;
   }
 
   if (item.type === "system_message") {
+    if (item.level === "error") {
+      return <ErrorCard message={item.text} />;
+    }
+
     return (
-      <Text color={item.level === "error" ? "red" : "cyan"} dimColor>
+      <Text color="cyan" dimColor>
         {item.text}
       </Text>
     );
@@ -91,6 +111,7 @@ const TranscriptRow = memo(function TranscriptRow({
       text={item.text}
       {...(item.thinking ? { thinking: item.thinking } : {})}
       thinkingExpanded={thinkingExpanded}
+      thinkingStreaming={thinkingStreaming}
     />
   );
 });
@@ -108,15 +129,21 @@ const AssistantMessage = memo(function AssistantMessage({
   text,
   thinking,
   thinkingExpanded,
+  thinkingStreaming,
 }: {
   text: string;
   thinking?: string;
   thinkingExpanded: boolean;
+  thinkingStreaming: boolean;
 }) {
   return (
     <Box flexDirection="column">
       {thinking ? (
-        <ThinkingBlock text={thinking} expanded={thinkingExpanded} />
+        <ThinkingBlock
+          text={thinking}
+          expanded={thinkingExpanded}
+          isStreaming={thinkingStreaming}
+        />
       ) : null}
       {text ? <Text>{renderMarkdownToAnsi(text)}</Text> : null}
     </Box>
