@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import readline from "node:readline";
 import { Command } from "commander";
+import { renderAndRun } from "./app";
 import { HttpDaemonClient } from "./client";
 import { daemonStatus, startDaemon, stopDaemon } from "./commands/daemon";
 import { runTask } from "./commands/task";
@@ -39,7 +40,14 @@ async function readlinePrompt(question: string): Promise<string> {
 const program = new Command()
   .name("iq")
   .description("iquantum — AI coding agent CLI")
-  .version("0.0.0");
+  .version("0.0.0")
+  .action(async () => {
+    await renderAndRun({
+      socketPath,
+      modelName: process.env.IQUANTUM_ARCHITECT_MODEL ?? "claude-sonnet-4-5",
+      version: "0.0.0",
+    });
+  });
 
 program
   .command("task <prompt>")

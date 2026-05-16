@@ -18,6 +18,7 @@ export interface DaemonClient {
   reject(sessionId: string, feedback: string): Promise<Plan>;
   listCheckpoints(sessionId: string): Promise<GitCheckpoint[]>;
   restore(sessionId: string, hash: string): Promise<void>;
+  postMessage(sessionId: string, content: string): Promise<void>;
   openStream(sessionId: string): AsyncIterable<ServerStreamFrame>;
 }
 
@@ -84,6 +85,13 @@ export class HttpDaemonClient implements DaemonClient {
     await this.#post(
       `/sessions/${sessionId}/checkpoints/${encodeURIComponent(hash)}/restore`,
     );
+  }
+
+  async postMessage(sessionId: string, content: string): Promise<void> {
+    await this.#post(`/sessions/${sessionId}/messages`, {
+      role: "user",
+      content,
+    });
   }
 
   async *openStream(sessionId: string): AsyncGenerator<ServerStreamFrame> {
