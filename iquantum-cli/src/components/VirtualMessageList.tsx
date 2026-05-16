@@ -7,6 +7,7 @@ export interface VirtualMessageListProps {
   streamingText: string;
   thinkingText: string;
   thinkingExpanded: boolean;
+  thinkingStreaming: boolean;
   maxVisibleItems?: number;
 }
 
@@ -18,6 +19,7 @@ export function VirtualMessageList({
   streamingText,
   thinkingText,
   thinkingExpanded,
+  thinkingStreaming,
   maxVisibleItems = 20,
 }: VirtualMessageListProps) {
   return (
@@ -26,6 +28,7 @@ export function VirtualMessageList({
       streamingText={streamingText}
       thinkingText={thinkingText}
       thinkingExpanded={thinkingExpanded}
+      thinkingStreaming={thinkingStreaming}
     />
   );
 }
