@@ -28,6 +28,10 @@ export interface DaemonClient {
   compact(
     sessionId: string,
   ): Promise<{ compacted: boolean; summary: string | null }>;
+  getMessages(
+    sessionId: string,
+    options?: { before?: string; limit?: number },
+  ): Promise<ConversationPage>;
   cancelStream(sessionId: string): Promise<void>;
   listMcpTools(): Promise<McpToolEntry[]>;
   openStream(sessionId: string): AsyncIterable<ServerStreamFrame>;
@@ -38,6 +42,17 @@ export interface McpToolEntry {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+}
+
+export interface ConversationEntry {
+  id: string;
+  role: string;
+  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
+}
+
+export interface ConversationPage {
+  messages: ConversationEntry[];
+  nextCursor: string | null;
 }
 
 export interface CreateSessionOptions {
@@ -131,6 +146,17 @@ export class HttpDaemonClient implements DaemonClient {
     sessionId: string,
   ): Promise<{ compacted: boolean; summary: string | null }> {
     return this.#post(`/sessions/${sessionId}/compact`);
+  }
+
+  getMessages(
+    sessionId: string,
+    options: { before?: string; limit?: number } = {},
+  ): Promise<ConversationPage> {
+    const params = new URLSearchParams();
+    if (options.before) params.set("before", options.before);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    const qs = params.toString();
+    return this.#get(`/sessions/${sessionId}/messages${qs ? `?${qs}` : ""}`);
   }
 
   async cancelStream(sessionId: string): Promise<void> {
