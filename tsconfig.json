@@ -1,15 +1,41 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/types" },
-    { "path": "./packages/config" },
-    { "path": "./packages/repo-map" },
-    { "path": "./packages/sandbox" },
-    { "path": "./packages/llm" },
-    { "path": "./packages/diff-engine" },
-    { "path": "./packages/git" },
-    { "path": "./packages/piv-engine" },
-    { "path": "./iquantum-daemon" },
-    { "path": "./iquantum-cli" }
+    {
+      "path": "./packages/types"
+    },
+    {
+      "path": "./packages/config"
+    },
+    {
+      "path": "./packages/repo-map"
+    },
+    {
+      "path": "./packages/sandbox"
+    },
+    {
+      "path": "./packages/llm"
+    },
+    {
+      "path": "./packages/diff-engine"
+    },
+    {
+      "path": "./packages/git"
+    },
+    {
+      "path": "./packages/piv-engine"
+    },
+    {
+      "path": "./packages/protocol"
+    },
+    {
+      "path": "./packages/context-window"
+    },
+    {
+      "path": "./iquantum-daemon"
+    },
+    {
+      "path": "./iquantum-cli"
+    }
   ]
 }

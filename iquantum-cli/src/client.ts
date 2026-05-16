@@ -1,13 +1,8 @@
 import { request as nodeRequest } from "node:http";
+import type { ServerStreamFrame } from "@iquantum/protocol";
 import type { GitCheckpoint, Plan, Session } from "@iquantum/types";
 
-export type ServerStreamFrame =
-  | { type: "token"; delta: string }
-  | { type: "phase_change"; phase: string }
-  | { type: "plan_ready"; planId: string }
-  | { type: "validate_result"; passed: boolean; attempt: number }
-  | { type: "checkpoint"; hash: string }
-  | { type: "error"; message: string };
+export type { ServerStreamFrame } from "@iquantum/protocol";
 
 export interface DaemonClient {
   health(): Promise<{ ok: boolean }>;

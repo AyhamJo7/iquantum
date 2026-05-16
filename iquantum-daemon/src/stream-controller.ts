@@ -1,18 +1,12 @@
 import type { PIVEngineEventMap } from "@iquantum/piv-engine";
+import type { Phase, ServerStreamFrame } from "@iquantum/protocol";
+import type { SessionStatus } from "@iquantum/types";
 import type { SessionEngine } from "./session-controller";
 
 export interface StreamSocket {
   send(data: string): void;
   close(code?: number, reason?: string): void;
 }
-
-export type ServerStreamFrame =
-  | { type: "token"; delta: string }
-  | { type: "phase_change"; phase: string }
-  | { type: "plan_ready"; planId: string }
-  | { type: "validate_result"; passed: boolean; attempt: number }
-  | { type: "checkpoint"; hash: string }
-  | { type: "error"; message: string };
 
 export class StreamController {
   readonly #sessions: StreamSessions;
@@ -26,8 +20,13 @@ export class StreamController {
     const engine = this.#sessions.getEngine(sessionId);
     const subscriptions = subscribe(engine.events, {
       token: ({ token }) => this.#send(socket, { type: "token", delta: token }),
-      phase_change: ({ to }) =>
-        this.#send(socket, { type: "phase_change", phase: to }),
+      phase_change: ({ to }) => {
+        const phase = toProtocolPhase(to);
+
+        if (phase) {
+          this.#send(socket, { type: "phase_change", phase });
+        }
+      },
       plan_ready: (plan) =>
         this.#send(socket, { type: "plan_ready", planId: plan.id }),
       validate_result: (run) =>
@@ -63,6 +62,20 @@ export class StreamController {
 
   #send(socket: StreamSocket, frame: ServerStreamFrame): void {
     socket.send(JSON.stringify(frame));
+  }
+}
+
+function toProtocolPhase(status: SessionStatus): Phase | undefined {
+  switch (status) {
+    case "planning":
+    case "implementing":
+    case "validating":
+      return status;
+    case "idle":
+    case "awaiting_approval":
+    case "completed":
+    case "error":
+      return undefined;
   }
 }
 
