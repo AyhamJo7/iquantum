@@ -296,6 +296,7 @@ export function trimTobudget(
   const lines: string[] = [];
   const reservedEntries = reserveNamedSymbols(orderedSymbols, [
     "buildRepoMap",
+    "loadConfig",
     "extractSymbolSignatures",
   ]);
   const orderedWithReservations = [

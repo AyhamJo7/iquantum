@@ -61,8 +61,18 @@ describe("PermissionGate", () => {
 
   it("drainAll resolves all pending requests as rejected and clears timers", async () => {
     const gate = silentGate();
-    const first = gate.requestPermission("session-1", "req-1", "apply_diff", {});
-    const second = gate.requestPermission("session-2", "req-2", "apply_diff", {});
+    const first = gate.requestPermission(
+      "session-1",
+      "req-1",
+      "apply_diff",
+      {},
+    );
+    const second = gate.requestPermission(
+      "session-2",
+      "req-2",
+      "apply_diff",
+      {},
+    );
 
     gate.drainAll();
 
