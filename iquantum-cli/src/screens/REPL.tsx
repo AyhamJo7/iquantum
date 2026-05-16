@@ -1,11 +1,11 @@
 import type { Session } from "@iquantum/types";
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import { useEffect, useReducer, useRef } from "react";
 import type { DaemonClient } from "../client";
-import { MessageList } from "../components/MessageList";
 import { PromptInput } from "../components/PromptInput";
 import { SpinnerWithPhase } from "../components/SpinnerWithPhase";
 import { StatusBar } from "../components/StatusBar";
+import { VirtualMessageList } from "../components/VirtualMessageList";
 import { initialREPLViewState, reduceREPLViewState } from "./repl-state";
 
 export interface REPLProps {
@@ -20,6 +20,12 @@ export function REPL({ client, session, modelName }: REPLProps) {
     initialREPLViewState,
   );
   const submittingRef = useRef(false);
+
+  useInput((input, key) => {
+    if (key.ctrl && input === "o") {
+      dispatch({ type: "toggle_thinking" });
+    }
+  });
 
   useEffect(() => {
     let active = true;
@@ -58,7 +64,12 @@ export function REPL({ client, session, modelName }: REPLProps) {
 
   return (
     <Box flexDirection="column">
-      <MessageList />
+      <VirtualMessageList
+        items={state.messages}
+        streamingText={state.streamingText}
+        thinkingText={state.thinkingText}
+        thinkingExpanded={state.thinkingExpanded}
+      />
       <SpinnerWithPhase {...(state.phase ? { phase: state.phase } : {})} />
       {state.error ? <Text color="red">{state.error}</Text> : null}
       <PromptInput
@@ -69,7 +80,7 @@ export function REPL({ client, session, modelName }: REPLProps) {
           }
 
           submittingRef.current = true;
-          dispatch({ type: "submitted" });
+          dispatch({ type: "submitted", content });
 
           try {
             await client.postMessage(session.id, content);
