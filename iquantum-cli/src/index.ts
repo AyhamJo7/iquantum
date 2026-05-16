@@ -7,6 +7,7 @@ import { renderAndRun } from "./app";
 import { HttpDaemonClient } from "./client";
 import { daemonStatus, startDaemon, stopDaemon } from "./commands/daemon";
 import { runTask } from "./commands/task";
+import { runUpdate } from "./commands/update";
 import { VERSION } from "./version";
 
 const DEFAULT_SOCKET = resolve(homedir(), ".iquantum", "daemon.sock");
@@ -95,6 +96,20 @@ daemon
       { client: new HttpDaemonClient(socketPath) },
       stdoutWriter,
     );
+  });
+
+program
+  .command("update")
+  .description("Update iq to the latest version")
+  .action(async () => {
+    try {
+      await runUpdate(stdoutWriter);
+    } catch (error) {
+      process.stderr.write(
+        `${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      process.exit(1);
+    }
   });
 
 await program.parseAsync(process.argv);

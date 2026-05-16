@@ -2,7 +2,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Session } from "@iquantum/types";
 import { Box, render, Text } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { checkForUpdate } from "./startup/version-check";
+import { VERSION } from "./version";
 import type { ConversationEntry, DaemonClient } from "./client";
 import { HttpDaemonClient } from "./client";
 import { startDaemon } from "./commands/daemon";
@@ -43,14 +45,17 @@ export function IQApp({
   readLastSession = defaultReadLastSession,
   writeLastSession = defaultWriteLastSession,
 }: IQAppProps) {
+  const persistDir = iquantumDir ?? join(homedir(), ".iquantum");
+  const updateStatus = useMemo(
+    () => checkForUpdate(VERSION, persistDir),
+    [persistDir],
+  );
   const [session, setSession] = useState<Session>();
   const [initialMessages, setInitialMessages] = useState<TranscriptItem[]>([]);
   const [showRepl, setShowRepl] = useState(skipSplash);
   const registryRef = useRef(makeCommandRegistry());
   const [error, setError] = useState<string>();
   const completeSplash = useCallback(() => setShowRepl(true), []);
-
-  const persistDir = iquantumDir ?? join(homedir(), ".iquantum");
 
   useEffect(() => {
     let active = true;
@@ -148,6 +153,11 @@ export function IQApp({
 
   return (
     <Box flexDirection="column">
+      {updateStatus.updateAvailable && updateStatus.latestVersion ? (
+        <Text dimColor>
+          {`  update available: ${VERSION} → ${updateStatus.latestVersion}  (run iq update)`}
+        </Text>
+      ) : null}
       <REPL
         client={client}
         session={session}
