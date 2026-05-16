@@ -29,6 +29,21 @@ describe("resolveInitValues", () => {
       sandboxImage: "ghcr.io/ayhamjo7/iquantum-sandbox:latest",
     });
   });
+
+  it("honors an explicit sandbox image override", () => {
+    expect(
+      resolveInitValues(
+        {
+          apiKey: "sk-ant-test",
+          architectModel: "",
+          editorModel: "",
+        },
+        { IQUANTUM_SANDBOX_IMAGE: "iquantum/sandbox:local" },
+      ),
+    ).toMatchObject({
+      sandboxImage: "iquantum/sandbox:local",
+    });
+  });
 });
 
 describe("runInit", () => {

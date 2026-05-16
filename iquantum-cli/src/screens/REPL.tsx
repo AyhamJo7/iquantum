@@ -16,6 +16,7 @@ export interface REPLProps {
   client: DaemonClient;
   session: Session;
   modelName: string;
+  editorModel: string;
   registry?: CommandRegistry;
   initialMessages?: TranscriptItem[];
 }
@@ -24,6 +25,7 @@ export function REPL({
   client,
   session,
   modelName,
+  editorModel,
   registry,
   initialMessages = [],
 }: REPLProps) {
@@ -154,6 +156,7 @@ export function REPL({
                 dispatch,
                 tokenCount: state.tokenCount,
                 modelName,
+                editorModel,
               });
               return;
             }

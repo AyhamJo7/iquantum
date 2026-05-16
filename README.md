@@ -166,10 +166,16 @@ Resumes your last session automatically if the daemon still has it. Starts a fre
 | Command | Effect |
 |---|---|
 | `/help` | List all available commands |
+| `/status` | Show the current session, model, and token count |
+| `/model` | Show the effective architect and editor models |
 | `/clear` | Clear the transcript (session history stays in daemon) |
 | `/compact` | Summarise and compress the context window |
+| `/plan` | Show the current plan, if one exists |
+| `/approve` | Approve the current plan |
+| `/reject <reason>` | Reject the current plan with feedback |
 | `/mcp` | List connected MCP tools and their status |
 | `/restore [hash]` | Roll back the sandbox to a prior Git checkpoint |
+| `/quit` | Exit `iq` while leaving the sandbox available for resume |
 
 Keyboard shortcuts: `Ctrl-O` toggles thinking output · `Ctrl-L` clears the screen · `Escape` cancels the current request · `Ctrl-C` twice exits.
 

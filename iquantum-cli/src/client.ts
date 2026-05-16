@@ -292,8 +292,12 @@ export class HttpError extends Error {
 
 export function isDaemonNotRunning(error: unknown): boolean {
   if (error instanceof Error) {
+    const code = (error as NodeJS.ErrnoException).code;
+
     return (
-      error.message.includes("ENOENT") || error.message.includes("ECONNREFUSED")
+      error.message.includes("ENOENT") ||
+      error.message.includes("ECONNREFUSED") ||
+      code === "FailedToOpenSocket"
     );
   }
 
