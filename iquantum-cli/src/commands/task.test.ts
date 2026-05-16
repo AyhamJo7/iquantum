@@ -35,7 +35,7 @@ describe("runTask", () => {
     expect(harness.output.join("")).toContain("tests passed (attempt 1)");
     expect(harness.output.join("")).toContain("Committed: abc123");
     expect(harness.calls).toEqual([
-      ["createSession", "/repo"],
+      ["createSession", "/repo", { requireApproval: true, autoApprove: true }],
       ["openStream", "session-1"],
       ["startTask", "session-1", "add auth"],
       ["approve", "session-1"],
@@ -64,7 +64,7 @@ describe("runTask", () => {
 
     expect(harness.output.join("")).toContain("Committed: def456");
     expect(harness.calls).toEqual([
-      ["createSession", "/repo"],
+      ["createSession", "/repo", { requireApproval: true, autoApprove: true }],
       ["openStream", "session-1"],
       ["startTask", "session-1", "refactor"],
       ["reject", "session-1", "please split the work"],
@@ -135,7 +135,11 @@ describe("runTask", () => {
       harness.writer,
     );
 
-    expect(harness.calls[0]).toEqual(["createSession", "/custom/path"]);
+    expect(harness.calls[0]).toEqual([
+      "createSession",
+      "/custom/path",
+      { requireApproval: true, autoApprove: true },
+    ]);
   });
 });
 
@@ -156,8 +160,8 @@ function createHarness(options: HarnessOptions) {
     async health() {
       return { ok: true };
     },
-    async createSession(repoPath) {
-      calls.push(["createSession", repoPath]);
+    async createSession(repoPath, createOptions) {
+      calls.push(["createSession", repoPath, createOptions]);
 
       if (options.createSessionError) {
         throw options.createSessionError;

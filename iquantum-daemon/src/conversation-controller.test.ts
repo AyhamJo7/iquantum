@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ConversationController } from "./conversation-controller";
-import type { ConversationMessage, ConversationStore } from "./db/stores";
+import {
+  InMemoryConversationStore,
+  conversationMessage as message,
+} from "./test-helpers";
 
 const fixedNow = "2026-05-16T00:00:00.000Z";
 
@@ -53,6 +56,20 @@ describe("ConversationController", () => {
       harness.controller.getMessagesForApi("session-1"),
     ).resolves.toMatchObject([{ id: "summary" }, { id: "new-user" }]);
   });
+
+  it("keeps tool results in Anthropic-safe user-role context until structured blocks land", async () => {
+    const harness = createHarness(["reply"]);
+    harness.store.messages.push(
+      message("tool-result", "tool_result", "diff applied"),
+    );
+
+    await harness.controller.addMessage("session-1", "continue");
+
+    expect(harness.calls[0]?.messages).toMatchObject([
+      { role: "user", content: "diff applied" },
+      { role: "user", content: "continue" },
+    ]);
+  });
 });
 
 function createHarness(completions: string[]) {
@@ -80,60 +97,4 @@ function createHarness(completions: string[]) {
   });
 
   return { controller, store, calls, frames };
-}
-
-class InMemoryConversationStore implements ConversationStore {
-  readonly messages: ConversationMessage[] = [];
-
-  async insert(message: ConversationMessage): Promise<void> {
-    this.messages.push(message);
-  }
-
-  async listPage(
-    sessionId: string,
-    options: { before?: string; limit: number },
-  ) {
-    const sessionMessages = this.messages.filter(
-      (message) => message.sessionId === sessionId,
-    );
-    const beforeIndex = options.before
-      ? sessionMessages.findIndex((message) => message.id === options.before)
-      : sessionMessages.length;
-    const eligible = sessionMessages.slice(0, beforeIndex);
-    const page = eligible.slice(-options.limit);
-    return {
-      messages: page,
-      nextCursor:
-        eligible.length > options.limit ? (page[0]?.id ?? null) : null,
-    };
-  }
-
-  async listAll(sessionId: string): Promise<ConversationMessage[]> {
-    return this.messages.filter((message) => message.sessionId === sessionId);
-  }
-
-  async deleteAll(sessionId: string): Promise<void> {
-    for (let index = this.messages.length - 1; index >= 0; index -= 1) {
-      if (this.messages[index]?.sessionId === sessionId) {
-        this.messages.splice(index, 1);
-      }
-    }
-  }
-}
-
-function message(
-  id: string,
-  role: ConversationMessage["role"],
-  text: string,
-): ConversationMessage {
-  return {
-    id,
-    sessionId: "session-1",
-    role,
-    content: [{ type: "text", text }],
-    hasThinking: false,
-    tokenCount: 1,
-    compactionBoundary: false,
-    createdAt: fixedNow,
-  };
 }

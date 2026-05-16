@@ -6,7 +6,10 @@ export type { ServerStreamFrame } from "@iquantum/protocol";
 
 export interface DaemonClient {
   health(): Promise<{ ok: boolean }>;
-  createSession(repoPath: string): Promise<Session>;
+  createSession(
+    repoPath: string,
+    options?: CreateSessionOptions,
+  ): Promise<Session>;
   getSession(sessionId: string): Promise<Session>;
   destroySession(sessionId: string): Promise<void>;
   startTask(sessionId: string, prompt: string): Promise<Plan>;
@@ -16,6 +19,11 @@ export interface DaemonClient {
   listCheckpoints(sessionId: string): Promise<GitCheckpoint[]>;
   restore(sessionId: string, hash: string): Promise<void>;
   openStream(sessionId: string): AsyncIterable<ServerStreamFrame>;
+}
+
+export interface CreateSessionOptions {
+  requireApproval?: boolean;
+  autoApprove?: boolean;
 }
 
 export class HttpDaemonClient implements DaemonClient {
@@ -29,8 +37,11 @@ export class HttpDaemonClient implements DaemonClient {
     return this.#get("/health");
   }
 
-  createSession(repoPath: string): Promise<Session> {
-    return this.#post("/sessions", { repoPath });
+  createSession(
+    repoPath: string,
+    options: CreateSessionOptions = {},
+  ): Promise<Session> {
+    return this.#post("/sessions", { repoPath, ...options });
   }
 
   getSession(sessionId: string): Promise<Session> {

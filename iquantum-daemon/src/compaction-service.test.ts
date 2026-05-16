@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CompactionService } from "./compaction-service";
-import type { ConversationMessage, ConversationStore } from "./db/stores";
+import type { ConversationMessage } from "./db/stores";
+import { conversationMessage, InMemoryConversationStore } from "./test-helpers";
 
 const fixedNow = "2026-05-16T00:00:00.000Z";
 
@@ -69,39 +70,6 @@ function createHarness(seedMessages: ConversationMessage[]) {
   };
 }
 
-class InMemoryConversationStore implements ConversationStore {
-  readonly messages: ConversationMessage[];
-
-  constructor(messages: ConversationMessage[]) {
-    this.messages = [...messages];
-  }
-
-  async insert(message: ConversationMessage): Promise<void> {
-    this.messages.push(message);
-  }
-
-  async listPage() {
-    return { messages: [], nextCursor: null };
-  }
-
-  async listAll(sessionId: string): Promise<ConversationMessage[]> {
-    return this.messages.filter((message) => message.sessionId === sessionId);
-  }
-
-  async deleteAll(): Promise<void> {
-    return undefined;
-  }
-}
-
 function message(id: string, text: string): ConversationMessage {
-  return {
-    id,
-    sessionId: "session-1",
-    role: "user",
-    content: [{ type: "text", text }],
-    hasThinking: false,
-    tokenCount: 1,
-    compactionBoundary: false,
-    createdAt: fixedNow,
-  };
+  return conversationMessage(id, "user", text);
 }

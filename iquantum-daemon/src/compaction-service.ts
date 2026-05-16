@@ -4,6 +4,7 @@ import {
   type ConversationCompleter,
   contentToText,
 } from "./conversation-controller";
+import { messagesSinceLastBoundary } from "./conversation-history";
 import type { ConversationMessage, ConversationStore } from "./db/stores";
 
 export interface CompactionStreams {
@@ -46,7 +47,9 @@ export class CompactionService {
   }
 
   async maybeCompact(sessionId: string): Promise<ConversationMessage | null> {
-    const messages = activeMessages(await this.#store.listAll(sessionId));
+    const messages = messagesSinceLastBoundary(
+      await this.#store.listAll(sessionId),
+    );
     const tokenCount = this.#tokenCounter(messages);
 
     if (!needsCompaction(tokenCount, this.#modelContextWindow)) {
@@ -57,7 +60,9 @@ export class CompactionService {
   }
 
   async compact(sessionId: string): Promise<ConversationMessage | null> {
-    const messages = activeMessages(await this.#store.listAll(sessionId));
+    const messages = messagesSinceLastBoundary(
+      await this.#store.listAll(sessionId),
+    );
 
     if (messages.length === 0) {
       return null;
@@ -97,21 +102,6 @@ export class CompactionService {
   }
 }
 
-function activeMessages(
-  messages: ConversationMessage[],
-): ConversationMessage[] {
-  let boundaryIndex = -1;
-
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.compactionBoundary) {
-      boundaryIndex = index;
-      break;
-    }
-  }
-
-  return boundaryIndex === -1 ? messages : messages.slice(boundaryIndex);
-}
-
 function compactionPrompt(messages: ConversationMessage[]): LLMMessage[] {
   return [
     {
@@ -120,7 +110,7 @@ function compactionPrompt(messages: ConversationMessage[]): LLMMessage[] {
         "Summarize this conversation for future continuation. Preserve user goals, decisions, constraints, completed work, and unresolved questions. Be concise but specific.",
     },
     ...messages.map((message) => ({
-      role: message.role === "tool_result" ? ("tool" as const) : message.role,
+      role: message.role === "tool_result" ? ("user" as const) : message.role,
       content: contentToText(message),
     })),
   ];

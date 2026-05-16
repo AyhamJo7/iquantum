@@ -50,6 +50,13 @@ export interface ConversationStore {
   deleteAll(sessionId: string): Promise<void>;
 }
 
+export class InvalidConversationCursorError extends Error {
+  constructor(readonly cursor: string) {
+    super(`Unknown conversation cursor ${cursor}`);
+    this.name = "InvalidConversationCursorError";
+  }
+}
+
 export class SqliteSessionStore implements SessionStore {
   readonly #db: Database;
 
@@ -299,6 +306,18 @@ export class SqliteConversationStore implements ConversationStore {
     sessionId: string,
     options: { before?: string; limit: number },
   ): Promise<ConversationPage> {
+    if (options.before) {
+      const cursor = this.#db
+        .query(
+          "SELECT 1 FROM messages WHERE id = ? AND session_id = ? AND task_id IS NULL",
+        )
+        .get(options.before, sessionId);
+
+      if (!cursor) {
+        throw new InvalidConversationCursorError(options.before);
+      }
+    }
+
     const beforeClause = options.before
       ? "AND rowid < (SELECT rowid FROM messages WHERE id = ? AND session_id = ? AND task_id IS NULL)"
       : "";

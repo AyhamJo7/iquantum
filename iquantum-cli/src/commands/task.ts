@@ -24,7 +24,10 @@ export async function runTask(
   let session: import("@iquantum/types").Session | undefined;
 
   try {
-    session = await client.createSession(repoPath);
+    session = await client.createSession(repoPath, {
+      requireApproval: true,
+      autoApprove: true,
+    });
   } catch (error) {
     if (isDaemonNotRunning(error)) {
       writer.writeln(

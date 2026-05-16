@@ -1,5 +1,6 @@
 import { countTokens } from "@iquantum/context-window";
 import type { LLMMessage } from "@iquantum/types";
+import { messagesSinceLastBoundary } from "./conversation-history";
 import type {
   ConversationMessage,
   ConversationPage,
@@ -106,10 +107,7 @@ export class ConversationController {
   }
 
   async getMessagesForApi(sessionId: string): Promise<ConversationMessage[]> {
-    const messages = await this.#store.listAll(sessionId);
-    const boundaryIndex = lastCompactionBoundaryIndex(messages);
-
-    return boundaryIndex === -1 ? messages : messages.slice(boundaryIndex);
+    return messagesSinceLastBoundary(await this.#store.listAll(sessionId));
   }
 
   async getTokenCount(sessionId: string): Promise<number> {
@@ -142,7 +140,9 @@ export class ConversationController {
 
 function toLLMMessage(message: ConversationMessage): LLMMessage {
   return {
-    role: message.role === "tool_result" ? "tool" : message.role,
+    // Real Anthropic tool results are user-role messages with tool_result
+    // blocks; role:"tool" would be dropped by the Anthropic adapter.
+    role: message.role === "tool_result" ? "user" : message.role,
     content: contentToText(message),
   };
 }
@@ -151,14 +151,4 @@ export function contentToText(message: ConversationMessage): string {
   return message.content
     .map((block) => (typeof block.text === "string" ? block.text : ""))
     .join("\n");
-}
-
-function lastCompactionBoundaryIndex(messages: ConversationMessage[]): number {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.compactionBoundary) {
-      return index;
-    }
-  }
-
-  return -1;
 }
