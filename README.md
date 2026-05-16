@@ -1,8 +1,8 @@
 <p align="center">
   <h1 align="center">iquantum</h1>
   <p align="center">
-    An open-core AI coding agent with a hardcoded <strong>Plan → Implement → Validate</strong> loop.<br/>
-    Every validated change is automatically committed to your Git repository.
+    An AI coding agent that plans before it acts, executes in an isolated sandbox,<br/>
+    and only commits to your repository once every test passes.
   </p>
 </p>
 
@@ -27,328 +27,393 @@
 
 ## What is iquantum?
 
-iquantum is a **headless AI coding agent** that combines the best ideas from the open-source ecosystem:
+iquantum is an open-source AI coding agent you run from your terminal. You describe what you want, it writes a plan for you to review, then implements the change inside a private Docker sandbox, runs your tests, and — only if everything passes — commits the result to your Git repository.
 
-| Inspiration | What we took |
-|---|---|
-| [Aider](https://aider.chat) | AST repo mapping via tree-sitter, Git-native auto-commits |
-| [Cline](https://github.com/cline/cline) | Human-in-the-loop plan approval before any code is written |
-| [OpenHands](https://github.com/All-Hands-AI/OpenHands) | Stateful Docker sandbox execution — your host is never touched |
+**Your codebase is never touched until tests are green.**
 
-The result is a **two-model loop**: a reasoning model writes a plan you review, a fast model implements it inside an isolated Docker container, your test suite validates the result, and only on a green build does the change land in your Git history.
+The agent uses two AI models with separate roles:
+
+- A **reasoning model** that thinks carefully and writes a step-by-step plan
+- A **fast model** that reads the plan and generates the actual code changes
+
+You review the plan before any code is written. You stay in control at every step.
 
 ---
 
 ## How it works
 
 ```
-$ iq task "add rate limiting to the login endpoint"
-
-── Planning ──────────────────────────────────────────────────────────
-  [architect model streams plan...]
-
-=== Plan ===
-
-1. Add express-rate-limit as a dependency
-2. Create src/middleware/rateLimiter.ts with a 5-req/min window
-3. Mount the middleware in src/app.ts before the /auth routes
-4. Add a test in tests/auth.test.ts covering the 429 response
-
-Approve? [y]es / [n]o+feedback / [q]uit: y
-
-── Implementing ──────────────────────────────────────────────────────
-  [editor model generates unified diff, applied in sandbox]
-
-── Validating ────────────────────────────────────────────────────────
-  ✓ tests passed (attempt 1)
-
-✓ Committed: a3f8c12
+You type a task
+      │
+      ▼
+┌─────────────────────────────────────┐
+│  Plan                               │
+│  AI reads your codebase and writes  │
+│  a numbered step-by-step plan       │
+└──────────────┬──────────────────────┘
+               │  You approve or give feedback
+               ▼
+┌─────────────────────────────────────┐
+│  Implement                          │
+│  AI applies changes inside an       │
+│  isolated Docker container          │
+│  (your files are untouched)         │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  Validate                           │
+│  Your test suite runs in the        │
+│  sandbox — same container,          │
+│  real environment                   │
+└──────────────┬──────────────────────┘
+               │  Pass → commit to your repo
+               │  Fail → retry implementation (up to MAX_RETRIES)
+               ▼
+         ✓  Committed
 ```
-
-### The PIV loop
-
-```
-Plan          Implement        Validate
-─────         ─────────        ────────
-Architect  →  Editor model  →  bun test (in sandbox)
-model         generates        ┌─ PASS → sync to host + git commit
-writes        unified diff     └─ FAIL → back to Implement (≤ MAX_RETRIES)
-PLAN.md       and applies
-              it in Docker
-```
-
-The sandbox is a **named Docker volume** (`iquantum-vol-<session-id>`) seeded from your repo. It survives daemon restarts. Your host repo is untouched until tests pass.
 
 ---
 
 ## Requirements
 
-| Requirement | Version |
-|---|---|
-| [Node.js](https://nodejs.org/) / npm | current LTS (install-time package manager) |
-| [Bun](https://bun.sh) | ≥ 1.3 |
-| [Docker](https://www.docker.com/) | any recent version |
-| Anthropic API key | BYOK |
+Before installing, make sure you have the following:
 
-> **Platform notes**: use Docker Desktop on macOS/Windows and Docker Engine on Linux.
-> Windows users should run iquantum inside WSL2.
+| Requirement | Notes |
+|---|---|
+| **npm** | Comes with [Node.js](https://nodejs.org/) — used only to install `iq` globally |
+| **Docker** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) on macOS or Windows; [Docker Engine](https://docs.docker.com/engine/install/) on Linux |
+| **An Anthropic API key** | Get one at [console.anthropic.com](https://console.anthropic.com) — you pay only for what you use |
+
+> **Windows users:** run iquantum inside [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install). Docker Desktop must have WSL2 integration enabled.
 
 ---
 
 ## Quick Start
 
-### 1 — Install iquantum
+### Step 1 — Install
 
 ```bash
 npm install -g @iquantum/cli
 ```
 
-### 2 — Run the first-time setup
+This installs the `iq` command globally on your machine.
+
+### Step 2 — Set up
 
 ```bash
 iq
 ```
 
-On first launch, iquantum opens a short setup wizard, saves
-`~/.iquantum/config.json`, pulls the sandbox image automatically, starts the daemon, and
-opens the interactive REPL.
+The first time you run `iq`, a short setup wizard appears. It asks for your Anthropic API key, saves your configuration, pulls the sandbox image, and starts the background daemon — all automatically.
 
-### 3 — Run your first task
+### Step 3 — Start coding
+
+Navigate to any project and type a task:
 
 ```bash
 cd /path/to/your/project
-iq task "your task description here"
+iq
 ```
 
-Environment variables still work and always override saved config values, but installed
-users do not need to create a `.env` file manually.
+Then describe what you want in plain English:
+
+```
+> add input validation to the sign-up form
+```
+
+iquantum will plan it, show you the plan, wait for your approval, implement the changes, run your tests, and commit the result.
 
 ---
 
-## Development / Contributing
+## The Interactive Interface
 
-To build iquantum from source:
+When you run `iq`, you enter the interactive REPL — a live terminal session where you and the agent collaborate. Here is what a typical exchange looks like:
 
-```bash
-git clone https://github.com/AyhamJo7/iquantum.git
-cd iquantum
-bun install
-bun run build
-docker build -t iquantum/sandbox:local -f docker/sandbox.Dockerfile docker/
-cp .env.example .env
-# Point the daemon at the locally-built image instead of the GHCR release:
-echo "IQUANTUM_SANDBOX_IMAGE=iquantum/sandbox:local" >> .env
-bun link --cwd iquantum-cli
+```
+iq  v1.0.0  ·  session abc123  ·  architect: claude-sonnet-4-6
+
+> add rate limiting to the login endpoint
+
+  Planning...
+
+  ══ Plan ══════════════════════════════════════════════
+  1. Install express-rate-limit
+  2. Create src/middleware/rateLimiter.ts (5 req / min)
+  3. Mount the middleware before /auth routes in app.ts
+  4. Add a test covering the 429 response
+  ══════════════════════════════════════════════════════
+
+  Approve this plan? › yes
+
+  Implementing...  ████████████░░  applying diff 3 / 4
+
+  Validating...
+  ✓ 42 tests passed
+
+  ✓ Committed  a3f8c12  "feat: add rate limiting to login endpoint"
+
+>
 ```
 
-For local development you can keep values in `.env`; export them before launching the daemon or CLI:
+The agent waits for your approval before writing a single line of code. If you are not happy with the plan, type `no` and explain what to change — the agent will revise and show you a new plan.
 
-```env
-ANTHROPIC_API_KEY=sk-ant-...
-IQUANTUM_ARCHITECT_MODEL=claude-sonnet-4-6
-IQUANTUM_EDITOR_MODEL=claude-haiku-4-5-20251001
-IQUANTUM_SOCKET=~/.iquantum/daemon.sock
-MAX_RETRIES=3
-```
+### Slash commands
 
----
+Type any of these inside the `iq` REPL:
 
-## CLI Reference
-
-### `iq` (interactive REPL)
-
-```bash
-iq           # opens the interactive chat REPL
-```
-
-Resumes your last session automatically if the daemon still has it. Starts a fresh session otherwise. The REPL supports slash commands:
-
-| Command | Effect |
+| Command | What it does |
 |---|---|
-| `/help` | List all available commands |
-| `/status` | Show the current session, model, and token count |
-| `/model` | Show the effective architect and editor models |
-| `/clear` | Clear the transcript (session history stays in daemon) |
-| `/compact` | Summarise and compress the context window |
-| `/plan` | Show the current plan, if one exists |
-| `/approve` | Approve the current plan |
-| `/reject <reason>` | Reject the current plan with feedback |
-| `/mcp` | List connected MCP tools and their status |
-| `/restore [hash]` | Roll back the sandbox to a prior Git checkpoint |
-| `/quit` | Exit `iq` while leaving the sandbox available for resume |
+| `/help` | Show all available commands |
+| `/status` | Show session ID, active models, and token usage |
+| `/model` | Show the reasoning and implementation models in use |
+| `/plan` | Display the current plan (if one exists) |
+| `/approve` | Approve the current plan without typing `yes` |
+| `/reject <reason>` | Reject the plan and tell the agent why |
+| `/compact` | Summarise and compress the context window to save tokens |
+| `/clear` | Clear the visible transcript (session history is kept in the daemon) |
+| `/mcp` | List connected MCP tools and their current status |
+| `/restore [hash]` | Roll the sandbox back to a previous Git checkpoint |
+| `/quit` | Exit the REPL — the daemon and sandbox stay running for resume |
 
-Keyboard shortcuts: `Ctrl-O` toggles thinking output · `Ctrl-L` clears the screen · `Escape` cancels the current request · `Ctrl-C` twice exits.
+### Keyboard shortcuts
 
-### `iq task`
-
-```
-iq task [options] <prompt>
-
-Options:
-  --repo <path>   Target repository (default: current working directory)
-```
-
-| Prompt response | Effect |
+| Shortcut | Effect |
 |---|---|
-| `y` / `yes` / Enter | Approve the plan → begin implementation |
-| `n` / any other text | Reject → provide feedback → architect re-plans |
-| `q` / `quit` | Abort and destroy the session |
+| `Ctrl-O` | Toggle thinking / reasoning output visibility |
+| `Ctrl-L` | Clear the screen |
+| `Escape` | Cancel the current in-flight request |
+| `Ctrl-C` twice | Exit `iq` immediately |
 
-### `iq daemon`
+---
 
-```
-iq daemon start    Start the background daemon
-iq daemon stop     Gracefully stop the daemon
-iq daemon status   Check if the daemon is alive
-```
+## Non-interactive mode
 
-### Setup, updates, and saved configuration
+If you prefer to run a task from a script or another tool, use `iq task`:
 
 ```bash
-iq init                    Run the first-time setup wizard again
-iq update                  Install the latest released version
-iq config list             Show saved config values (API key redacted)
-iq config get <KEY>        Read one saved config value
-iq config set <KEY> <VAL>  Persist one saved config value
+iq task "refactor the database connection module to use a connection pool"
+```
+
+The agent will print the plan, prompt for approval interactively, then proceed. Use `--repo` to target a repository other than the current directory:
+
+```bash
+iq task --repo /path/to/project "add OpenAPI documentation to all routes"
 ```
 
 ---
 
-## Configuration Reference
+## Daemon management
 
-Installed users are configured through `~/.iquantum/config.json`, which the first-run
-wizard creates for you. You can edit it indirectly with `iq config list|get|set`.
-Environment variables remain supported and win over saved values when both are present.
+iquantum runs a small background daemon that manages your sessions and the Docker sandbox. You rarely need to touch it directly, but here are the commands:
 
-| Variable | Required | Default | Description |
+```bash
+iq daemon start    # Start the daemon in the background
+iq daemon stop     # Gracefully stop the daemon
+iq daemon status   # Check whether the daemon is running
+```
+
+The daemon starts automatically on first use and restarts automatically if it goes down.
+
+---
+
+## Configuration
+
+### Viewing and changing your settings
+
+```bash
+iq config list                          # Show all saved settings (API key is redacted)
+iq config get ANTHROPIC_API_KEY         # Read one value
+iq config set IQUANTUM_ARCHITECT_MODEL claude-opus-4-7   # Change a value
+```
+
+Settings are saved in `~/.iquantum/config.json`. You can also set any of these as environment variables — environment variables always take priority over saved config.
+
+### All configuration options
+
+| Setting | Required | Default | Description |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | ✅ | — | Anthropic API key |
-| `IQUANTUM_ARCHITECT_MODEL` | — | `claude-sonnet-4-6` | Reasoning model used for planning |
-| `IQUANTUM_EDITOR_MODEL` | — | `claude-haiku-4-5-20251001` | Fast model used for implementation |
+| `ANTHROPIC_API_KEY` | ✅ | — | Your Anthropic API key |
+| `IQUANTUM_ARCHITECT_MODEL` | — | `claude-sonnet-4-6` | The reasoning model used to write plans |
+| `IQUANTUM_EDITOR_MODEL` | — | `claude-haiku-4-5-20251001` | The fast model used to write code changes |
+| `IQUANTUM_SANDBOX_IMAGE` | — | `ghcr.io/ayhamjo7/iquantum-sandbox:latest` | The Docker image used for the sandbox |
 | `IQUANTUM_SOCKET` | — | `~/.iquantum/daemon.sock` | Unix socket path for CLI ↔ daemon communication |
-| `IQUANTUM_SANDBOX_IMAGE` | — | `ghcr.io/ayhamjo7/iquantum-sandbox:latest` | Sandbox image, pulled automatically when needed |
-| `MAX_RETRIES` | — | `3` | Shared retry budget across plan rejections, diff failures, and validation failures |
-| `IQUANTUM_EXEC_TIMEOUT_MS` | — | `120000` | Max duration (ms) for a sandbox command before the container is killed |
-| `IQUANTUM_MCP_SERVERS` | — | `[]` | JSON array of MCP server configs to expose as agent tools |
-| `LOG_LEVEL` | — | `info` | Daemon log level: `error` \| `warn` \| `info` \| `debug` |
+| `MAX_RETRIES` | — | `3` | How many times the agent retries before giving up |
+| `IQUANTUM_EXEC_TIMEOUT_MS` | — | `120000` | How long (ms) a sandbox command can run before being killed |
+| `IQUANTUM_MCP_SERVERS` | — | `[]` | External tools to expose to the agent via MCP (JSON array) |
+| `LOG_LEVEL` | — | `info` | Daemon log verbosity: `error` · `warn` · `info` · `debug` |
 
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│  iq  (CLI)                                  │
-│  Commander · readline                        │
-│  HTTP + WebSocket over Unix socket           │
-└────────────────┬────────────────────────────┘
-                 │  ~/.iquantum/daemon.sock
-┌────────────────▼────────────────────────────┐
-│  iquantum-daemon                             │
-│  Bun HTTP server · WebSocket fan-out         │
-│  SQLite state (sessions, plans, messages)    │
-│  SessionController → PIVEngine               │
-└──────┬──────────────────────┬───────────────┘
-       │                      │
-┌──────▼──────┐   ┌───────────▼──────────────┐
-│  LLM Router │   │  SandboxManager           │
-│  Architect  │   │  Docker named volumes     │
-│  Editor     │   │  Per-session containers   │
-└──────┬──────┘   └───────────┬──────────────┘
-       │                      │
-       │              ┌───────▼──────────────┐
-       │              │  DiffEngine           │
-       │              │  Fuzzy unified-diff   │
-       │              │  apply inside sandbox │
-       │              └──────────────────────┘
-┌──────▼───────────────────────────────────────┐
-│  packages/                                    │
-│  types · config · repo-map · llm              │
-│  sandbox · diff-engine · git · piv-engine     │
-└──────────────────────────────────────────────┘
-```
-
-### Package overview
-
-| Package | Responsibility |
-|---|---|
-| `packages/types` | Shared TypeScript interfaces (Session, Plan, ValidateRun, …) |
-| `packages/config` | Zod-validated env config loader |
-| `packages/repo-map` | tree-sitter AST → PageRank-scored repo map |
-| `packages/llm` | Anthropic + OpenAI-compatible providers, LLMRouter |
-| `packages/sandbox` | Docker sandbox lifecycle, exec, host sync |
-| `packages/diff-engine` | Unified diff parse + fuzzy hunk apply (Levenshtein, ±5-line window) |
-| `packages/git` | GitManager: checkpoint commits and restore |
-| `packages/piv-engine` | PIVEngine state machine |
-| `iquantum-daemon` | HTTP/WS daemon, SessionController, SQLite stores |
-| `iquantum-cli` | `iq` CLI, HttpDaemonClient, interactive task loop |
-
----
-
-## Development
+### Re-running the setup wizard
 
 ```bash
-bun install              # install all workspace deps
-bun run build            # compile all packages
-bun run dev              # start daemon in watch mode
-bun run test             # run all tests (Vitest)
-bun run lint             # Biome check + format
-bun run typecheck        # tsc --noEmit across all packages
+iq init
 ```
 
-**Run a single package's tests:**
+Run this any time you want to change your API key, swap models, or reset your configuration.
+
+### Keeping iquantum up to date
 
 ```bash
-bun run test -- packages/diff-engine
+iq update
 ```
-
-**Run the repo-map self-check** (disabled in CI — requires a real filesystem scan):
-
-```bash
-bun test packages/repo-map --test-name-pattern "self-map"
-```
-
----
-
-## Key Design Decisions
-
-| Decision | Rationale |
-|---|---|
-| **Fuzzy diff apply** | LLM diffs routinely have off-by-one context lines. The apply layer uses Levenshtein distance with a ±5-line search window before rejecting a hunk rather than failing immediately. |
-| **Named sandbox volumes** | `iquantum-vol-<session-id>` — named volumes survive daemon restarts. Anonymous volumes would lose sandbox state on shutdown. |
-| **Shared retry budget** | A single `MAX_RETRIES` counter covers plan rejections, diff failures, and validation failures. A reject costs one retry from the same pool as implementation retries, keeping the ceiling simple and predictable. |
-| **Two-model routing** | Architect and Editor models are configured and called separately — the separation is the core value proposition, not an implementation detail. |
-| **MCP as external tool provider** | `IQUANTUM_MCP_SERVERS` accepts any stdio-transport MCP server. Tools are namespaced `serverName__toolName` and injected into the `iq` REPL tool loop. Servers are started lazily on first use and restarted on error. |
-| **Dogfood validation** | No SWE-bench. iquantum is used to build iquantum. Real-world correctness over benchmark scores. |
-
----
-
-## Roadmap
-
-- [x] Session resume — `iq` auto-reconnects to the last session on startup
-- [x] MCP tool integration — stdio MCP servers via `IQUANTUM_MCP_SERVERS`
-- [x] Sandbox exec timeout — configurable kill-on-breach via `IQUANTUM_EXEC_TIMEOUT_MS`
-- [ ] `iq restore <hash>` — roll back to any prior Git checkpoint from the CLI
-- [ ] Multi-repo context — PageRank spanning more than one repository
-- [ ] OpenAI-compatible provider routing — use DeepSeek V3 as the editor model
-- [ ] VS Code extension — visual diff approval, side-by-side plan review
-- [ ] Cloud sandbox tier — hosted Docker, zero local setup required
 
 ---
 
 ## Contributing
 
-Contributions are welcome. Please open an issue before submitting a pull request for anything non-trivial so we can align on direction first.
+Contributions are welcome from everyone — whether you are fixing a typo, reporting a bug, or building a new feature.
+
+### Reporting a bug or requesting a feature
+
+1. Open the [Issues tab](https://github.com/AyhamJo7/iquantum/issues)
+2. Click **New issue**
+3. Describe what you expected to happen and what actually happened
+4. Include any error messages or steps to reproduce
+
+### Contributing code — step by step
+
+**1. Fork the repository**
+
+Click **Fork** in the top-right corner of the GitHub page. This creates your own copy of the project under your account.
+
+**2. Clone your fork**
 
 ```bash
-# Fork the repo, clone your fork, then:
-bun install
-bun run test       # must pass before opening a PR
-bun run lint       # must be clean (no warnings)
-bun run typecheck  # must pass
+git clone https://github.com/<your-username>/iquantum.git
+cd iquantum
 ```
 
-Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/): `feat(scope):`, `fix(scope):`, `chore:`, `docs:`, `test:`, `refactor:`.
+**3. Install dependencies**
+
+You need [Bun](https://bun.sh) installed:
+
+```bash
+bun install
+```
+
+**4. Build the project**
+
+```bash
+bun run build
+```
+
+**5. Set up your local environment**
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and fill in your `ANTHROPIC_API_KEY`. For local sandbox development, build the image locally:
+
+```bash
+docker build -t iquantum/sandbox:local -f docker/sandbox.Dockerfile docker/
+echo "IQUANTUM_SANDBOX_IMAGE=iquantum/sandbox:local" >> .env
+```
+
+Link the CLI so you can run `iq` from your local build:
+
+```bash
+bun link --cwd iquantum-cli
+```
+
+**6. Make your changes**
+
+Work on your feature or fix. Run the checks frequently:
+
+```bash
+bun run test       # All tests must pass
+bun run lint       # No lint warnings
+bun run typecheck  # No type errors
+```
+
+**7. Commit your changes**
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```bash
+git commit -m "feat(daemon): add session export command"
+git commit -m "fix(cli): handle daemon restart gracefully"
+git commit -m "docs: update configuration reference"
+```
+
+Commit prefixes: `feat` · `fix` · `chore` · `docs` · `test` · `refactor`
+
+**8. Open a pull request**
+
+Push your branch to your fork:
+
+```bash
+git push origin your-branch-name
+```
+
+Then go to the [original repository](https://github.com/AyhamJo7/iquantum) on GitHub. A banner will appear at the top offering to open a pull request from your branch. Click it, fill in a clear description of what you changed and why, and submit.
+
+> **Tip:** For anything beyond a small bug fix or typo, open an issue first so we can discuss the approach before you invest time writing the code.
+
+### What makes a good pull request
+
+- A clear title that describes the change (`fix: handle empty repo map gracefully`)
+- A description that explains *why* the change is needed, not just what it does
+- All tests passing (`bun run test`)
+- No lint errors (`bun run lint`)
+- No type errors (`bun run typecheck`)
+- One focused change per PR — avoid bundling unrelated fixes together
+
+---
+
+## Architecture
+
+iquantum is a TypeScript monorepo built on [Bun](https://bun.sh):
+
+```
+iquantum/
+├── iquantum-cli/      Terminal client — the iq command
+├── iquantum-daemon/   Background agent runtime (HTTP + WebSocket over Unix socket)
+└── packages/
+    ├── config/        Environment config loader with runtime validation
+    ├── types/         Shared TypeScript interfaces
+    ├── llm/           AI provider abstraction (Anthropic + OpenAI-compatible)
+    ├── repo-map/      AST-based repository map (tree-sitter + PageRank scoring)
+    ├── sandbox/       Docker sandbox lifecycle management
+    ├── diff-engine/   Unified diff parser and fuzzy hunk applicator
+    ├── git/           Git checkpoint commits and sandbox restore
+    ├── piv-engine/    Plan → Implement → Validate state machine
+    ├── protocol/      CLI ↔ daemon message types
+    └── context-window/  Token budget management
+```
+
+The CLI communicates with the daemon over a Unix socket (`~/.iquantum/daemon.sock`). The daemon manages all AI calls, sandbox containers, and SQLite state. The CLI renders the REPL and streams events back to the user in real time.
+
+Sessions persist across daemon restarts via named Docker volumes (`iquantum-vol-<session-id>`). Your host filesystem is never written to until the sandbox's tests pass.
+
+---
+
+## Development commands
+
+```bash
+bun install              # Install all workspace dependencies
+bun run build            # Compile all packages
+bun run dev              # Start the daemon in watch mode (auto-restarts on save)
+bun run test             # Run all tests
+bun run test -- packages/diff-engine   # Run one package's tests
+bun run lint             # Biome lint and format check
+bun run typecheck        # TypeScript type check across all packages
+```
+
+---
+
+## Roadmap
+
+- [x] Interactive REPL with plan approval flow
+- [x] Session resume — `iq` reconnects to the last session automatically
+- [x] MCP tool integration — any stdio MCP server exposed as agent tools
+- [x] Configurable sandbox exec timeout
+- [x] First-run setup wizard
+- [ ] `iq restore <hash>` — roll back to any prior Git checkpoint from the CLI
+- [ ] Multi-repo context spanning more than one repository
+- [ ] OpenAI-compatible provider routing — bring your own model
+- [ ] VS Code extension — visual diff approval and side-by-side plan review
+- [ ] Cloud sandbox tier — hosted execution, zero local Docker setup
 
 ---
 
