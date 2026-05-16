@@ -19,6 +19,7 @@
     "@types/ws": "^8.18.1"
   },
   "dependencies": {
+    "@iquantum/config": "workspace:*",
     "@iquantum/protocol": "workspace:*",
     "@iquantum/types": "workspace:*",
     "commander": "^14.0.3",

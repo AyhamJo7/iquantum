@@ -7,6 +7,7 @@ import { renderAndRun } from "./app";
 import { HttpDaemonClient } from "./client";
 import { daemonStatus, startDaemon, stopDaemon } from "./commands/daemon";
 import { runTask } from "./commands/task";
+import { configGet, configList, configSet } from "./commands/config";
 import { runUpdate } from "./commands/update";
 import { VERSION } from "./version";
 
@@ -96,6 +97,31 @@ daemon
       { client: new HttpDaemonClient(socketPath) },
       stdoutWriter,
     );
+  });
+
+const config = program
+  .command("config")
+  .description("Read and write ~/.iquantum/config.json");
+
+config
+  .command("list")
+  .description("Print all configured values (API key is redacted)")
+  .action(() => {
+    configList(stdoutWriter);
+  });
+
+config
+  .command("set <KEY> <value>")
+  .description("Set a config value")
+  .action(async (key: string, value: string) => {
+    await configSet(key, value, stdoutWriter);
+  });
+
+config
+  .command("get <KEY>")
+  .description("Get a config value")
+  .action((key: string) => {
+    configGet(key, stdoutWriter);
   });
 
 program

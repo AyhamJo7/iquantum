@@ -14,11 +14,12 @@
     },
     "iquantum-cli": {
       "name": "@iquantum/cli",
-      "version": "0.0.0",
+      "version": "1.0.0",
       "bin": {
-        "iq": "./src/index.ts",
+        "iq": "./dist/bin.js",
       },
       "dependencies": {
+        "@iquantum/config": "workspace:*",
         "@iquantum/protocol": "workspace:*",
         "@iquantum/types": "workspace:*",
         "commander": "^14.0.3",
