@@ -1,9 +1,10 @@
 import type { Session } from "@iquantum/types";
 import { Box, render, Text } from "ink";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DaemonClient } from "./client";
 import { HttpDaemonClient } from "./client";
 import { startDaemon } from "./commands/daemon";
+import { makeCommandRegistry } from "./commands/slash-commands";
 import { Splash } from "./components/Splash";
 import { REPL } from "./screens/REPL";
 import { defaultSleep, ensureDaemonReady } from "./startup";
@@ -31,6 +32,7 @@ export function IQApp({
 }: IQAppProps) {
   const [session, setSession] = useState<Session>();
   const [showRepl, setShowRepl] = useState(skipSplash);
+  const registryRef = useRef(makeCommandRegistry());
   const [error, setError] = useState<string>();
   const completeSplash = useCallback(() => setShowRepl(true), []);
 
@@ -91,7 +93,12 @@ export function IQApp({
 
   return (
     <Box flexDirection="column">
-      <REPL client={client} session={session} modelName={modelName} />
+      <REPL
+        client={client}
+        session={session}
+        modelName={modelName}
+        registry={registryRef.current}
+      />
     </Box>
   );
 }
@@ -115,6 +122,7 @@ export async function renderAndRun(
       version={options.version}
       repoPath={options.repoPath ?? process.cwd()}
     />,
+    { exitOnCtrlC: false },
   );
 
   await app.waitUntilExit();

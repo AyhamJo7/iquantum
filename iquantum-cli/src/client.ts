@@ -24,6 +24,11 @@ export interface DaemonClient {
     requestId: string,
     approved: boolean,
   ): Promise<void>;
+  deleteMessages(sessionId: string): Promise<void>;
+  compact(
+    sessionId: string,
+  ): Promise<{ compacted: boolean; summary: string | null }>;
+  cancelStream(sessionId: string): Promise<void>;
   openStream(sessionId: string): AsyncIterable<ServerStreamFrame>;
 }
 
@@ -108,6 +113,20 @@ export class HttpDaemonClient implements DaemonClient {
       requestId,
       approved,
     });
+  }
+
+  async deleteMessages(sessionId: string): Promise<void> {
+    await this.#delete(`/sessions/${sessionId}/messages`);
+  }
+
+  compact(
+    sessionId: string,
+  ): Promise<{ compacted: boolean; summary: string | null }> {
+    return this.#post(`/sessions/${sessionId}/compact`);
+  }
+
+  async cancelStream(sessionId: string): Promise<void> {
+    await this.#post(`/sessions/${sessionId}/cancel`);
   }
 
   async *openStream(sessionId: string): AsyncGenerator<ServerStreamFrame> {

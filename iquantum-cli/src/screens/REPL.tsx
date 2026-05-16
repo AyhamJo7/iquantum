@@ -2,6 +2,7 @@ import type { Session } from "@iquantum/types";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import type { DaemonClient } from "../client";
+import type { CommandRegistry } from "../commands/registry";
 import { PermissionRequest } from "../components/PermissionRequest";
 import { PromptInput } from "../components/PromptInput";
 import { SpinnerWithPhase } from "../components/SpinnerWithPhase";
@@ -13,14 +14,16 @@ export interface REPLProps {
   client: DaemonClient;
   session: Session;
   modelName: string;
+  registry?: CommandRegistry;
 }
 
-export function REPL({ client, session, modelName }: REPLProps) {
+export function REPL({ client, session, modelName, registry }: REPLProps) {
   const [state, dispatch] = useReducer(
     reduceREPLViewState,
     initialREPLViewState,
   );
   const submittingRef = useRef(false);
+  const lastCtrlCRef = useRef(0);
 
   const pendingPermission = useMemo(() => {
     if (!state.pendingPermissionId) return null;
@@ -36,6 +39,29 @@ export function REPL({ client, session, modelName }: REPLProps) {
   useInput((input, key) => {
     if (key.ctrl && input === "o") {
       dispatch({ type: "toggle_thinking" });
+      return;
+    }
+
+    if (key.ctrl && input === "c") {
+      const now = Date.now();
+
+      if (now - lastCtrlCRef.current < 500) {
+        process.exit(0);
+      }
+
+      lastCtrlCRef.current = now;
+      return;
+    }
+
+    if (key.ctrl && input === "l") {
+      process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+      return;
+    }
+
+    if (key.escape && state.isSubmitting) {
+      submittingRef.current = false;
+      dispatch({ type: "submit_error", message: "cancelled" });
+      void client.cancelStream(session.id).catch(() => {});
     }
   });
 
@@ -102,7 +128,33 @@ export function REPL({ client, session, modelName }: REPLProps) {
       {state.error ? <Text color="red">{state.error}</Text> : null}
       <PromptInput
         disabled={state.isSubmitting}
+        {...(registry ? { registry } : {})}
         onSubmit={async (content) => {
+          if (content.startsWith("/") && registry) {
+            const [rawName, ...argParts] = content.slice(1).split(" ");
+            const cmdName = rawName ?? "";
+            const cmd = registry.get(cmdName);
+
+            if (cmd) {
+              await cmd.run(argParts.join(" "), {
+                client,
+                registry,
+                sessionId: session.id,
+                dispatch,
+                tokenCount: state.tokenCount,
+                modelName,
+              });
+              return;
+            }
+
+            dispatch({
+              type: "system_message",
+              text: `Unknown command: /${cmdName}. Type /help for a list.`,
+              level: "error",
+            });
+            return;
+          }
+
           if (submittingRef.current) {
             return;
           }
