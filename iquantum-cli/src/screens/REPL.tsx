@@ -1,7 +1,8 @@
 import type { Session } from "@iquantum/types";
 import { Box, Text, useInput } from "ink";
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 import type { DaemonClient } from "../client";
+import { PermissionRequest } from "../components/PermissionRequest";
 import { PromptInput } from "../components/PromptInput";
 import { SpinnerWithPhase } from "../components/SpinnerWithPhase";
 import { StatusBar } from "../components/StatusBar";
@@ -20,6 +21,17 @@ export function REPL({ client, session, modelName }: REPLProps) {
     initialREPLViewState,
   );
   const submittingRef = useRef(false);
+
+  const pendingPermission = useMemo(() => {
+    if (!state.pendingPermissionId) return null;
+    const item = state.messages.find(
+      (m) =>
+        m.type === "permission_request" &&
+        m.requestId === state.pendingPermissionId &&
+        !m.resolved,
+    );
+    return item?.type === "permission_request" ? item : null;
+  }, [state.pendingPermissionId, state.messages]);
 
   useInput((input, key) => {
     if (key.ctrl && input === "o") {
@@ -70,7 +82,23 @@ export function REPL({ client, session, modelName }: REPLProps) {
         thinkingText={state.thinkingText}
         thinkingExpanded={state.thinkingExpanded}
       />
-      <SpinnerWithPhase {...(state.phase ? { phase: state.phase } : {})} />
+      {pendingPermission ? (
+        <PermissionRequest
+          requestId={pendingPermission.requestId}
+          tool={pendingPermission.tool}
+          input={pendingPermission.input}
+          onResolve={async (requestId, approved) => {
+            try {
+              await client.postPermission(session.id, requestId, approved);
+            } catch {
+              // daemon may have already timed out the request; proceed locally
+            }
+            dispatch({ type: "permission_resolved", requestId, approved });
+          }}
+        />
+      ) : (
+        <SpinnerWithPhase {...(state.phase ? { phase: state.phase } : {})} />
+      )}
       {state.error ? <Text color="red">{state.error}</Text> : null}
       <PromptInput
         disabled={state.isSubmitting}

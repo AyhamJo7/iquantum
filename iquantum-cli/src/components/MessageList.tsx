@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import { memo } from "react";
 import type { TranscriptItem } from "../screens/repl-state";
 import { renderMarkdownToAnsi } from "./markdown";
+import { StructuredDiff } from "./StructuredDiff";
 import { ThinkingBlock } from "./ThinkingBlock";
 
 export interface MessageListProps {
@@ -46,6 +47,27 @@ const TranscriptRow = memo(function TranscriptRow({
 }) {
   if (item.type === "compact_boundary") {
     return <Text dimColor>──────────── context compacted ────────────</Text>;
+  }
+
+  if (item.type === "diff_preview") {
+    return <StructuredDiff file={item.file} patch={item.patch} />;
+  }
+
+  if (item.type === "checkpoint") {
+    return <Text dimColor>✓ checkpoint {item.hash.slice(0, 7)}</Text>;
+  }
+
+  if (item.type === "permission_request") {
+    if (!item.resolved) {
+      return null;
+    }
+
+    return (
+      <Text dimColor>
+        {item.approved ? "✓" : "✗"} tool {item.tool}{" "}
+        {item.approved ? "approved" : "denied"}
+      </Text>
+    );
   }
 
   if (item.role === "user") {

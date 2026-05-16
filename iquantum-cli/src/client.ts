@@ -19,6 +19,11 @@ export interface DaemonClient {
   listCheckpoints(sessionId: string): Promise<GitCheckpoint[]>;
   restore(sessionId: string, hash: string): Promise<void>;
   postMessage(sessionId: string, content: string): Promise<void>;
+  postPermission(
+    sessionId: string,
+    requestId: string,
+    approved: boolean,
+  ): Promise<void>;
   openStream(sessionId: string): AsyncIterable<ServerStreamFrame>;
 }
 
@@ -91,6 +96,17 @@ export class HttpDaemonClient implements DaemonClient {
     await this.#post(`/sessions/${sessionId}/messages`, {
       role: "user",
       content,
+    });
+  }
+
+  async postPermission(
+    sessionId: string,
+    requestId: string,
+    approved: boolean,
+  ): Promise<void> {
+    await this.#post(`/sessions/${sessionId}/permission`, {
+      requestId,
+      approved,
     });
   }
 

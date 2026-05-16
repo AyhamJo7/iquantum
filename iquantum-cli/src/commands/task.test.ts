@@ -198,6 +198,9 @@ function createHarness(options: HarnessOptions) {
     async postMessage() {
       return undefined;
     },
+    async postPermission() {
+      return undefined;
+    },
     openStream(sessionId) {
       calls.push(["openStream", sessionId]);
       const frames = options.frames;
