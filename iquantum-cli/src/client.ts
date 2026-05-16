@@ -29,7 +29,15 @@ export interface DaemonClient {
     sessionId: string,
   ): Promise<{ compacted: boolean; summary: string | null }>;
   cancelStream(sessionId: string): Promise<void>;
+  listMcpTools(): Promise<McpToolEntry[]>;
   openStream(sessionId: string): AsyncIterable<ServerStreamFrame>;
+}
+
+export interface McpToolEntry {
+  serverName: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
 }
 
 export interface CreateSessionOptions {
@@ -127,6 +135,10 @@ export class HttpDaemonClient implements DaemonClient {
 
   async cancelStream(sessionId: string): Promise<void> {
     await this.#post(`/sessions/${sessionId}/cancel`);
+  }
+
+  listMcpTools(): Promise<McpToolEntry[]> {
+    return this.#get("/mcp/tools");
   }
 
   async *openStream(sessionId: string): AsyncGenerator<ServerStreamFrame> {

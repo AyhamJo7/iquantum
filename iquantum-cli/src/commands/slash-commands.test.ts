@@ -23,6 +23,7 @@ function makeContext(overrides?: Partial<CommandContext>): CommandContext {
       deleteMessages: vi.fn().mockResolvedValue(undefined),
       compact: vi.fn().mockResolvedValue({ compacted: false, summary: null }),
       cancelStream: vi.fn().mockResolvedValue(undefined),
+      listMcpTools: vi.fn().mockResolvedValue([]),
       openStream: vi.fn(),
     } as unknown as CommandContext["client"],
     registry,
@@ -100,5 +101,43 @@ describe("slash commands", () => {
     await getCmd("restore").run("xyz!!", ctx);
 
     expect(ctx.dispatched[0]).toMatchObject({ level: "error" });
+  });
+
+  it("/mcp with no tools dispatches info message", async () => {
+    const ctx = makeContext() as CommandContext & { dispatched: REPLAction[] };
+    await getCmd("mcp").run("", ctx);
+
+    expect(ctx.dispatched[0]).toMatchObject({
+      type: "system_message",
+      level: "info",
+    });
+    const text = (ctx.dispatched[0] as { text: string }).text;
+    expect(text).toContain("IQUANTUM_MCP_SERVERS");
+  });
+
+  it("/mcp with tools lists them", async () => {
+    const ctx = makeContext({
+      client: {
+        ...makeContext().client,
+        listMcpTools: vi.fn().mockResolvedValue([
+          {
+            serverName: "fs",
+            name: "read",
+            description: "Read a file",
+            inputSchema: {},
+          },
+        ]),
+      },
+    }) as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("mcp").run("", ctx);
+
+    expect(ctx.dispatched[0]).toMatchObject({
+      type: "system_message",
+      level: "info",
+    });
+    const text = (ctx.dispatched[0] as { text: string }).text;
+    expect(text).toContain("fs/read");
+    expect(text).toContain("Read a file");
   });
 });

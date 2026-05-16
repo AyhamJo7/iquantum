@@ -190,6 +190,30 @@ const commandDefs: LocalCommand[] = [
     },
   },
   {
+    name: "mcp",
+    description: "List configured MCP servers and their tools",
+    async run(_, ctx) {
+      try {
+        const tools = await ctx.client.listMcpTools();
+
+        if (!tools.length) {
+          sysInfo(
+            ctx,
+            "No MCP tools available. Set IQUANTUM_MCP_SERVERS to configure.",
+          );
+          return;
+        }
+
+        const list = tools
+          .map((t) => `  ${t.serverName}/${t.name}  ${t.description}`)
+          .join("\n");
+        sysInfo(ctx, `MCP tools (${tools.length}):\n${list}`);
+      } catch {
+        sysError(ctx, "Failed to fetch MCP tools.");
+      }
+    },
+  },
+  {
     name: "quit",
     description: "Exit iq (sandbox container persists)",
     run() {
