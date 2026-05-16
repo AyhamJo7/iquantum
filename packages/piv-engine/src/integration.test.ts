@@ -15,7 +15,7 @@ const tempDirs: string[] = [];
 const sessionIds: string[] = [];
 
 afterEach(async () => {
-  const manager = new SandboxManager();
+  const manager = new SandboxManager({ image: "iquantum/sandbox:latest" });
 
   await Promise.all(
     sessionIds.splice(0).map(async (sessionId) => {
@@ -35,7 +35,7 @@ describe.skipIf(!dockerAvailable || Boolean(process.env.CI))(
     it("completes a real plan-to-checkpoint cycle in an isolated sandbox", async () => {
       const repoPath = await makeRepo();
       const sessionId = `piv-${crypto.randomUUID()}`;
-      const sandbox = new SandboxManager();
+      const sandbox = new SandboxManager({ image: "iquantum/sandbox:latest" });
       const checkpoints = new InMemoryGitCheckpointStore();
       const completions = [
         "Update answer() so the test expects 42.",

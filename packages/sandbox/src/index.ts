@@ -10,6 +10,7 @@ const sessionIdLabel = "com.iquantum.session-id";
 
 export interface SandboxManagerOptions {
   docker?: Docker;
+  /** Sandbox container image. Defaults to the GHCR release image. */
   image?: string;
   seedImage?: string;
   execTimeoutMs?: number;
@@ -47,15 +48,38 @@ export class SandboxManager {
   readonly #seedImage: string;
   readonly #execTimeoutMs: number;
   readonly #sandboxes = new Map<string, SandboxInfo>();
+  #imageReady = false;
 
   constructor(options: SandboxManagerOptions = {}) {
     this.#docker = options.docker ?? new Docker();
-    this.#image = options.image ?? "iquantum/sandbox:latest";
+    this.#image =
+      options.image ?? "ghcr.io/ayhamjo7/iquantum-sandbox:latest";
     this.#seedImage = options.seedImage ?? "alpine:3.20";
     this.#execTimeoutMs = options.execTimeoutMs ?? 120_000;
 
     if (!Number.isFinite(this.#execTimeoutMs) || this.#execTimeoutMs <= 0) {
       throw new Error("execTimeoutMs must be a positive finite number");
+    }
+  }
+
+  /**
+   * Ensures the sandbox image is present locally, pulling from the registry
+   * if needed. Safe to call multiple times — pulls only on the first call per
+   * process. Invoke once at daemon startup for early feedback before any
+   * session is created.
+   */
+  async ensureImageReady(
+    log: (msg: string) => void = () => undefined,
+  ): Promise<void> {
+    if (this.#imageReady) return;
+    const already = await this.#imageExists(this.#image);
+    if (!already) {
+      log(`pulling sandbox image ${this.#image}…`);
+    }
+    await this.#ensureImage(this.#image);
+    this.#imageReady = true;
+    if (!already) {
+      log(`sandbox image ready`);
     }
   }
 
@@ -67,7 +91,12 @@ export class SandboxManager {
     const info = sandboxInfo(sessionId, normalizedRepoPath);
 
     await this.#ensureImage(this.#seedImage);
-    await this.#ensureImage(this.#image);
+    // ensureImageReady() is the preferred startup path; this guards against
+    // createSandbox being called before ensureImageReady().
+    if (!this.#imageReady) {
+      await this.#ensureImage(this.#image);
+      this.#imageReady = true;
+    }
     await this.#docker.createVolume({ Name: info.volumeName });
     await this.#seedVolume(info);
 
@@ -261,26 +290,29 @@ export class SandboxManager {
     }
   }
 
-  async #ensureImage(image: string): Promise<void> {
+  async #imageExists(image: string): Promise<boolean> {
     try {
       await this.#docker.getImage(image).inspect();
+      return true;
     } catch (error) {
-      if (!isDockerNotFound(error)) {
-        throw error;
-      }
-
-      const stream = await this.#docker.pull(image);
-      await new Promise<void>((resolvePromise, rejectPromise) => {
-        this.#docker.modem.followProgress(stream, (progressError) => {
-          if (progressError) {
-            rejectPromise(progressError);
-            return;
-          }
-
-          resolvePromise();
-        });
-      });
+      if (isDockerNotFound(error)) return false;
+      throw error;
     }
+  }
+
+  async #ensureImage(image: string): Promise<void> {
+    if (await this.#imageExists(image)) return;
+
+    const stream = await this.#docker.pull(image);
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      this.#docker.modem.followProgress(stream, (progressError) => {
+        if (progressError) {
+          rejectPromise(progressError);
+          return;
+        }
+        resolvePromise();
+      });
+    });
   }
 
   async #getContainer(sessionId: string): Promise<Docker.Container> {

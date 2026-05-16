@@ -39,7 +39,11 @@ const sessionStore = new SqliteSessionStore(db);
 const pivStore = new SqlitePIVStore(db);
 const conversationStore = new SqliteConversationStore(db);
 const checkpointStore = new SqliteGitCheckpointStore(db);
-const sandbox = new SandboxManager({ execTimeoutMs: config.execTimeoutMs });
+const sandbox = new SandboxManager({
+  execTimeoutMs: config.execTimeoutMs,
+  image: config.sandboxImage,
+});
+await sandbox.ensureImageReady((msg) => logger.info({ msg }));
 const provider = new AnthropicProvider({ apiKey: config.anthropicApiKey });
 const maxInputTokens = 32_000;
 const llmRouter = new LLMRouter({
