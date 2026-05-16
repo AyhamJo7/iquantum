@@ -111,7 +111,33 @@ export class SqliteSessionStore implements SessionStore {
   }
 
   async delete(sessionId: string): Promise<void> {
-    this.#db.query("DELETE FROM sessions WHERE id = ?").run(sessionId);
+    this.#db.exec("BEGIN IMMEDIATE;");
+
+    try {
+      this.#db
+        .query(
+          `DELETE FROM tool_uses
+           WHERE message_id IN (
+             SELECT id FROM messages WHERE session_id = ?
+           )`,
+        )
+        .run(sessionId);
+      this.#db
+        .query("DELETE FROM git_checkpoints WHERE session_id = ?")
+        .run(sessionId);
+      this.#db
+        .query("DELETE FROM validate_runs WHERE session_id = ?")
+        .run(sessionId);
+      this.#db
+        .query("DELETE FROM messages WHERE session_id = ?")
+        .run(sessionId);
+      this.#db.query("DELETE FROM plans WHERE session_id = ?").run(sessionId);
+      this.#db.query("DELETE FROM sessions WHERE id = ?").run(sessionId);
+      this.#db.exec("COMMIT;");
+    } catch (error) {
+      this.#db.exec("ROLLBACK;");
+      throw error;
+    }
   }
 }
 
