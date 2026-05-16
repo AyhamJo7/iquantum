@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { InvalidTransitionError } from "@iquantum/piv-engine";
 import { ZodError, z } from "zod";
 import { InvalidConversationCursorError } from "./db/stores";
@@ -77,7 +78,9 @@ export interface DaemonPermissions {
 }
 
 const createSessionSchema = z.object({
-  repoPath: z.string().min(1),
+  repoPath: z.string().min(1).refine(isAbsolute, {
+    message: "repoPath must be an absolute path",
+  }),
   requireApproval: z.boolean().optional(),
   autoApprove: z.boolean().optional(),
 });

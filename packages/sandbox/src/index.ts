@@ -8,6 +8,8 @@ const workspacePath = "/workspace";
 const repoPathLabel = "com.iquantum.repo-path";
 const sessionIdLabel = "com.iquantum.session-id";
 
+export const DEFAULT_SANDBOX_IMAGE = "ghcr.io/ayhamjo7/iquantum-sandbox:latest";
+
 export interface SandboxManagerOptions {
   docker?: Docker;
   /** Sandbox container image. Defaults to the GHCR release image. */
@@ -52,7 +54,7 @@ export class SandboxManager {
 
   constructor(options: SandboxManagerOptions = {}) {
     this.#docker = options.docker ?? new Docker();
-    this.#image = options.image ?? "ghcr.io/ayhamjo7/iquantum-sandbox:latest";
+    this.#image = options.image ?? DEFAULT_SANDBOX_IMAGE;
     this.#seedImage = options.seedImage ?? "alpine:3.20";
     this.#execTimeoutMs = options.execTimeoutMs ?? 120_000;
 
@@ -359,6 +361,18 @@ export async function isDockerAvailable(
 ): Promise<boolean> {
   try {
     await docker.ping();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function isSandboxImageAvailable(
+  image: string,
+  docker = new Docker(),
+): Promise<boolean> {
+  try {
+    await docker.getImage(image).inspect();
     return true;
   } catch {
     return false;

@@ -76,6 +76,24 @@ describe("daemon request handler", () => {
     expect(await missing?.json()).toEqual({ error: "session_not_found" });
   });
 
+  it("rejects a relative repoPath with 400 before touching the session layer", async () => {
+    const { sessions, calls } = fakeSessions();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+    });
+
+    const response = await request(handler, "/sessions", {
+      method: "POST",
+      body: { repoPath: "relative/path/to/repo" },
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "invalid_request" });
+    expect(calls).toEqual([]);
+  });
+
   it("rejects malformed plan IDs and commit hashes before dispatch", async () => {
     const { sessions, calls } = fakeSessions();
     const handler = createRequestHandler({
