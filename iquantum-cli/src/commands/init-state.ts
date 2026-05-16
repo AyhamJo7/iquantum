@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { loadConfig } from "@iquantum/config";
 
-export const DEFAULT_ARCHITECT_MODEL = "claude-sonnet-4-5";
+export const DEFAULT_ARCHITECT_MODEL = "claude-sonnet-4-6";
 export const DEFAULT_EDITOR_MODEL = "claude-haiku-4-5-20251001";
 export const DEFAULT_SANDBOX_IMAGE = "ghcr.io/ayhamjo7/iquantum-sandbox:latest";
 

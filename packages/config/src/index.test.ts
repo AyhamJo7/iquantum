@@ -40,7 +40,7 @@ describe("loadConfig", () => {
 
   it("uses release defaults for optional settings", () => {
     expect(loadConfig({ ANTHROPIC_API_KEY: "test-key" })).toMatchObject({
-      architectModel: "claude-sonnet-4-5",
+      architectModel: "claude-sonnet-4-6",
       editorModel: "claude-haiku-4-5-20251001",
       maxRetries: 3,
       execTimeoutMs: 120_000,
