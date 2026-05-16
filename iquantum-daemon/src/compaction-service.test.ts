@@ -28,7 +28,11 @@ describe("CompactionService", () => {
     });
     expect(harness.completionCalls).toBe(1);
     expect(harness.frames).toEqual([
-      { type: "compact_boundary", summary: "compact summary" },
+      {
+        type: "compact_boundary",
+        summary: "compact summary",
+        tokenCount: 50,
+      },
     ]);
     expect(harness.store.messages.at(-1)).toMatchObject({
       id: "summary-1",

@@ -18,7 +18,7 @@ export interface ConversationStreams {
   publish(
     sessionId: string,
     frame:
-      | { type: "phase_change"; phase: "requesting" }
+      | { type: "phase_change"; phase: "requesting" | "thinking" }
       | { type: "token"; delta: string }
       | { type: "error"; message: string }
       | { type: "done" },
@@ -75,6 +75,10 @@ export class ConversationController {
         toLLMMessage,
       );
       let response = "";
+      this.#streams.publish(sessionId, {
+        type: "phase_change",
+        phase: "thinking",
+      });
 
       for await (const delta of this.#completer.complete(llmMessages, {
         maxTokens: this.#maxResponseTokens,

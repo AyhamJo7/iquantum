@@ -32,9 +32,11 @@ describe("ConversationController", () => {
     ]);
     expect(harness.frames).toEqual([
       { type: "phase_change", phase: "requesting" },
+      { type: "phase_change", phase: "thinking" },
       { type: "token", delta: "hello back" },
       { type: "done" },
       { type: "phase_change", phase: "requesting" },
+      { type: "phase_change", phase: "thinking" },
       { type: "token", delta: "second reply" },
       { type: "done" },
     ]);

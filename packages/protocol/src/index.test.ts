@@ -18,7 +18,7 @@ describe("ServerStreamFrame", () => {
         tool: "write_file",
         input: { file: "src/a.ts" },
       },
-      { type: "compact_boundary", summary: "summary" },
+      { type: "compact_boundary", summary: "summary", tokenCount: 7 },
       { type: "mcp_tool_call", server: "context7", tool: "resolve" },
       { type: "done" },
     ] satisfies ServerStreamFrame[];

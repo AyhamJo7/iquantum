@@ -10,7 +10,7 @@ import type { ConversationMessage, ConversationStore } from "./db/stores";
 export interface CompactionStreams {
   publish(
     sessionId: string,
-    frame: { type: "compact_boundary"; summary: string },
+    frame: { type: "compact_boundary"; summary: string; tokenCount: number },
   ): void;
 }
 
@@ -97,7 +97,11 @@ export class CompactionService {
     };
 
     await this.#store.insert(message);
-    this.#streams.publish(sessionId, { type: "compact_boundary", summary });
+    this.#streams.publish(sessionId, {
+      type: "compact_boundary",
+      summary,
+      tokenCount: message.tokenCount,
+    });
     return message;
   }
 }
