@@ -1,8 +1,14 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
-import { isDockerAvailable, loadTestCommand, SandboxManager } from "./index";
+import {
+  isDockerAvailable,
+  loadTestCommand,
+  SandboxExecTimeoutError,
+  SandboxManager,
+} from "./index";
 
 const tempDirs: string[] = [];
 const sessionIds: string[] = [];
@@ -49,6 +55,65 @@ describe("loadTestCommand", () => {
     );
 
     await expect(loadTestCommand(repoPath)).resolves.toBe("bun run test");
+  });
+});
+
+describe("SandboxManager exec timeout", () => {
+  it("kills a hung container exec and rejects the exit code", async () => {
+    const stream = new PassThrough();
+    const killCalls: unknown[] = [];
+    const container = {
+      async inspect() {
+        return {
+          Config: {
+            Labels: {
+              "com.iquantum.repo-path": "/repo",
+            },
+          },
+          State: { Running: true },
+        };
+      },
+      async start() {
+        return undefined;
+      },
+      async exec() {
+        return {
+          async start() {
+            return stream;
+          },
+          async inspect() {
+            return { ExitCode: 137 };
+          },
+        };
+      },
+      async kill(options: unknown) {
+        killCalls.push(options);
+      },
+    };
+    const manager = new SandboxManager({
+      docker: {
+        getContainer() {
+          return container;
+        },
+        modem: {
+          demuxStream() {
+            return undefined;
+          },
+        },
+      } as never,
+      execTimeoutMs: 1,
+    });
+
+    await manager.resumeSandbox("session-1");
+    const result = await manager.exec("session-1", "sleep forever");
+    for await (const _chunk of result.output) {
+      // timeout closes the output streams without yielding content
+    }
+
+    await expect(result.exitCode).rejects.toBeInstanceOf(
+      SandboxExecTimeoutError,
+    );
+    expect(killCalls).toEqual([{ signal: "SIGKILL" }]);
   });
 });
 

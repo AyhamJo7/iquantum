@@ -7,6 +7,7 @@ const validEnv = {
   IQUANTUM_EDITOR_MODEL: "editor",
   IQUANTUM_SOCKET: "/tmp/iquantum.sock",
   MAX_RETRIES: "3",
+  IQUANTUM_EXEC_TIMEOUT_MS: "45000",
 };
 
 describe("loadConfig", () => {
@@ -17,6 +18,7 @@ describe("loadConfig", () => {
       editorModel: "editor",
       socketPath: "/tmp/iquantum.sock",
       maxRetries: 3,
+      execTimeoutMs: 45_000,
       mcpServers: [],
     });
   });
@@ -30,6 +32,7 @@ describe("loadConfig", () => {
       architectModel: "claude-sonnet-4-5",
       editorModel: "claude-haiku-4-5-20251001",
       maxRetries: 3,
+      execTimeoutMs: 120_000,
     });
     expect(loadConfig({ ANTHROPIC_API_KEY: "test-key" }).socketPath).toContain(
       ".iquantum/daemon.sock",

@@ -12,6 +12,7 @@ export interface SandboxManagerOptions {
   docker?: Docker;
   image?: string;
   seedImage?: string;
+  execTimeoutMs?: number;
 }
 
 export interface SandboxInfo {
@@ -33,16 +34,29 @@ export interface ExecResult {
   exitCode: Promise<number>;
 }
 
+export class SandboxExecTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Sandbox exec timed out after ${timeoutMs}ms`);
+    this.name = "SandboxExecTimeoutError";
+  }
+}
+
 export class SandboxManager {
   readonly #docker: Docker;
   readonly #image: string;
   readonly #seedImage: string;
+  readonly #execTimeoutMs: number;
   readonly #sandboxes = new Map<string, SandboxInfo>();
 
   constructor(options: SandboxManagerOptions = {}) {
     this.#docker = options.docker ?? new Docker();
     this.#image = options.image ?? "iquantum/sandbox:latest";
     this.#seedImage = options.seedImage ?? "alpine:3.20";
+    this.#execTimeoutMs = options.execTimeoutMs ?? 120_000;
+
+    if (!Number.isFinite(this.#execTimeoutMs) || this.#execTimeoutMs <= 0) {
+      throw new Error("execTimeoutMs must be a positive finite number");
+    }
   }
 
   async createSandbox(
@@ -127,10 +141,31 @@ export class SandboxManager {
     });
 
     const streamClosed = onceClosed(stream);
-    const exitCode = streamClosed.then(async () => {
-      const inspection = await exec.inspect();
-      return inspection.ExitCode ?? 0;
+    const timeoutError = new SandboxExecTimeoutError(this.#execTimeoutMs);
+    let timeout: ReturnType<typeof setTimeout>;
+    const timedOut = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        reject(timeoutError);
+
+        void container.kill({ signal: "SIGKILL" }).catch((error) => {
+          if (!isDockerNotFound(error)) {
+            // The timeout remains the user-facing failure; a concurrent
+            // container exit should not mask it.
+          }
+        });
+
+        stream.destroy();
+        stdout.end();
+        stderr.end();
+      }, this.#execTimeoutMs);
     });
+    const exitCode = Promise.race([
+      streamClosed.then(async () => {
+        const inspection = await exec.inspect();
+        return inspection.ExitCode ?? 0;
+      }),
+      timedOut,
+    ]).finally(() => clearTimeout(timeout));
 
     return {
       output: mergeOutput(stdout, stderr),
@@ -250,7 +285,14 @@ export class SandboxManager {
 
   async #getContainer(sessionId: string): Promise<Docker.Container> {
     const info = await this.#getSandboxInfo(sessionId);
-    return this.#docker.getContainer(info.containerName);
+    const container = this.#docker.getContainer(info.containerName);
+    const inspection = await container.inspect();
+
+    if (!inspection.State.Running) {
+      await container.start();
+    }
+
+    return container;
   }
 
   async #getSandboxInfo(sessionId: string): Promise<SandboxInfo> {

@@ -24,6 +24,7 @@ const envSchema = z.object({
   IQUANTUM_EDITOR_MODEL: z.string().min(1).default("claude-haiku-4-5-20251001"),
   IQUANTUM_SOCKET: z.string().min(1).default("~/.iquantum/daemon.sock"),
   MAX_RETRIES: z.coerce.number().int().min(1).default(3),
+  IQUANTUM_EXEC_TIMEOUT_MS: z.coerce.number().int().min(1).default(120_000),
   IQUANTUM_MCP_SERVERS: z.string().default("[]"),
 });
 
@@ -33,6 +34,7 @@ export interface IquantumConfig {
   editorModel: string;
   socketPath: string;
   maxRetries: number;
+  execTimeoutMs: number;
   mcpServers: McpServerConfig[];
 }
 
@@ -47,6 +49,7 @@ export function loadConfig(
     editorModel: parsed.IQUANTUM_EDITOR_MODEL,
     socketPath: expandHome(parsed.IQUANTUM_SOCKET),
     maxRetries: parsed.MAX_RETRIES,
+    execTimeoutMs: parsed.IQUANTUM_EXEC_TIMEOUT_MS,
     mcpServers: parseMcpServers(parsed.IQUANTUM_MCP_SERVERS),
   };
 }
