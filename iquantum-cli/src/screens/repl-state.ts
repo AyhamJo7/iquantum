@@ -85,6 +85,15 @@ export const initialREPLViewState: REPLViewState = {
   isFirstSubmit: false,
 };
 
+type PIVPhase = "planning" | "implementing" | "validating";
+
+const PIV_PHASES = [
+  "planning",
+  "implementing",
+  "validating",
+] as const satisfies readonly PIVPhase[];
+const PIV_PHASE_SET: ReadonlySet<Phase> = new Set(PIV_PHASES);
+
 export function reduceREPLViewState(
   state: REPLViewState,
   action: REPLAction,
@@ -166,6 +175,7 @@ export function reduceREPLViewState(
         completedPhases: hasCheckpoint
           ? new Set(PIV_PHASES)
           : state.completedPhases,
+        isFirstSubmit: hasCheckpoint ? true : state.isFirstSubmit,
       };
     }
     case "frame":
@@ -315,33 +325,27 @@ function finalizeAssistantTurn(state: REPLViewState): REPLViewState {
   };
 }
 
-const PIV_PHASES = [
-  "planning",
-  "implementing",
-  "validating",
-] as const satisfies readonly Phase[];
-
 function withCompletedPreviousPhase(
   completedPhases: Set<Phase>,
   previousPhase: Phase | undefined,
   nextPhase: Phase,
 ): Set<Phase> {
-  if (!previousPhase) {
+  if (!previousPhase || !isPIVPhase(previousPhase) || !isPIVPhase(nextPhase)) {
     return completedPhases;
   }
 
-  const previousIndex = PIV_PHASES.indexOf(
-    previousPhase as (typeof PIV_PHASES)[number],
-  );
-  const nextIndex = PIV_PHASES.indexOf(
-    nextPhase as (typeof PIV_PHASES)[number],
-  );
+  const previousIndex = PIV_PHASES.indexOf(previousPhase);
+  const nextIndex = PIV_PHASES.indexOf(nextPhase);
 
-  if (previousIndex === -1 || nextIndex === -1 || nextIndex <= previousIndex) {
+  if (nextIndex <= previousIndex) {
     return completedPhases;
   }
 
   return new Set([...completedPhases, previousPhase]);
+}
+
+function isPIVPhase(phase: Phase): phase is PIVPhase {
+  return PIV_PHASE_SET.has(phase);
 }
 
 function transcriptId(nextId: number): string {

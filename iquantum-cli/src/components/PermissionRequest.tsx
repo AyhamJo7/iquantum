@@ -1,5 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import { useRef } from "react";
+import { inputSummaryRows } from "./permission-request-format";
 import { BORDERS, STATUS_COLORS } from "./theme";
 
 export interface PermissionRequestProps {
@@ -31,7 +32,7 @@ export function PermissionRequest({
     }
   });
 
-  const inputRows = inputSummaryRows(input);
+  const inputRows = inputSummaryRows(input, process.stdout.columns ?? 80);
 
   return (
     <Box flexDirection="column" marginY={1} {...BORDERS.warning}>
@@ -46,28 +47,5 @@ export function PermissionRequest({
       ))}
       <Text dimColor>[y] approve [n] deny</Text>
     </Box>
-  );
-}
-
-function inputSummaryRows(input: unknown): string[] {
-  if (isPlainObject(input)) {
-    return Object.entries(input).map(
-      ([key, value]) => `${key}: ${JSON.stringify(value).slice(0, 140)}`,
-    );
-  }
-
-  if (typeof input === "string") {
-    return [input.slice(0, 140)];
-  }
-
-  return [];
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.getPrototypeOf(value) === Object.prototype
   );
 }

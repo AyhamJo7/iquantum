@@ -2,7 +2,6 @@ import type { Session } from "@iquantum/types";
 import { Box, useInput } from "ink";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import type { DaemonClient } from "../client";
-import { isDaemonNotRunning } from "../client";
 import type { CommandRegistry } from "../commands/registry";
 import { ErrorCard } from "../components/ErrorCard";
 import { PermissionRequest } from "../components/PermissionRequest";
@@ -11,6 +10,7 @@ import { PromptInput } from "../components/PromptInput";
 import { SpinnerWithPhase } from "../components/SpinnerWithPhase";
 import { StatusBar } from "../components/StatusBar";
 import { VirtualMessageList } from "../components/VirtualMessageList";
+import { formatREPLError } from "./repl-errors";
 import type { TranscriptItem } from "./repl-state";
 import { initialREPLViewState, reduceREPLViewState } from "./repl-state";
 
@@ -103,11 +103,7 @@ export function REPL({
         if (active) {
           dispatch({
             type: "submit_error",
-            message: isDaemonNotRunning(streamError)
-              ? "Daemon disconnected. Run `iq daemon start` to reconnect."
-              : streamError instanceof Error
-                ? streamError.message
-                : String(streamError),
+            message: formatREPLError(streamError),
           });
           submittingRef.current = false;
         }
@@ -199,10 +195,7 @@ export function REPL({
           } catch (submitError) {
             dispatch({
               type: "submit_error",
-              message:
-                submitError instanceof Error
-                  ? submitError.message
-                  : String(submitError),
+              message: formatREPLError(submitError),
             });
             submittingRef.current = false;
           }

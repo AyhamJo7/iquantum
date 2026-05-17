@@ -1,6 +1,7 @@
 import type { Phase } from "@iquantum/protocol";
 import { Text } from "ink";
 import { useEffect, useState } from "react";
+import { phaseLabel } from "./spinner-phase";
 import { PHASE_COLORS, STATUS_COLORS } from "./theme";
 
 const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
@@ -19,6 +20,7 @@ export function SpinnerWithPhase({
   const [frameIndex, setFrameIndex] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
+  // Tracks time in the current phase, not total task time.
   useEffect(() => {
     if (!phase) {
       setElapsedSeconds(0);
@@ -37,7 +39,7 @@ export function SpinnerWithPhase({
 
   return phase ? (
     <Text color={PHASE_COLORS[phase]}>
-      {frames[frameIndex]}{" "}
+      {frames[frameIndex]} {phaseLabel(phase)}{" "}
       {retryCount > 0 ? (
         <Text color={STATUS_COLORS.warning}>
           retry {retryCount} / {maxRetries}{" "}

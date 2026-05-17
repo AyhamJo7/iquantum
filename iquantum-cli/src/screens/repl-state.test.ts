@@ -244,6 +244,36 @@ describe("reduceREPLViewState", () => {
     ]);
   });
 
+  it("does not complete planning when transitioning into requesting", () => {
+    const requesting = reduceREPLViewState(
+      {
+        ...initialREPLViewState,
+        phase: "planning",
+      },
+      {
+        type: "frame",
+        frame: { type: "phase_change", phase: "requesting" },
+      },
+    );
+
+    expect([...requesting.completedPhases]).toEqual([]);
+  });
+
+  it("does not complete thinking when transitioning into implementing", () => {
+    const implementing = reduceREPLViewState(
+      {
+        ...initialREPLViewState,
+        phase: "thinking",
+      },
+      {
+        type: "frame",
+        frame: { type: "phase_change", phase: "implementing" },
+      },
+    );
+
+    expect([...implementing.completedPhases]).toEqual([]);
+  });
+
   it("increments retryCount without marking additional phases complete", () => {
     const validating = reduceREPLViewState(
       {
@@ -297,6 +327,7 @@ describe("reduceREPLViewState", () => {
       "implementing",
       "validating",
     ]);
+    expect(hydrated.isFirstSubmit).toBe(true);
   });
 
   it("ignores done frames when state has an error", () => {
