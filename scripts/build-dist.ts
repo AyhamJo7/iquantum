@@ -69,7 +69,9 @@ console.log(`  copied ${grammarAssets.length} grammar wasm assets`);
 // 5b. Copy tiktoken WASM - bundled daemon.js references it at runtime by scanning
 // co-located files; bun build inlines the JS but leaves the binary as an external asset.
 let tiktokenWasmSrc: string | undefined;
-for await (const p of new Bun.Glob("node_modules/.bun/**/tiktoken/tiktoken_bg.wasm").scan({
+for await (const p of new Bun.Glob(
+  "node_modules/.bun/**/tiktoken/tiktoken_bg.wasm",
+).scan({
   cwd: root,
   absolute: true,
   onlyFiles: true,
@@ -81,7 +83,9 @@ for await (const p of new Bun.Glob("node_modules/.bun/**/tiktoken/tiktoken_bg.wa
   }
 }
 if (!tiktokenWasmSrc)
-  throw new Error("tiktoken_bg.wasm not found in node_modules — run bun install first");
+  throw new Error(
+    "tiktoken_bg.wasm not found in node_modules — run bun install first",
+  );
 await copyFile(tiktokenWasmSrc, join(distDir, "tiktoken_bg.wasm"));
 console.log("  copied tiktoken_bg.wasm");
 
