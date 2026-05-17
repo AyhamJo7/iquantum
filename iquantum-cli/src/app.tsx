@@ -9,6 +9,7 @@ import { HttpDaemonClient } from "./client";
 import { startDaemon } from "./commands/daemon";
 import { InitWizard } from "./commands/init";
 import { makeCommandRegistry } from "./commands/slash-commands";
+import { ErrorCard } from "./components/ErrorCard";
 import { Splash } from "./components/Splash";
 import { REPL } from "./screens/REPL";
 import type { TranscriptItem } from "./screens/repl-state";
@@ -145,7 +146,7 @@ export function IQApp({
   ]);
 
   if (error) {
-    return <Text color="red">{error}</Text>;
+    return <ErrorCard message={error} />;
   }
 
   if (!session) {
@@ -225,7 +226,7 @@ export function StartupApp({
   }, [loadConfigFn, persistDir]);
 
   if (error) {
-    return <Text color="red">{error}</Text>;
+    return <ErrorCard message={error} />;
   }
 
   if (!config || !client) {
