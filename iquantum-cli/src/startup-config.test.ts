@@ -15,6 +15,10 @@ describe("resolveStartupConfig", () => {
     const result = resolveStartupConfig(
       () => ({
         anthropicApiKey: "sk-ant-test",
+        provider: "anthropic",
+        baseUrl: undefined,
+        apiKey: undefined,
+        providerApiKey: "sk-ant-test",
         architectModel: "architect",
         editorModel: "editor",
         socketPath: "/tmp/iq.sock",

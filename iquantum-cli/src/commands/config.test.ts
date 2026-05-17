@@ -58,6 +58,20 @@ describe("config commands", () => {
       expect(output).not.toContain("supersecret");
     });
 
+    it("redacts the OpenAI-compatible provider API key", async () => {
+      await configSet(
+        "IQUANTUM_API_KEY",
+        "sk-openai-supersecret1234",
+        makeWriter().writer,
+        tmpDir,
+      );
+      const { writer, lines } = makeWriter();
+      configList(writer, tmpDir);
+      const output = lines.join("\n");
+      expect(output).toContain("sk-...");
+      expect(output).not.toContain("supersecret");
+    });
+
     it("reports no config file when absent", () => {
       const { writer, lines } = makeWriter();
       configList(writer, tmpDir);

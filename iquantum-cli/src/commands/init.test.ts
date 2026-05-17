@@ -72,6 +72,10 @@ describe("runInit", () => {
         loadConfig() {
           return {
             anthropicApiKey: "sk-ant-test",
+            provider: "anthropic",
+            baseUrl: undefined,
+            apiKey: undefined,
+            providerApiKey: "sk-ant-test",
             architectModel: "claude-sonnet-4-5",
             editorModel: "claude-haiku-4-5-20251001",
             socketPath: "/tmp/iq/daemon.sock",

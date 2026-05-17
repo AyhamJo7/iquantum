@@ -233,7 +233,10 @@ Settings are saved in `~/.iquantum/config.json`. You can also set any of these a
 
 | Setting | Required | Default | Description |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | ✅ | — | Your Anthropic API key |
+| `ANTHROPIC_API_KEY` | For Anthropic | — | Your Anthropic API key; also used as the OpenAI-compatible fallback key when `IQUANTUM_API_KEY` is unset |
+| `IQUANTUM_PROVIDER` | — | `anthropic` | AI provider route: `anthropic` or `openai` |
+| `IQUANTUM_BASE_URL` | For `openai` | — | Base URL for an OpenAI-compatible endpoint, for example `https://api.deepseek.com` |
+| `IQUANTUM_API_KEY` | For `openai`* | — | API key for the OpenAI-compatible endpoint; falls back to `ANTHROPIC_API_KEY` if omitted |
 | `IQUANTUM_ARCHITECT_MODEL` | — | `claude-sonnet-4-6` | The reasoning model used to write plans |
 | `IQUANTUM_EDITOR_MODEL` | — | `claude-haiku-4-5-20251001` | The fast model used to write code changes |
 | `IQUANTUM_SANDBOX_IMAGE` | — | `ghcr.io/ayhamjo7/iquantum-sandbox:latest` | The Docker image used for the sandbox |
@@ -242,6 +245,8 @@ Settings are saved in `~/.iquantum/config.json`. You can also set any of these a
 | `IQUANTUM_EXEC_TIMEOUT_MS` | — | `120000` | How long (ms) a sandbox command can run before being killed |
 | `IQUANTUM_MCP_SERVERS` | — | `[]` | External tools to expose to the agent via MCP (JSON array) |
 | `LOG_LEVEL` | — | `info` | Daemon log verbosity: `error` · `warn` · `info` · `debug` |
+
+\* When `IQUANTUM_PROVIDER=openai`, set either `IQUANTUM_API_KEY` or `ANTHROPIC_API_KEY`.
 
 ### Re-running the setup wizard
 

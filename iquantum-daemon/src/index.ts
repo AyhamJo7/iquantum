@@ -2,9 +2,13 @@ import { Database } from "bun:sqlite";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { loadConfig } from "@iquantum/config";
-import { AnthropicProvider, LLMRouter } from "@iquantum/llm";
+import {
+  AnthropicProvider,
+  LLMRouter,
+  OpenAICompatibleProvider,
+} from "@iquantum/llm";
 import { SandboxManager } from "@iquantum/sandbox";
-import type { McpTool } from "@iquantum/types";
+import type { LLMProvider, McpTool } from "@iquantum/types";
 import { CompactionService } from "./compaction-service";
 import { ConversationController } from "./conversation-controller";
 import { initializeSchema } from "./db/schema";
@@ -44,12 +48,29 @@ const sandbox = new SandboxManager({
   image: config.sandboxImage,
 });
 await sandbox.ensureImageReady((msg) => logger.info({ msg }));
-const provider = new AnthropicProvider({ apiKey: config.anthropicApiKey });
+const provider: LLMProvider =
+  config.provider === "openai"
+    ? new OpenAICompatibleProvider({
+        apiKey: config.providerApiKey,
+        ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
+      })
+    : new AnthropicProvider({ apiKey: config.providerApiKey });
+logger.info({
+  msg: "provider",
+  provider: config.provider,
+  baseUrl: config.baseUrl ?? "default",
+});
+if (config.provider === "openai") {
+  logger.warn({
+    msg: "extended thinking unavailable for openai-compatible provider",
+  });
+}
 const maxInputTokens = 32_000;
 const llmRouter = new LLMRouter({
   architect: { provider, model: config.architectModel },
   editor: { provider, model: config.editorModel },
   maxInputTokens,
+  supportsThinking: config.provider !== "openai",
 });
 let streams: StreamController;
 const permissions = new PermissionGate({
@@ -69,11 +90,15 @@ const sessions = new SessionController({
 streams = new StreamController(sessions);
 const conversationCompleter = {
   complete: llmRouter.complete.bind(llmRouter, "plan"),
-  completeWithTools: (
-    messages: Parameters<typeof llmRouter.completeWithTools>[1],
-    tools: Parameters<typeof llmRouter.completeWithTools>[2],
-    options: Parameters<typeof llmRouter.completeWithTools>[3],
-  ) => llmRouter.completeWithTools("plan", messages, tools, options),
+  ...(provider.completeWithTools
+    ? {
+        completeWithTools: (
+          messages: Parameters<typeof llmRouter.completeWithTools>[1],
+          tools: Parameters<typeof llmRouter.completeWithTools>[2],
+          options: Parameters<typeof llmRouter.completeWithTools>[3],
+        ) => llmRouter.completeWithTools("plan", messages, tools, options),
+      }
+    : {}),
 };
 const compaction = new CompactionService({
   store: conversationStore,
