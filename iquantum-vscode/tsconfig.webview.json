@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "jsx": "react-jsx",
+    "rootDir": "..",
+    "outDir": "./dist/webview",
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["webview/**/*.tsx", "webview/**/*.ts"]
+}
