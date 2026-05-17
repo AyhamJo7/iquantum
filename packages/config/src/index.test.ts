@@ -34,7 +34,9 @@ describe("loadConfig", () => {
   it("throws MissingApiKeyError when API key is absent", () => {
     const noFile = { configDir: "/tmp/iq-test-no-config-dir" };
     expect(() => loadConfig({}, noFile)).toThrow(MissingApiKeyError);
-    expect(() => loadConfig({}, noFile)).toThrow("ANTHROPIC_API_KEY is not set");
+    expect(() => loadConfig({}, noFile)).toThrow(
+      "ANTHROPIC_API_KEY is not set",
+    );
   });
 
   it("throws MissingApiKeyError (not a raw ZodError) when key is empty string", () => {
