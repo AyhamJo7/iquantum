@@ -269,6 +269,9 @@ export class HttpDaemonClient implements DaemonClient {
         },
       );
 
+      req.setTimeout(10_000, () => {
+        req.destroy(new Error("daemon request timed out"));
+      });
       req.on("error", reject);
 
       if (bodyStr) {
