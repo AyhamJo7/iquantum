@@ -153,8 +153,8 @@ export function IQApp({
     return <Text dimColor>Starting daemon…</Text>;
   }
 
-  if (!showRepl) {
-    return (
+  return (
+    <Box flexDirection="column">
       <Splash
         version={version}
         modelName={modelName}
@@ -162,26 +162,25 @@ export function IQApp({
         skip={skipSplash}
         onComplete={completeSplash}
       />
-    );
-  }
-
-  return (
-    <Box flexDirection="column">
-      {updateStatus.updateAvailable && updateStatus.latestVersion ? (
-        <Text dimColor>
-          {`  update available: ${VERSION} → ${updateStatus.latestVersion}  (run iq update)`}
-        </Text>
+      {showRepl ? (
+        <>
+          {updateStatus.updateAvailable && updateStatus.latestVersion ? (
+            <Text dimColor>
+              {`  update available: ${VERSION} → ${updateStatus.latestVersion}  (run iq update)`}
+            </Text>
+          ) : null}
+          <REPL
+            client={client}
+            session={session}
+            modelName={modelName}
+            editorModel={editorModel}
+            version={version}
+            maxRetries={maxRetries}
+            registry={registryRef.current}
+            initialMessages={initialMessages}
+          />
+        </>
       ) : null}
-      <REPL
-        client={client}
-        session={session}
-        modelName={modelName}
-        editorModel={editorModel}
-        version={version}
-        maxRetries={maxRetries}
-        registry={registryRef.current}
-        initialMessages={initialMessages}
-      />
     </Box>
   );
 }
