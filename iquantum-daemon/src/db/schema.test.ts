@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { initializeSchema, latestSchemaVersion } from "./schema";
+import type { DbAdapter } from "./adapter";
+import {
+  initializePostgresSchema,
+  initializeSchema,
+  latestSchemaVersion,
+} from "./schema";
 
 describe("initializeSchema", () => {
   it("applies pending migrations in order and records the new version", () => {
@@ -53,6 +58,27 @@ describe("initializeSchema", () => {
       "newer than supported",
     );
   });
+
+  it("bootstraps the latest Postgres schema idempotently", async () => {
+    const statements: string[] = [];
+    await initializePostgresSchema(fakeAdapter(statements));
+
+    expect(
+      statements.some((sql) =>
+        sql.includes("CREATE TABLE IF NOT EXISTS organizations"),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((sql) =>
+        sql.includes("CREATE TABLE IF NOT EXISTS api_tokens"),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((sql) =>
+        sql.includes(`VALUES (${latestSchemaVersion}, CURRENT_TIMESTAMP)`),
+      ),
+    ).toBe(true);
+  });
 });
 
 function fakeDb(version: number, statements: string[]) {
@@ -72,4 +98,22 @@ function fakeDb(version: number, statements: string[]) {
       };
     },
   } as never;
+}
+
+function fakeAdapter(statements: string[]): DbAdapter {
+  return {
+    async query() {
+      return [];
+    },
+    async first() {
+      return null;
+    },
+    async execute(sql: string) {
+      statements.push(sql);
+    },
+    async transaction<T>(fn: (db: DbAdapter) => Promise<T>): Promise<T> {
+      return fn(this);
+    },
+    async close() {},
+  };
 }
