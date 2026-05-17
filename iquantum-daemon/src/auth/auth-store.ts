@@ -6,7 +6,7 @@ import type {
   User,
   UserRole,
 } from "@iquantum/types";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import type { DbAdapter } from "../db/adapter";
 
 interface UserRow extends Record<string, unknown> {

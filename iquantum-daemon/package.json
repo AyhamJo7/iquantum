@@ -16,7 +16,7 @@
     "@iquantum/sandbox": "workspace:*",
     "@iquantum/types": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "bcrypt": "^6.0.0",
+    "bcryptjs": "^2.4.3",
     "diff": "^9.0.0",
     "jose": "^6.2.3",
     "postgres": "^3.4.9",
@@ -28,7 +28,7 @@
     "dev": "bun --watch src/index.ts"
   },
   "devDependencies": {
-    "@types/bcrypt": "^6.0.0",
+    "@types/bcryptjs": "^2.4.6",
     "@types/diff": "^8.0.0"
   }
 }
