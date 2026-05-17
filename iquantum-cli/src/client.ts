@@ -297,6 +297,7 @@ export function isDaemonNotRunning(error: unknown): boolean {
     return (
       error.message.includes("ENOENT") ||
       error.message.includes("ECONNREFUSED") ||
+      error.message.includes("typo in the url or port") ||
       code === "FailedToOpenSocket"
     );
   }

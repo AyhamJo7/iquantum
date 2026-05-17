@@ -92,4 +92,30 @@ describe("ensureDaemonReady", () => {
 
     expect(launches).toBe(1);
   });
+
+  it("treats Bun's typo message without a code as a startup transient", async () => {
+    let checks = 0;
+    let launches = 0;
+
+    await ensureDaemonReady(
+      {
+        async health() {
+          checks += 1;
+
+          if (checks === 1) {
+            throw new Error("Was there a typo in the url or port?");
+          }
+
+          return { ok: true };
+        },
+      },
+      async () => {
+        launches += 1;
+      },
+      async () => undefined,
+      { attempts: 2, pollIntervalMs: 1 },
+    );
+
+    expect(launches).toBe(1);
+  });
 });
