@@ -8,6 +8,8 @@ export const PHASE_COLORS = {
   thinking: "cyan",
 } as const satisfies Record<Phase, string>;
 
+export const LOGO = "🧠";
+
 export const STATUS_COLORS = {
   success: "green",
   warning: "yellow",

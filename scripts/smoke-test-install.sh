@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PACKAGE_SPEC="${PACKAGE_SPEC:-@iquantum/cli}"
-EXPECTED_VERSION="${EXPECTED_VERSION:-1.1.2}"
+EXPECTED_VERSION="${EXPECTED_VERSION:-1.1.3}"
 SANDBOX_IMAGE="${SANDBOX_IMAGE:-ghcr.io/ayhamjo7/iquantum-sandbox:latest}"
 WORKDIR="$(mktemp -d)"
 PREFIX="$WORKDIR/npm-global"
