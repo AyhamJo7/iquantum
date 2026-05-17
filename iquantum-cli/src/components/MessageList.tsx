@@ -117,11 +117,13 @@ const TranscriptRow = memo(function TranscriptRow({
 });
 
 const UserMessage = memo(function UserMessage({ text }: { text: string }) {
+  const cols = process.stdout.columns ?? 80;
+  const content = `  > ${text}  `;
+  const padded = content.length < cols ? content.padEnd(cols) : content;
   return (
-    <Box justifyContent="flex-end">
-      <Text dimColor>you </Text>
-      <Text>{text}</Text>
-    </Box>
+    <Text backgroundColor="green" color="black" bold>
+      {padded}
+    </Text>
   );
 });
 
