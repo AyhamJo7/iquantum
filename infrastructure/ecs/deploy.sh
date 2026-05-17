@@ -80,7 +80,7 @@ echo "task definitions registered"
 echo "=== 5. ALB + target group ==="
 # Target group
 TG_ARN="$(aws elbv2 describe-target-groups --region "$REGION" \
-  --names iquantum-daemon 2>/dev/null | jq -r '.TargetGroups[0].TargetGroupArn // empty')"
+  --names iquantum-daemon 2>/dev/null | jq -r '.TargetGroups[0].TargetGroupArn // empty' 2>/dev/null || true)"
 if [[ -z "$TG_ARN" ]]; then
   TG_ARN="$(aws elbv2 create-target-group \
     --region "$REGION" \
@@ -101,7 +101,7 @@ fi
 
 # ALB
 ALB_ARN="$(aws elbv2 describe-load-balancers --region "$REGION" \
-  --names iquantum-daemon 2>/dev/null | jq -r '.LoadBalancers[0].LoadBalancerArn // empty')"
+  --names iquantum-daemon 2>/dev/null | jq -r '.LoadBalancers[0].LoadBalancerArn // empty' 2>/dev/null || true)"
 if [[ -z "$ALB_ARN" ]]; then
   SUBNET_LIST="${SUBNETS//,/ }"
   ALB_ARN="$(aws elbv2 create-load-balancer \
@@ -146,7 +146,7 @@ if ! aws ecs describe-services --region "$REGION" --cluster "$CLUSTER" \
     --desired-count 1 \
     --launch-type FARGATE \
     --enable-execute-command \
-    --network-configuration "awsvpcConfiguration={subnets=$SUBNETS,securityGroups=$SG,assignPublicIp=ENABLED}" \
+    --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
     --load-balancers "targetGroupArn=$TG_ARN,containerName=daemon,containerPort=51820" \
     --health-check-grace-period-seconds 30
   echo "ECS service created"

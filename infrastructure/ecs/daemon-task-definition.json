@@ -27,27 +27,27 @@
       "secrets": [
         {
           "name": "ANTHROPIC_API_KEY",
-          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:ANTHROPIC_API_KEY::"
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon-KNV3Gl:ANTHROPIC_API_KEY::"
         },
         {
           "name": "JWT_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:JWT_SECRET::"
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon-KNV3Gl:JWT_SECRET::"
         },
         {
           "name": "DATABASE_URL",
-          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:DATABASE_URL::"
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon-KNV3Gl:DATABASE_URL::"
         },
         {
           "name": "REDIS_URL",
-          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:REDIS_URL::"
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon-KNV3Gl:REDIS_URL::"
         },
         {
           "name": "STRIPE_SECRET_KEY",
-          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:STRIPE_SECRET_KEY::"
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon-KNV3Gl:STRIPE_SECRET_KEY::"
         },
         {
           "name": "STRIPE_WEBHOOK_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:STRIPE_WEBHOOK_SECRET::"
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon-KNV3Gl:STRIPE_WEBHOOK_SECRET::"
         }
       ],
       "environment": [
