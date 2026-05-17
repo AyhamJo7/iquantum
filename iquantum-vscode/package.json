@@ -87,8 +87,8 @@
   },
   "scripts": {
     "build": "bun build src/extension.ts --outdir dist --target node --external vscode && bun build webview/index.tsx --outdir dist/webview --target browser",
-    "package": "vsce package",
-    "publish": "vsce publish"
+    "package": "vsce package --no-dependencies",
+    "publish": "vsce publish --no-dependencies"
   },
   "dependencies": {
     "@iquantum/types": "workspace:*",
