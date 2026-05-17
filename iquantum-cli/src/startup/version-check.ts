@@ -81,7 +81,7 @@ export function checkForUpdate(
       });
   }
 
-  if (!cached?.latestVersion) {
+  if (!cached?.latestVersion || currentVersion === "0.0.0") {
     return { updateAvailable: false, latestVersion: null };
   }
 
