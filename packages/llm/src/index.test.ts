@@ -90,6 +90,24 @@ describe("OpenAICompatibleProvider", () => {
     ).resolves.toBe("hello");
   });
 
+  it("does not advertise tool use until it has an implementation", () => {
+    expect(
+      (
+        new OpenAICompatibleProvider({
+          apiKey: "test-key",
+        }) as LLMProvider
+      ).completeWithTools,
+    ).toBeUndefined();
+  });
+
+  it("uses the documented rough token estimate", async () => {
+    const provider = new OpenAICompatibleProvider({ apiKey: "test-key" });
+
+    await expect(
+      provider.countTokens([{ role: "user", content: "12345678" }], "model"),
+    ).resolves.toBe(4);
+  });
+
   it("retries retryable failures with exponential backoff", async () => {
     const delays: number[] = [];
     let attempts = 0;
@@ -185,6 +203,24 @@ describe("LLMRouter", () => {
       }
     }).rejects.toBeInstanceOf(TokenBudgetExceededError);
     expect(provider.calls).toEqual([]);
+  });
+
+  it("defaults to thinking support and allows providers to disable it", () => {
+    const provider = new MockProvider("unused", 1);
+    const defaultRouter = new LLMRouter({
+      architect: { provider, model: "architect-model" },
+      editor: { provider, model: "editor-model" },
+      maxInputTokens: 100,
+    });
+    const openaiRouter = new LLMRouter({
+      architect: { provider, model: "architect-model" },
+      editor: { provider, model: "editor-model" },
+      maxInputTokens: 100,
+      supportsThinking: false,
+    });
+
+    expect(defaultRouter.supportsThinking).toBe(true);
+    expect(openaiRouter.supportsThinking).toBe(false);
   });
 });
 

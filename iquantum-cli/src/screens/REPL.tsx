@@ -1,14 +1,16 @@
 import type { Session } from "@iquantum/types";
-import { Box, Text, useInput } from "ink";
+import { Box, useInput } from "ink";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import type { DaemonClient } from "../client";
-import { isDaemonNotRunning } from "../client";
 import type { CommandRegistry } from "../commands/registry";
+import { ErrorCard } from "../components/ErrorCard";
 import { PermissionRequest } from "../components/PermissionRequest";
+import { PIVPhaseStrip } from "../components/PIVPhaseStrip";
 import { PromptInput } from "../components/PromptInput";
 import { SpinnerWithPhase } from "../components/SpinnerWithPhase";
 import { StatusBar } from "../components/StatusBar";
 import { VirtualMessageList } from "../components/VirtualMessageList";
+import { formatREPLError } from "./repl-errors";
 import type { TranscriptItem } from "./repl-state";
 import { initialREPLViewState, reduceREPLViewState } from "./repl-state";
 
@@ -17,6 +19,8 @@ export interface REPLProps {
   session: Session;
   modelName: string;
   editorModel: string;
+  version: string;
+  maxRetries: number;
   registry?: CommandRegistry;
   initialMessages?: TranscriptItem[];
 }
@@ -26,6 +30,8 @@ export function REPL({
   session,
   modelName,
   editorModel,
+  version,
+  maxRetries,
   registry,
   initialMessages = [],
 }: REPLProps) {
@@ -97,11 +103,7 @@ export function REPL({
         if (active) {
           dispatch({
             type: "submit_error",
-            message: isDaemonNotRunning(streamError)
-              ? "Daemon disconnected. Run `iq daemon start` to reconnect."
-              : streamError instanceof Error
-                ? streamError.message
-                : String(streamError),
+            message: formatREPLError(streamError),
           });
           submittingRef.current = false;
         }
@@ -120,7 +122,14 @@ export function REPL({
         streamingText={state.streamingText}
         thinkingText={state.thinkingText}
         thinkingExpanded={state.thinkingExpanded}
+        thinkingStreaming={state.phase === "thinking"}
       />
+      {state.isFirstSubmit ? (
+        <PIVPhaseStrip
+          activePhase={state.phase ?? null}
+          completedPhases={state.completedPhases}
+        />
+      ) : null}
       {pendingPermission ? (
         <PermissionRequest
           requestId={pendingPermission.requestId}
@@ -136,11 +145,16 @@ export function REPL({
           }}
         />
       ) : (
-        <SpinnerWithPhase {...(state.phase ? { phase: state.phase } : {})} />
+        <SpinnerWithPhase
+          {...(state.phase ? { phase: state.phase } : {})}
+          retryCount={state.retryCount}
+          maxRetries={maxRetries}
+        />
       )}
-      {state.error ? <Text color="red">{state.error}</Text> : null}
+      {state.error ? <ErrorCard message={state.error} /> : null}
       <PromptInput
         disabled={state.isSubmitting}
+        isFirstSubmit={state.isFirstSubmit}
         {...(registry ? { registry } : {})}
         onSubmit={async (content) => {
           if (content.startsWith("/") && registry) {
@@ -181,20 +195,16 @@ export function REPL({
           } catch (submitError) {
             dispatch({
               type: "submit_error",
-              message:
-                submitError instanceof Error
-                  ? submitError.message
-                  : String(submitError),
+              message: formatREPLError(submitError),
             });
             submittingRef.current = false;
           }
         }}
       />
       <StatusBar
+        version={version}
         modelName={modelName}
-        sessionId={session.id}
         tokenCount={state.tokenCount}
-        mode="chat"
       />
     </Box>
   );

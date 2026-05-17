@@ -8,7 +8,7 @@ describe("ServerStreamFrame", () => {
       { type: "phase_change", phase: "thinking" },
       { type: "plan_ready", planId: "plan-1" },
       { type: "validate_result", passed: true, attempt: 1 },
-      { type: "checkpoint", hash: "abc1234" },
+      { type: "checkpoint", hash: "abc1234", message: "done" },
       { type: "error", message: "boom" },
       { type: "thinking", delta: "reasoning" },
       { type: "diff_preview", file: "src/a.ts", patch: "+line" },

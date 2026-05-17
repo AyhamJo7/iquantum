@@ -34,6 +34,7 @@ export interface LLMRouterOptions {
   architect: LLMRoute;
   editor: LLMRoute;
   maxInputTokens: number;
+  supportsThinking?: boolean;
   usageSink?: TokenUsageSink;
 }
 
@@ -248,12 +249,14 @@ export class LLMRouter {
   readonly #editor: LLMRoute;
   readonly #maxInputTokens: number;
   readonly #usageSink: TokenUsageSink | undefined;
+  readonly supportsThinking: boolean;
 
   constructor(options: LLMRouterOptions) {
     this.#architect = options.architect;
     this.#editor = options.editor;
     this.#maxInputTokens = options.maxInputTokens;
     this.#usageSink = options.usageSink;
+    this.supportsThinking = options.supportsThinking ?? true;
   }
 
   async *complete(
@@ -368,6 +371,7 @@ function toOpenAIMessage(
 ): OpenAI.Chat.ChatCompletionMessageParam {
   return {
     role: message.role,
+    // TODO: map LLMContentBlock[] to OpenAI ContentPart[] when multi-part messages land.
     content:
       typeof message.content === "string"
         ? message.content

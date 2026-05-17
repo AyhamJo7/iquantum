@@ -10,7 +10,7 @@ export type ServerStreamFrame =
   | { type: "phase_change"; phase: Phase }
   | { type: "plan_ready"; planId: string }
   | { type: "validate_result"; passed: boolean; attempt: number }
-  | { type: "checkpoint"; hash: string }
+  | { type: "checkpoint"; hash: string; message: string }
   | { type: "error"; message: string }
   | { type: "thinking"; delta: string }
   | { type: "diff_preview"; file: string; patch: string }

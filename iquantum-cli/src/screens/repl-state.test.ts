@@ -130,19 +130,31 @@ describe("reduceREPLViewState", () => {
       type: "diff_preview",
       file: "src/foo.ts",
       patch: "@@ -1 +1 @@\n-old\n+new",
+      addCount: 1,
+      delCount: 1,
     });
   });
 
   it("adds a checkpoint row to transcript", () => {
     const state = reduceREPLViewState(initialREPLViewState, {
       type: "frame",
-      frame: { type: "checkpoint", hash: "abc1234def" },
+      frame: {
+        type: "checkpoint",
+        hash: "abc1234def",
+        message: "feat: ship it",
+      },
     });
 
     expect(state.messages[0]).toMatchObject({
       type: "checkpoint",
       hash: "abc1234def",
+      message: "feat: ship it",
     });
+    expect([...state.completedPhases]).toEqual([
+      "planning",
+      "implementing",
+      "validating",
+    ]);
   });
 
   it("system_message adds a system_message item", () => {
@@ -210,6 +222,112 @@ describe("reduceREPLViewState", () => {
       role: "user",
       text: "new message",
     });
+  });
+
+  it("tracks normal PIV phase progression", () => {
+    const planning = reduceREPLViewState(initialREPLViewState, {
+      type: "frame",
+      frame: { type: "phase_change", phase: "planning" },
+    });
+    const implementing = reduceREPLViewState(planning, {
+      type: "frame",
+      frame: { type: "phase_change", phase: "implementing" },
+    });
+    const validating = reduceREPLViewState(implementing, {
+      type: "frame",
+      frame: { type: "phase_change", phase: "validating" },
+    });
+
+    expect([...validating.completedPhases]).toEqual([
+      "planning",
+      "implementing",
+    ]);
+  });
+
+  it("does not complete planning when transitioning into requesting", () => {
+    const requesting = reduceREPLViewState(
+      {
+        ...initialREPLViewState,
+        phase: "planning",
+      },
+      {
+        type: "frame",
+        frame: { type: "phase_change", phase: "requesting" },
+      },
+    );
+
+    expect([...requesting.completedPhases]).toEqual([]);
+  });
+
+  it("does not complete thinking when transitioning into implementing", () => {
+    const implementing = reduceREPLViewState(
+      {
+        ...initialREPLViewState,
+        phase: "thinking",
+      },
+      {
+        type: "frame",
+        frame: { type: "phase_change", phase: "implementing" },
+      },
+    );
+
+    expect([...implementing.completedPhases]).toEqual([]);
+  });
+
+  it("increments retryCount without marking additional phases complete", () => {
+    const validating = reduceREPLViewState(
+      {
+        ...initialREPLViewState,
+        phase: "validating",
+        completedPhases: new Set(["planning", "implementing"]),
+      },
+      {
+        type: "frame",
+        frame: { type: "validate_result", passed: false, attempt: 1 },
+      },
+    );
+
+    expect(validating.retryCount).toBe(1);
+    expect([...validating.completedPhases]).toEqual([
+      "planning",
+      "implementing",
+    ]);
+  });
+
+  it("submitted resets PIV progress fields and records first submit", () => {
+    const submitted = reduceREPLViewState(
+      {
+        ...initialREPLViewState,
+        completedPhases: new Set(["planning", "implementing"]),
+        retryCount: 2,
+      },
+      { type: "submitted", content: "new task" },
+    );
+
+    expect(submitted.completedPhases.size).toBe(0);
+    expect(submitted.retryCount).toBe(0);
+    expect(submitted.isFirstSubmit).toBe(true);
+  });
+
+  it("hydrate_history with a checkpoint infers all phases complete", () => {
+    const hydrated = reduceREPLViewState(initialREPLViewState, {
+      type: "hydrate_history",
+      items: [
+        {
+          id: "checkpoint-1",
+          type: "checkpoint",
+          hash: "abc1234",
+          message: "done",
+        },
+      ],
+    });
+
+    expect([...hydrated.completedPhases]).toEqual([
+      "planning",
+      "implementing",
+      "validating",
+    ]);
+    expect(hydrated.isFirstSubmit).toBe(true);
   });
 
   it("ignores done frames when state has an error", () => {

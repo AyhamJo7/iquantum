@@ -26,6 +26,7 @@ export interface IQAppProps {
   socketPath: string;
   modelName: string;
   editorModel: string;
+  maxRetries: number;
   version: string;
   repoPath: string;
   iquantumDir?: string;
@@ -41,6 +42,7 @@ export function IQApp({
   socketPath,
   modelName,
   editorModel,
+  maxRetries,
   version,
   repoPath,
   iquantumDir,
@@ -174,6 +176,8 @@ export function IQApp({
         session={session}
         modelName={modelName}
         editorModel={editorModel}
+        version={version}
+        maxRetries={maxRetries}
         registry={registryRef.current}
         initialMessages={initialMessages}
       />
@@ -240,6 +244,7 @@ export function StartupApp({
       socketPath={config.socketPath}
       modelName={config.architectModel}
       editorModel={config.editorModel}
+      maxRetries={config.maxRetries}
       version={version}
       repoPath={repoPath}
       iquantumDir={persistDir}

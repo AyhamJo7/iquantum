@@ -17,6 +17,10 @@ describe("loadConfig", () => {
   it("parses required environment variables", () => {
     expect(loadConfig(validEnv)).toEqual({
       anthropicApiKey: "test-key",
+      provider: "anthropic",
+      baseUrl: undefined,
+      apiKey: undefined,
+      providerApiKey: "test-key",
       architectModel: "architect",
       editorModel: "editor",
       socketPath: "/tmp/iquantum.sock",
@@ -40,6 +44,7 @@ describe("loadConfig", () => {
 
   it("uses release defaults for optional settings", () => {
     expect(loadConfig({ ANTHROPIC_API_KEY: "test-key" })).toMatchObject({
+      provider: "anthropic",
       architectModel: "claude-sonnet-4-6",
       editorModel: "claude-haiku-4-5-20251001",
       maxRetries: 3,
@@ -49,6 +54,70 @@ describe("loadConfig", () => {
     expect(loadConfig({ ANTHROPIC_API_KEY: "test-key" }).socketPath).toContain(
       ".iquantum/daemon.sock",
     );
+  });
+
+  it("does not require a base URL for the default anthropic provider", () => {
+    expect(loadConfig({ ANTHROPIC_API_KEY: "test-key" })).toMatchObject({
+      provider: "anthropic",
+      baseUrl: undefined,
+    });
+  });
+
+  it("accepts openai provider settings and prefers its dedicated API key", () => {
+    expect(
+      loadConfig({
+        IQUANTUM_PROVIDER: "openai",
+        IQUANTUM_BASE_URL: "https://api.deepseek.com",
+        IQUANTUM_API_KEY: "openai-key",
+      }),
+    ).toMatchObject({
+      anthropicApiKey: undefined,
+      provider: "openai",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "openai-key",
+      providerApiKey: "openai-key",
+    });
+  });
+
+  it("allows the openai provider to fall back to ANTHROPIC_API_KEY", () => {
+    expect(
+      loadConfig({
+        ANTHROPIC_API_KEY: "fallback-key",
+        IQUANTUM_PROVIDER: "openai",
+        IQUANTUM_BASE_URL: "https://api.deepseek.com",
+      }),
+    ).toMatchObject({
+      provider: "openai",
+      anthropicApiKey: "fallback-key",
+      apiKey: undefined,
+      providerApiKey: "fallback-key",
+    });
+  });
+
+  it("requires a valid base URL for the openai provider", () => {
+    expect(() =>
+      loadConfig({
+        IQUANTUM_PROVIDER: "openai",
+        IQUANTUM_API_KEY: "openai-key",
+      }),
+    ).toThrow("IQUANTUM_BASE_URL is required");
+
+    expect(() =>
+      loadConfig({
+        IQUANTUM_PROVIDER: "openai",
+        IQUANTUM_API_KEY: "openai-key",
+        IQUANTUM_BASE_URL: "not-a-url",
+      }),
+    ).toThrow();
+  });
+
+  it("throws MissingApiKeyError when openai cannot resolve any API key", () => {
+    expect(() =>
+      loadConfig({
+        IQUANTUM_PROVIDER: "openai",
+        IQUANTUM_BASE_URL: "https://api.deepseek.com",
+      }),
+    ).toThrow(MissingApiKeyError);
   });
 
   describe("config file loading", () => {

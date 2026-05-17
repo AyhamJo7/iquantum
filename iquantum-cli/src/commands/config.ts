@@ -6,6 +6,9 @@ import type { Writer } from "./daemon";
 /** All keys users can set via `iq config set`. */
 export const KNOWN_CONFIG_KEYS = [
   "ANTHROPIC_API_KEY",
+  "IQUANTUM_PROVIDER",
+  "IQUANTUM_BASE_URL",
+  "IQUANTUM_API_KEY",
   "IQUANTUM_ARCHITECT_MODEL",
   "IQUANTUM_EDITOR_MODEL",
   "IQUANTUM_SOCKET",
@@ -22,7 +25,10 @@ function isKnownKey(key: string): key is ConfigKey {
 }
 
 function redact(key: string, value: string): string {
-  if (key === "ANTHROPIC_API_KEY" && value.length > 7) {
+  if (
+    (key === "ANTHROPIC_API_KEY" || key === "IQUANTUM_API_KEY") &&
+    value.length > 7
+  ) {
     return `${value.slice(0, 3)}...${value.slice(-4)}`;
   }
   return value;
