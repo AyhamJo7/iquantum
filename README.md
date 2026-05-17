@@ -131,29 +131,39 @@ iquantum will plan it, show you the plan, wait for your approval, implement the 
 When you run `iq`, you enter the interactive REPL — a live terminal session where you and the agent collaborate. Here is what a typical exchange looks like:
 
 ```
-iq  v1.0.0  ·  session abc123  ·  architect: claude-sonnet-4-6
+you  add rate limiting to the login endpoint
 
-> add rate limiting to the login endpoint
+PLAN ▸  ·  IMPLEMENT ○  ·  VALIDATE ○
 
-  Planning...
+⠸ Planning  3s
 
-  ══ Plan ══════════════════════════════════════════════
   1. Install express-rate-limit
   2. Create src/middleware/rateLimiter.ts (5 req / min)
   3. Mount the middleware before /auth routes in app.ts
   4. Add a test covering the 429 response
-  ══════════════════════════════════════════════════════
 
-  Approve this plan? › yes
+PLAN ✓  ·  IMPLEMENT ▸  ·  VALIDATE ○
 
-  Implementing...  ████████████░░  applying diff 3 / 4
+⠹ Implementing  8s
 
-  Validating...
-  ✓ 42 tests passed
+┌─ src/middleware/rateLimiter.ts  +47 −0 ────────────────┐
+    1  + import rateLimit from "express-rate-limit";
+    2  + ...
+└────────────────────────────────────────────────────────┘
 
-  ✓ Committed  a3f8c12  "feat: add rate limiting to login endpoint"
+PLAN ✓  ·  IMPLEMENT ✓  ·  VALIDATE ▸
 
->
+⠼ Validating  2s
+
+PLAN ✓  ·  IMPLEMENT ✓  ·  VALIDATE ✓
+
+╭─ committed ────────────────────────────────╮
+│  ✓  a3f8c12                                │
+│     feat: add rate limiting to login       │
+╰────────────────────────────────────────────╯
+
+describe a task, or /help for commands
+ iq v1.1.0  ·  claude-sonnet-4-6 ·  12k ▓▓▓░░░░░
 ```
 
 The agent waits for your approval before writing a single line of code. If you are not happy with the plan, type `no` and explain what to change — the agent will revise and show you a new plan.
@@ -414,9 +424,10 @@ bun run typecheck        # TypeScript type check across all packages
 - [x] MCP tool integration — any stdio MCP server exposed as agent tools
 - [x] Configurable sandbox exec timeout
 - [x] First-run setup wizard
-- [ ] `iq restore <hash>` — roll back to any prior Git checkpoint from the CLI
+- [x] `/restore <hash>` — roll back to any prior Git checkpoint from the REPL
+- [x] OpenAI-compatible provider routing — bring your own model (DeepSeek, Ollama, Together, …)
+- [x] Polished terminal UI — PIV phase strip, live spinner, commit card, diff line numbers
 - [ ] Multi-repo context spanning more than one repository
-- [ ] OpenAI-compatible provider routing — bring your own model
 - [ ] VS Code extension — visual diff approval and side-by-side plan review
 - [ ] Cloud sandbox tier — hosted execution, zero local Docker setup
 
