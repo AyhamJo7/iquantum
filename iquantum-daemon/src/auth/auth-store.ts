@@ -100,7 +100,7 @@ export class AuthStore {
 
   async verifyPassword(email: string, password: string): Promise<User | null> {
     const row = await this.db.first<UserRow>(
-      `SELECT id, org_id AS orgId, email, password_hash AS passwordHash, role, created_at AS createdAt
+      `SELECT id, org_id AS "orgId", email, password_hash AS "passwordHash", role, created_at AS "createdAt"
        FROM users WHERE email = ?`,
       [email],
     );
@@ -149,12 +149,12 @@ export class AuthStore {
   ): Promise<{ user: User; org: Organization } | null> {
     const row = await this.db.first<ApiTokenRow & UserRow & OrgRow>(
       `SELECT
-         t.id, t.user_id AS userId, t.name, t.scopes, t.last_used_at AS lastUsedAt,
-         t.expires_at AS expiresAt, t.revoked_at AS revokedAt, t.created_at AS createdAt,
-         u.id AS userRecordId, u.org_id AS orgId, u.email, u.password_hash AS passwordHash,
-         u.role, u.created_at AS userCreatedAt,
-         o.id AS orgRecordId, o.name AS orgName, o.plan, o.sandbox_quota_hours AS sandboxQuotaHours,
-         o.stripe_customer_id AS stripeCustomerId, o.created_at AS orgCreatedAt
+         t.id, t.user_id AS "userId", t.name, t.scopes, t.last_used_at AS "lastUsedAt",
+         t.expires_at AS "expiresAt", t.revoked_at AS "revokedAt", t.created_at AS "createdAt",
+         u.id AS "userRecordId", u.org_id AS "orgId", u.email, u.password_hash AS "passwordHash",
+         u.role, u.created_at AS "userCreatedAt",
+         o.id AS "orgRecordId", o.name AS "orgName", o.plan, o.sandbox_quota_hours AS "sandboxQuotaHours",
+         o.stripe_customer_id AS "stripeCustomerId", o.created_at AS "orgCreatedAt"
        FROM api_tokens t
        JOIN users u ON u.id = t.user_id
        JOIN organizations o ON o.id = u.org_id
@@ -197,7 +197,7 @@ export class AuthStore {
 
   async getUser(userId: string): Promise<User> {
     const row = await this.db.first<UserRow>(
-      `SELECT id, org_id AS orgId, email, password_hash AS passwordHash, role, created_at AS createdAt
+      `SELECT id, org_id AS "orgId", email, password_hash AS "passwordHash", role, created_at AS "createdAt"
        FROM users WHERE id = ?`,
       [userId],
     );
@@ -207,7 +207,7 @@ export class AuthStore {
 
   async listOrgMembers(orgId: string): Promise<User[]> {
     const rows = await this.db.query<UserRow>(
-      `SELECT id, org_id AS orgId, email, password_hash AS passwordHash, role, created_at AS createdAt
+      `SELECT id, org_id AS "orgId", email, password_hash AS "passwordHash", role, created_at AS "createdAt"
        FROM users WHERE org_id = ? ORDER BY created_at, id`,
       [orgId],
     );
@@ -229,8 +229,8 @@ export class AuthStore {
 
   async getOrg(orgId: string): Promise<Organization> {
     const row = await this.db.first<OrgRow>(
-      `SELECT id, name, plan, sandbox_quota_hours AS sandboxQuotaHours,
-              stripe_customer_id AS stripeCustomerId, created_at AS createdAt
+      `SELECT id, name, plan, sandbox_quota_hours AS "sandboxQuotaHours",
+              stripe_customer_id AS "stripeCustomerId", created_at AS "createdAt"
        FROM organizations WHERE id = ?`,
       [orgId],
     );

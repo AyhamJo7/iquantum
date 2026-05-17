@@ -94,15 +94,15 @@ export class SqliteSessionStore implements SessionStore {
         `SELECT
           id,
           status,
-          repo_path AS repoPath,
-          container_id AS containerId,
-          volume_id AS volumeId,
+          repo_path AS "repoPath",
+          container_id AS "containerId",
+          volume_id AS "volumeId",
           config,
           mode,
-          user_id AS userId,
-          org_id AS orgId,
-          created_at AS createdAt,
-          updated_at AS updatedAt
+          user_id AS "userId",
+          org_id AS "orgId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt"
         FROM sessions
         WHERE id = ? ${orgId ? "AND org_id = ?" : ""}`,
       )
@@ -154,15 +154,15 @@ export class SqliteSessionStore implements SessionStore {
         `SELECT
           id,
           status,
-          repo_path AS repoPath,
-          container_id AS containerId,
-          volume_id AS volumeId,
+          repo_path AS "repoPath",
+          container_id AS "containerId",
+          volume_id AS "volumeId",
           config,
           mode,
-          user_id AS userId,
-          org_id AS orgId,
-          created_at AS createdAt,
-          updated_at AS updatedAt
+          user_id AS "userId",
+          org_id AS "orgId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt"
         FROM sessions
         WHERE org_id = ?
         ORDER BY created_at, id`,
@@ -222,16 +222,16 @@ export class SqlitePIVStore implements PIVStore {
       .query(
         `SELECT
           id,
-          session_id AS sessionId,
-          task_id AS taskId,
+          session_id AS "sessionId",
+          task_id AS "taskId",
           role,
           phase,
           model,
           content,
-          has_thinking AS hasThinking,
-          token_count AS tokenCount,
-          compaction_boundary AS compactionBoundary,
-          created_at AS createdAt
+          has_thinking AS "hasThinking",
+          token_count AS "tokenCount",
+          compaction_boundary AS "compactionBoundary",
+          created_at AS "createdAt"
         FROM messages
         WHERE session_id = ? AND task_id = ?
         ORDER BY created_at, rowid
@@ -265,12 +265,12 @@ export class SqlitePIVStore implements PIVStore {
       .query(
         `SELECT
           id,
-          session_id AS sessionId,
+          session_id AS "sessionId",
           content,
           status,
           feedback,
-          created_at AS createdAt,
-          approved_at AS approvedAt
+          created_at AS "createdAt",
+          approved_at AS "approvedAt"
         FROM plans
         WHERE id = ?`,
       )
@@ -282,12 +282,12 @@ export class SqlitePIVStore implements PIVStore {
       .query(
         `SELECT
           id,
-          session_id AS sessionId,
+          session_id AS "sessionId",
           content,
           status,
           feedback,
-          created_at AS createdAt,
-          approved_at AS approvedAt
+          created_at AS "createdAt",
+          approved_at AS "approvedAt"
         FROM plans
         WHERE session_id = ? AND status = 'pending'
         ORDER BY created_at DESC, rowid DESC
@@ -404,13 +404,13 @@ export class SqliteConversationStore implements ConversationStore {
       .query(
         `SELECT
           id,
-          session_id AS sessionId,
+          session_id AS "sessionId",
           role,
           content,
-          has_thinking AS hasThinking,
-          token_count AS tokenCount,
-          compaction_boundary AS compactionBoundary,
-          created_at AS createdAt
+          has_thinking AS "hasThinking",
+          token_count AS "tokenCount",
+          compaction_boundary AS "compactionBoundary",
+          created_at AS "createdAt"
         FROM messages
         WHERE session_id = ? AND task_id IS NULL
         ${tenantClause}
@@ -440,13 +440,13 @@ export class SqliteConversationStore implements ConversationStore {
       .query(
         `SELECT
           id,
-          session_id AS sessionId,
+          session_id AS "sessionId",
           role,
           content,
-          has_thinking AS hasThinking,
-          token_count AS tokenCount,
-          compaction_boundary AS compactionBoundary,
-          created_at AS createdAt
+          has_thinking AS "hasThinking",
+          token_count AS "tokenCount",
+          compaction_boundary AS "compactionBoundary",
+          created_at AS "createdAt"
         FROM messages
         WHERE session_id = ? AND task_id IS NULL
         ${tenantClause}
@@ -502,11 +502,11 @@ export class SqliteGitCheckpointStore implements GitCheckpointStore {
       .query(
         `SELECT
           id,
-          session_id AS sessionId,
-          validate_run_id AS validateRunId,
-          commit_hash AS commitHash,
-          commit_message AS commitMessage,
-          created_at AS createdAt
+          session_id AS "sessionId",
+          validate_run_id AS "validateRunId",
+          commit_hash AS "commitHash",
+          commit_message AS "commitMessage",
+          created_at AS "createdAt"
         FROM git_checkpoints
         WHERE session_id = ?
         ORDER BY created_at, rowid
@@ -621,9 +621,9 @@ export class AdapterSessionStore implements SessionStore {
 
   async get(sessionId: string, orgId?: string): Promise<Session | null> {
     const row = await this.db.first<SessionRow>(
-      `SELECT id, status, repo_path AS repoPath, container_id AS containerId,
-              volume_id AS volumeId, config, mode, user_id AS userId, org_id AS orgId,
-              created_at AS createdAt, updated_at AS updatedAt
+      `SELECT id, status, repo_path AS "repoPath", container_id AS "containerId",
+              volume_id AS "volumeId", config, mode, user_id AS "userId", org_id AS "orgId",
+              created_at AS "createdAt", updated_at AS "updatedAt"
        FROM sessions WHERE id = ? ${orgId ? "AND org_id = ?" : ""}`,
       orgId ? [sessionId, orgId] : [sessionId],
     );
@@ -654,9 +654,9 @@ export class AdapterSessionStore implements SessionStore {
 
   async listByOrg(orgId: string): Promise<Session[]> {
     const rows = await this.db.query<SessionRow>(
-      `SELECT id, status, repo_path AS repoPath, container_id AS containerId,
-              volume_id AS volumeId, config, mode, user_id AS userId, org_id AS orgId,
-              created_at AS createdAt, updated_at AS updatedAt
+      `SELECT id, status, repo_path AS "repoPath", container_id AS "containerId",
+              volume_id AS "volumeId", config, mode, user_id AS "userId", org_id AS "orgId",
+              created_at AS "createdAt", updated_at AS "updatedAt"
        FROM sessions WHERE org_id = ? ORDER BY created_at, id`,
       [orgId],
     );
@@ -702,7 +702,7 @@ export class AdapterPIVStore implements PIVStore {
     taskId: string,
   ): Promise<Message[]> {
     const rows = await this.db.query<MessageRow>(
-      `SELECT id, session_id AS sessionId, task_id AS taskId, role, phase, model, content, has_thinking AS hasThinking, token_count AS tokenCount, compaction_boundary AS compactionBoundary, created_at AS createdAt FROM messages WHERE session_id = ? AND task_id = ? ORDER BY created_at, id LIMIT 2000`,
+      `SELECT id, session_id AS "sessionId", task_id AS "taskId", role, phase, model, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id = ? ORDER BY created_at, id LIMIT 2000`,
       [sessionId, taskId],
     );
     return rows.map(toMessage);
@@ -723,13 +723,13 @@ export class AdapterPIVStore implements PIVStore {
   }
   async getPlan(planId: string): Promise<Plan | null> {
     return this.db.first<Plan>(
-      `SELECT id, session_id AS sessionId, content, status, feedback, created_at AS createdAt, approved_at AS approvedAt FROM plans WHERE id = ?`,
+      `SELECT id, session_id AS "sessionId", content, status, feedback, created_at AS "createdAt", approved_at AS "approvedAt" FROM plans WHERE id = ?`,
       [planId],
     );
   }
   async getCurrentPlan(sessionId: string): Promise<Plan | null> {
     return this.db.first<Plan>(
-      `SELECT id, session_id AS sessionId, content, status, feedback, created_at AS createdAt, approved_at AS approvedAt FROM plans WHERE session_id = ? AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1`,
+      `SELECT id, session_id AS "sessionId", content, status, feedback, created_at AS "createdAt", approved_at AS "approvedAt" FROM plans WHERE session_id = ? AND status = 'pending' ORDER BY created_at DESC, id DESC LIMIT 1`,
       [sessionId],
     );
   }
@@ -829,7 +829,7 @@ export class AdapterConversationStore implements ConversationStore {
         ]
       : [sessionId, ...(orgId ? [orgId] : []), options.limit + 1];
     const rows = await this.db.query<ConversationMessageRow>(
-      `SELECT id, session_id AS sessionId, role, content, has_thinking AS hasThinking, token_count AS tokenCount, compaction_boundary AS compactionBoundary, created_at AS createdAt FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ${beforeClause} ORDER BY created_at DESC, id DESC LIMIT ?`,
+      `SELECT id, session_id AS "sessionId", role, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ${beforeClause} ORDER BY created_at DESC, id DESC LIMIT ?`,
       params,
     );
     const hasMore = rows.length > options.limit;
@@ -847,7 +847,7 @@ export class AdapterConversationStore implements ConversationStore {
       ? "AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = messages.session_id AND sessions.org_id = ?)"
       : "";
     const rows = await this.db.query<ConversationMessageRow>(
-      `SELECT id, session_id AS sessionId, role, content, has_thinking AS hasThinking, token_count AS tokenCount, compaction_boundary AS compactionBoundary, created_at AS createdAt FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ORDER BY created_at, id`,
+      `SELECT id, session_id AS "sessionId", role, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ORDER BY created_at, id`,
       orgId ? [sessionId, orgId] : [sessionId],
     );
     return rows.map(toConversationMessage);
@@ -882,7 +882,7 @@ export class AdapterGitCheckpointStore implements GitCheckpointStore {
   }
   async listBySession(sessionId: string): Promise<GitCheckpoint[]> {
     return this.db.query<GitCheckpoint>(
-      `SELECT id, session_id AS sessionId, validate_run_id AS validateRunId, commit_hash AS commitHash, commit_message AS commitMessage, created_at AS createdAt FROM git_checkpoints WHERE session_id = ? ORDER BY created_at, id LIMIT 500`,
+      `SELECT id, session_id AS "sessionId", validate_run_id AS "validateRunId", commit_hash AS "commitHash", commit_message AS "commitMessage", created_at AS "createdAt" FROM git_checkpoints WHERE session_id = ? ORDER BY created_at, id LIMIT 500`,
       [sessionId],
     );
   }
