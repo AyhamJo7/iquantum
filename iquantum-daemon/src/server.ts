@@ -287,6 +287,13 @@ export function createRequestHandler(options: DaemonServerOptions) {
         return Response.json({ received: true });
       }
 
+      if (request.method === "GET" && url.pathname === "/auth/tokens") {
+        const tokens = await requireAuthStore(options).listApiTokens(
+          requireContext(context).userId,
+        );
+        return Response.json({ tokens });
+      }
+
       if (request.method === "POST" && url.pathname === "/auth/tokens") {
         const body = apiTokenSchema.parse(await request.json());
         const authStore = requireAuthStore(options);
@@ -363,6 +370,30 @@ export function createRequestHandler(options: DaemonServerOptions) {
           { userId: user.id, tempPassword },
           { status: 201 },
         );
+      }
+
+      if (
+        request.method === "POST" &&
+        url.pathname === "/billing/portal-session" &&
+        options.stripeClient
+      ) {
+        const auth = requireContext(context);
+        const authStore = requireAuthStore(options);
+        const org = await authStore.getOrg(auth.orgId);
+        if (!org.stripeCustomerId) {
+          return Response.json(
+            { error: "no_stripe_customer" },
+            { status: 400 },
+          );
+        }
+        const { returnUrl } = z
+          .object({ returnUrl: z.string().url() })
+          .parse(await request.json());
+        const url_ = await options.stripeClient.createPortalSession(
+          org.stripeCustomerId,
+          returnUrl,
+        );
+        return Response.json({ url: url_ });
       }
 
       if (

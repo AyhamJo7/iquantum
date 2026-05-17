@@ -55,6 +55,16 @@ jobs:
             docker tag "$IMAGE:$TAG" "$IMAGE:latest"
             docker push "$IMAGE:latest"
           fi
+      - name: Build and push daemon image
+        run: |
+          TAG="${{ github.ref_name }}"
+          IMAGE="ghcr.io/ayhamjo7/iquantum-daemon"
+          docker build -t "$IMAGE:$TAG" -f docker/daemon.Dockerfile .
+          docker push "$IMAGE:$TAG"
+          if [[ "$TAG" != *-* ]]; then
+            docker tag "$IMAGE:$TAG" "$IMAGE:latest"
+            docker push "$IMAGE:latest"
+          fi
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

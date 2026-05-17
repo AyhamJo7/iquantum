@@ -1,0 +1,42 @@
+{
+  "family": "iquantum-sandbox",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::606096000251:role/iquantumTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::606096000251:role/iquantumSandboxTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "iquantum-sandbox",
+      "image": "ghcr.io/ayhamjo7/iquantum-sandbox:latest",
+      "essential": true,
+      "command": ["sh", "-c", "while true; do sleep 3600; done"],
+      "mountPoints": [
+        {
+          "sourceVolume": "iquantum-workspace",
+          "containerPath": "/mnt/iquantum",
+          "readOnly": false
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/iquantum-sandbox",
+          "awslogs-region": "eu-north-1",
+          "awslogs-stream-prefix": "sandbox"
+        }
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "iquantum-workspace",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-0e406e11ee372d862",
+        "rootDirectory": "/",
+        "transitEncryption": "ENABLED"
+      }
+    }
+  ]
+}
