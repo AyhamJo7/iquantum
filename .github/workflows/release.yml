@@ -14,8 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-        with:
-          cache: "bun"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -36,9 +34,15 @@ jobs:
           EXPECTED_VERSION="$(node -p "require('./iquantum-cli/package.json').version")" \
           scripts/smoke-test-install.sh
       - name: Publish to npm
-        run: cd iquantum-cli && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./iquantum-cli/package.json').version")
+          if npm view "@iquantum/cli@${VERSION}" version >/dev/null 2>&1; then
+            echo "@iquantum/cli@${VERSION} already published — skipping"
+          else
+            cd iquantum-cli && npm publish --access public
+          fi
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Build and push sandbox image
@@ -56,7 +60,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ github.ref_name }}"
-          if [[ "$TAG" == *-* ]]; then
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — publishing if still draft"
+            gh release edit "$TAG" --draft=false || true
+          elif [[ "$TAG" == *-* ]]; then
             gh release create "$TAG" --generate-notes --prerelease
           else
             gh release create "$TAG" --generate-notes

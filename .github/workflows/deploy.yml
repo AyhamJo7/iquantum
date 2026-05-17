@@ -1,16 +1,25 @@
+name: deploy
+
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (defaults to HEAD SHA)"
+        required: false
+
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
       - name: Helm deploy
         run: |
+          TAG="${{ inputs.image_tag || github.sha }}"
           helm upgrade --install iquantum-daemon ./infrastructure/helm \
-            --set image.tag=${{ github.sha }} \
+            --set image.tag="$TAG" \
             --set env.IQUANTUM_CLOUD=true

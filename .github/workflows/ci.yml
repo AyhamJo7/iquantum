@@ -11,8 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-        with:
-          cache: "bun"
       - run: bun install --frozen-lockfile
       - run: docker info
       - run: bun run build
