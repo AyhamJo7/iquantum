@@ -20,6 +20,9 @@ export interface Session {
   containerId: string;
   volumeId: string;
   config: Record<string, unknown>;
+  mode: "piv" | "chat";
+  userId: string | null;
+  orgId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -74,6 +77,37 @@ export interface RepoMapCache {
   contentHash: string;
   mapJson: string;
   tokenCount: number;
+  createdAt: string;
+}
+
+export type OrgPlan = "free" | "pro" | "enterprise";
+export type UserRole = "owner" | "member";
+
+export interface Organization {
+  id: string;
+  name: string;
+  plan: OrgPlan;
+  sandboxQuotaHours: number;
+  stripeCustomerId: string | null;
+  createdAt: string;
+}
+
+export interface User {
+  id: string;
+  orgId: string;
+  email: string;
+  role: UserRole;
+  createdAt: string;
+}
+
+export interface ApiToken {
+  id: string;
+  userId: string;
+  name: string;
+  scopes: string[];
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
   createdAt: string;
 }
 
