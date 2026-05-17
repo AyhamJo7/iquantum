@@ -2,7 +2,11 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadConfig, MissingApiKeyError } from "./index";
+import {
+  loadConfig,
+  MissingApiKeyError,
+  MissingCloudConfigError,
+} from "./index";
 
 const validEnv = {
   ANTHROPIC_API_KEY: "test-key",
@@ -24,10 +28,23 @@ describe("loadConfig", () => {
       architectModel: "architect",
       editorModel: "editor",
       socketPath: "/tmp/iquantum.sock",
+      tcpPort: 51820,
       maxRetries: 3,
       execTimeoutMs: 45_000,
       mcpServers: [],
       sandboxImage: "ghcr.io/ayhamjo7/iquantum-sandbox:latest",
+      cloud: false,
+      databaseUrl: undefined,
+      redisUrl: undefined,
+      jwtSecret: undefined,
+      stripeSecretKey: undefined,
+      stripeWebhookSecret: undefined,
+      awsRegion: undefined,
+      awsEcsCluster: undefined,
+      awsEfsFileSystemId: undefined,
+      awsSubnetIds: undefined,
+      awsSecurityGroupIds: undefined,
+      awsAssignPublicIp: false,
     });
   });
 
@@ -127,6 +144,34 @@ describe("loadConfig", () => {
         { configDir: "/tmp/iq-test-no-config-dir" },
       ),
     ).toThrow(MissingApiKeyError);
+  });
+
+  it("validates required cloud settings", () => {
+    expect(() =>
+      loadConfig({
+        ANTHROPIC_API_KEY: "test-key",
+        IQUANTUM_CLOUD: "true",
+      }),
+    ).toThrow(MissingCloudConfigError);
+
+    expect(
+      loadConfig({
+        ANTHROPIC_API_KEY: "test-key",
+        IQUANTUM_CLOUD: "true",
+        DATABASE_URL: "postgresql://localhost/db",
+        REDIS_URL: "redis://localhost:6379",
+        JWT_SECRET: "x".repeat(32),
+        STRIPE_SECRET_KEY: "sk_test",
+        AWS_ECS_CLUSTER: "cluster",
+        AWS_EFS_FILE_SYSTEM_ID: "fs-123",
+        AWS_SUBNET_IDS: "subnet-a,subnet-b",
+        AWS_SECURITY_GROUP_IDS: "sg-a",
+      }),
+    ).toMatchObject({
+      cloud: true,
+      awsSubnetIds: ["subnet-a", "subnet-b"],
+      awsSecurityGroupIds: ["sg-a"],
+    });
   });
 
   describe("config file loading", () => {
