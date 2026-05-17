@@ -20,6 +20,17 @@ export class StripeClient {
     });
   }
 
+  async createPortalSession(
+    stripeCustomerId: string,
+    returnUrl: string,
+  ): Promise<string> {
+    const session = await this.#client.billingPortal.sessions.create({
+      customer: stripeCustomerId,
+      return_url: returnUrl,
+    });
+    return session.url;
+  }
+
   constructWebhookEvent(
     payload: string | Uint8Array,
     signature: string,

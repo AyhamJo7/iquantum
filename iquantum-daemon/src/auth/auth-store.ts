@@ -195,6 +195,27 @@ export class AuthStore {
     );
   }
 
+  async listApiTokens(userId: string): Promise<ApiToken[]> {
+    const rows = await this.db.query<ApiTokenRow>(
+      `SELECT id, user_id AS "userId", name, scopes, last_used_at AS "lastUsedAt",
+              expires_at AS "expiresAt", created_at AS "createdAt"
+       FROM api_tokens
+       WHERE user_id = ? AND revoked_at IS NULL
+       ORDER BY created_at DESC`,
+      [userId],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      userId: String(row.userId),
+      name: row.name,
+      scopes: JSON.parse(row.scopes as unknown as string) as string[],
+      lastUsedAt: row.lastUsedAt ?? null,
+      expiresAt: row.expiresAt ?? null,
+      revokedAt: null,
+      createdAt: row.createdAt,
+    }));
+  }
+
   async getUser(userId: string): Promise<User> {
     const row = await this.db.first<UserRow>(
       `SELECT id, org_id AS "orgId", email, password_hash AS "passwordHash", role, created_at AS "createdAt"

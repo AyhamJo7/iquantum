@@ -1,0 +1,108 @@
+{
+  "family": "iquantum-daemon",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::606096000251:role/iquantumTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::606096000251:role/iquantumDaemonTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "daemon",
+      "image": "ghcr.io/ayhamjo7/iquantum-daemon:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 51820,
+          "protocol": "tcp"
+        }
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "iquantum-workspace",
+          "containerPath": "/mnt/iquantum",
+          "readOnly": false
+        }
+      ],
+      "secrets": [
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:ANTHROPIC_API_KEY::"
+        },
+        {
+          "name": "JWT_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:JWT_SECRET::"
+        },
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:DATABASE_URL::"
+        },
+        {
+          "name": "REDIS_URL",
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:REDIS_URL::"
+        },
+        {
+          "name": "STRIPE_SECRET_KEY",
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:STRIPE_SECRET_KEY::"
+        },
+        {
+          "name": "STRIPE_WEBHOOK_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:eu-north-1:606096000251:secret:iquantum-daemon:STRIPE_WEBHOOK_SECRET::"
+        }
+      ],
+      "environment": [
+        { "name": "IQUANTUM_CLOUD", "value": "true" },
+        { "name": "IQUANTUM_TCP_PORT", "value": "51820" },
+        { "name": "IQUANTUM_SOCKET", "value": "/tmp/daemon.sock" },
+        { "name": "IQUANTUM_ARCHITECT_MODEL", "value": "claude-sonnet-4-6" },
+        {
+          "name": "IQUANTUM_EDITOR_MODEL",
+          "value": "claude-haiku-4-5-20251001"
+        },
+        { "name": "AWS_REGION", "value": "eu-north-1" },
+        { "name": "AWS_ECS_CLUSTER", "value": "iquantum-ayhamjo7" },
+        { "name": "AWS_EFS_FILE_SYSTEM_ID", "value": "fs-0e406e11ee372d862" },
+        {
+          "name": "AWS_SUBNET_IDS",
+          "value": "subnet-00e7c283c7e22f944,subnet-0eada34fa10045729,subnet-0451df18b0b17c05a"
+        },
+        { "name": "AWS_SECURITY_GROUP_IDS", "value": "sg-079c14d0ce0e6336b" },
+        { "name": "AWS_ASSIGN_PUBLIC_IP", "value": "true" },
+        { "name": "MAX_RETRIES", "value": "3" },
+        { "name": "IQUANTUM_EXEC_TIMEOUT_MS", "value": "120000" },
+        {
+          "name": "IQUANTUM_SANDBOX_IMAGE",
+          "value": "ghcr.io/ayhamjo7/iquantum-sandbox:latest"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/iquantum-daemon",
+          "awslogs-region": "eu-north-1",
+          "awslogs-stream-prefix": "daemon"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "wget -qO- http://localhost:51820/health | grep -q '\"ok\":true' || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 15
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "iquantum-workspace",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-0e406e11ee372d862",
+        "rootDirectory": "/",
+        "transitEncryption": "ENABLED"
+      }
+    }
+  ]
+}

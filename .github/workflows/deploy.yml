@@ -4,22 +4,55 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Image tag to deploy (defaults to HEAD SHA)"
+        description: "Image tag to deploy (defaults to latest)"
         required: false
+        default: "latest"
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Configure AWS credentials
+
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          aws-region: eu-north-1
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-      - name: Helm deploy
+
+      - name: Register updated task definition
         run: |
-          TAG="${{ inputs.image_tag || github.sha }}"
-          helm upgrade --install iquantum-daemon ./infrastructure/helm \
-            --set image.tag="$TAG" \
-            --set env.IQUANTUM_CLOUD=true
+          TAG="${{ inputs.image_tag }}"
+          IMAGE="ghcr.io/ayhamjo7/iquantum-daemon:$TAG"
+
+          # Pull current task definition, swap image tag, strip read-only fields
+          aws ecs describe-task-definition \
+            --task-definition iquantum-daemon \
+            --query taskDefinition \
+            --region eu-north-1 | \
+          jq "del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) |
+              .containerDefinitions[0].image = \"$IMAGE\"" | \
+          aws ecs register-task-definition \
+            --region eu-north-1 \
+            --cli-input-json "$(cat -)"
+
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --region eu-north-1 \
+            --cluster iquantum-ayhamjo7 \
+            --service iquantum-daemon \
+            --task-definition iquantum-daemon \
+            --force-new-deployment
+
+          echo "Waiting for service to stabilise…"
+          aws ecs wait services-stable \
+            --region eu-north-1 \
+            --cluster iquantum-ayhamjo7 \
+            --services iquantum-daemon
+
+          echo "Deployed $IMAGE"
