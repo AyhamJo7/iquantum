@@ -154,7 +154,7 @@ export function createTcpDaemonServer(
 ) {
   return Bun.serve(
     createServeOptions(options, {
-      hostname: "127.0.0.1",
+      hostname: options.cloud ? "0.0.0.0" : "127.0.0.1",
       port,
     }),
   );
