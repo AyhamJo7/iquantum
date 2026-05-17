@@ -6,7 +6,7 @@
   "exports": "./src/index.ts",
   "dependencies": {
     "@iquantum/types": "workspace:*",
-    "simple-git": "latest"
+    "simple-git": "^3.36.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"
