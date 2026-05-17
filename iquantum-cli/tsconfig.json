@@ -16,6 +16,9 @@
     },
     {
       "path": "../packages/protocol"
+    },
+    {
+      "path": "../packages/ui-core"
     }
   ]
 }

@@ -43,4 +43,5 @@ export const COPY = {
   resumed: "resumed",
   compacted: "context compacted",
   hintIdle: "describe a task, or /help for commands",
+  hintChat: "ask anything about your codebase",
 } as const;

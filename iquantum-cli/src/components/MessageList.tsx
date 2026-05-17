@@ -1,6 +1,6 @@
+import type { TranscriptItem } from "@iquantum/ui-core";
 import { Box, Text } from "ink";
 import { memo } from "react";
-import type { TranscriptItem } from "../screens/repl-state";
 import { CommitCard } from "./CommitCard";
 import { ErrorCard } from "./ErrorCard";
 import { renderMarkdownToAnsi } from "./markdown";

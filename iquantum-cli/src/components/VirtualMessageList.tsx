@@ -1,4 +1,4 @@
-import type { TranscriptItem } from "../screens/repl-state";
+import type { TranscriptItem } from "@iquantum/ui-core";
 import { MessageList } from "./MessageList";
 import { visibleTranscriptWindow } from "./virtual-transcript";
 

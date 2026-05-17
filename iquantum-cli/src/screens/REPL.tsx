@@ -1,6 +1,12 @@
 import type { Session } from "@iquantum/types";
+import {
+  formatREPLError,
+  type TranscriptItem,
+  useConversation,
+  useDaemonStream,
+} from "@iquantum/ui-core";
 import { Box, useInput } from "ink";
-import { useEffect, useMemo, useReducer, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { DaemonClient } from "../client";
 import type { CommandRegistry } from "../commands/registry";
 import { ErrorCard } from "../components/ErrorCard";
@@ -9,10 +15,8 @@ import { PIVPhaseStrip } from "../components/PIVPhaseStrip";
 import { PromptInput } from "../components/PromptInput";
 import { SpinnerWithPhase } from "../components/SpinnerWithPhase";
 import { StatusBar } from "../components/StatusBar";
+import { COPY } from "../components/theme";
 import { VirtualMessageList } from "../components/VirtualMessageList";
-import { formatREPLError } from "./repl-errors";
-import type { TranscriptItem } from "./repl-state";
-import { initialREPLViewState, reduceREPLViewState } from "./repl-state";
 
 export interface REPLProps {
   client: DaemonClient;
@@ -23,6 +27,7 @@ export interface REPLProps {
   maxRetries: number;
   registry?: CommandRegistry;
   initialMessages?: TranscriptItem[];
+  chatMode?: boolean;
 }
 
 export function REPL({
@@ -34,12 +39,9 @@ export function REPL({
   maxRetries,
   registry,
   initialMessages = [],
+  chatMode = false,
 }: REPLProps) {
-  const [state, dispatch] = useReducer(
-    reduceREPLViewState,
-    initialMessages,
-    (msgs) => ({ ...initialREPLViewState, messages: msgs }),
-  );
+  const { state, dispatch } = useConversation(initialMessages);
   const submittingRef = useRef(false);
   const lastCtrlCRef = useRef(0);
 
@@ -83,37 +85,26 @@ export function REPL({
     }
   });
 
+  const streamTransport = useMemo(
+    () => ({
+      type: "iterator" as const,
+      open: () => client.openStream(session.id),
+    }),
+    [client, session.id],
+  );
+  const stream = useDaemonStream(streamTransport, dispatch);
+
   useEffect(() => {
-    let active = true;
+    if (!stream.error) return;
+    dispatch({ type: "submit_error", message: formatREPLError(stream.error) });
+    submittingRef.current = false;
+  }, [dispatch, stream.error]);
 
-    void (async () => {
-      try {
-        for await (const frame of client.openStream(session.id)) {
-          if (!active) {
-            return;
-          }
-
-          dispatch({ type: "frame", frame });
-
-          if (frame.type === "done" || frame.type === "error") {
-            submittingRef.current = false;
-          }
-        }
-      } catch (streamError) {
-        if (active) {
-          dispatch({
-            type: "submit_error",
-            message: formatREPLError(streamError),
-          });
-          submittingRef.current = false;
-        }
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [client, session.id]);
+  useEffect(() => {
+    if (!state.isSubmitting) {
+      submittingRef.current = false;
+    }
+  }, [state.isSubmitting]);
 
   return (
     <Box flexDirection="column">
@@ -124,7 +115,7 @@ export function REPL({
         thinkingExpanded={state.thinkingExpanded}
         thinkingStreaming={state.phase === "thinking"}
       />
-      {state.isFirstSubmit ? (
+      {state.isFirstSubmit && !chatMode ? (
         <PIVPhaseStrip
           activePhase={state.phase ?? null}
           completedPhases={state.completedPhases}
@@ -155,6 +146,7 @@ export function REPL({
       <PromptInput
         disabled={state.isSubmitting}
         isFirstSubmit={state.isFirstSubmit}
+        hintText={chatMode ? COPY.hintChat : COPY.hintIdle}
         {...(registry ? { registry } : {})}
         onSubmit={async (content) => {
           if (content.startsWith("/") && registry) {
@@ -163,6 +155,24 @@ export function REPL({
             const cmd = registry.get(cmdName);
 
             if (cmd) {
+              if (chatMode && cmd.chatUnavailable) {
+                dispatch({
+                  type: "system_message",
+                  text: `/${cmd.name} is not available in chat mode`,
+                  level: "error",
+                });
+                return;
+              }
+
+              if (chatMode && cmd.name === "task") {
+                dispatch({
+                  type: "system_message",
+                  text: "start a new session with iq to run a task",
+                  level: "error",
+                });
+                return;
+              }
+
               await cmd.run(argParts.join(" "), {
                 client,
                 registry,

@@ -58,6 +58,7 @@ export interface ConversationPage {
 export interface CreateSessionOptions {
   requireApproval?: boolean;
   autoApprove?: boolean;
+  mode?: "piv" | "chat";
 }
 
 export class HttpDaemonClient implements DaemonClient {

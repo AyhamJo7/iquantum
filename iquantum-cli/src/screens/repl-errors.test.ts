@@ -1,5 +1,8 @@
+import {
+  DAEMON_DISCONNECTED_MESSAGE,
+  formatREPLError,
+} from "@iquantum/ui-core";
 import { describe, expect, it } from "vitest";
-import { DAEMON_DISCONNECTED_MESSAGE, formatREPLError } from "./repl-errors";
 
 describe("formatREPLError", () => {
   it("normalizes Bun's missing Unix socket error into a daemon hint", () => {

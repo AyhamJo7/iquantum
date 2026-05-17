@@ -9,6 +9,7 @@ export interface PromptInputProps {
   onSubmit(value: string): void | Promise<void>;
   registry?: CommandRegistry;
   isFirstSubmit: boolean;
+  hintText?: string;
 }
 
 export function PromptInput({
@@ -16,6 +17,7 @@ export function PromptInput({
   onSubmit,
   registry,
   isFirstSubmit,
+  hintText = COPY.hintIdle,
 }: PromptInputProps) {
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>([]);
@@ -114,9 +116,7 @@ export function PromptInput({
           ))}
         </Box>
       ) : null}
-      {!isFirstSubmit && value === "" ? (
-        <Text dimColor>{COPY.hintIdle}</Text>
-      ) : null}
+      {!isFirstSubmit && value === "" ? <Text dimColor>{hintText}</Text> : null}
       <Box>
         <Text color={STATUS_COLORS.success}>&gt; </Text>
         <Text>

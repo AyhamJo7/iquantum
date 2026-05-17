@@ -1,5 +1,5 @@
+import type { REPLAction } from "@iquantum/ui-core";
 import type { DaemonClient } from "../client";
-import type { REPLAction } from "../screens/repl-state";
 
 export interface CommandContext {
   client: DaemonClient;
@@ -14,6 +14,7 @@ export interface CommandContext {
 export interface LocalCommand {
   name: string;
   description: string;
+  chatUnavailable?: boolean;
   run(args: string, ctx: CommandContext): Promise<void> | void;
 }
 
