@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iquantum-daemon
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector: { matchLabels: { app: iquantum-daemon } }
+  template:
+    metadata: { labels: { app: iquantum-daemon } }
+    spec:
+      containers:
+        - name: daemon
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          envFrom: [{ secretRef: { name: iquantum-daemon-env } }]
+          ports: [{ containerPort: 51820 }]
+          readinessProbe: { httpGet: { path: /health, port: 51820 } }
+          livenessProbe: { httpGet: { path: /health, port: 51820 }, initialDelaySeconds: 30 }
+{{- if .Values.efs.claimName }}
+          volumeMounts:
+            - name: session-workspaces
+              mountPath: {{ .Values.efs.mountPath | quote }}
+{{- end }}
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+{{- if .Values.efs.claimName }}
+      volumes:
+        - name: session-workspaces
+          persistentVolumeClaim:
+            claimName: {{ .Values.efs.claimName | quote }}
+{{- end }}

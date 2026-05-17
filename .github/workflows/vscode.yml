@@ -1,0 +1,16 @@
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: cd iquantum-vscode && bun run build
+      - run: cd iquantum-vscode && bun run package
+      - name: Publish to VS Code Marketplace
+        run: cd iquantum-vscode && bun run publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
