@@ -32,8 +32,9 @@ describe("loadConfig", () => {
   });
 
   it("throws MissingApiKeyError when API key is absent", () => {
-    expect(() => loadConfig({})).toThrow(MissingApiKeyError);
-    expect(() => loadConfig({})).toThrow("ANTHROPIC_API_KEY is not set");
+    const noFile = { configDir: "/tmp/iq-test-no-config-dir" };
+    expect(() => loadConfig({}, noFile)).toThrow(MissingApiKeyError);
+    expect(() => loadConfig({}, noFile)).toThrow("ANTHROPIC_API_KEY is not set");
   });
 
   it("throws MissingApiKeyError (not a raw ZodError) when key is empty string", () => {
@@ -65,11 +66,14 @@ describe("loadConfig", () => {
 
   it("accepts openai provider settings and prefers its dedicated API key", () => {
     expect(
-      loadConfig({
-        IQUANTUM_PROVIDER: "openai",
-        IQUANTUM_BASE_URL: "https://api.deepseek.com",
-        IQUANTUM_API_KEY: "openai-key",
-      }),
+      loadConfig(
+        {
+          IQUANTUM_PROVIDER: "openai",
+          IQUANTUM_BASE_URL: "https://api.deepseek.com",
+          IQUANTUM_API_KEY: "openai-key",
+        },
+        { configDir: "/tmp/iq-test-no-config-dir" },
+      ),
     ).toMatchObject({
       anthropicApiKey: undefined,
       provider: "openai",
@@ -113,10 +117,13 @@ describe("loadConfig", () => {
 
   it("throws MissingApiKeyError when openai cannot resolve any API key", () => {
     expect(() =>
-      loadConfig({
-        IQUANTUM_PROVIDER: "openai",
-        IQUANTUM_BASE_URL: "https://api.deepseek.com",
-      }),
+      loadConfig(
+        {
+          IQUANTUM_PROVIDER: "openai",
+          IQUANTUM_BASE_URL: "https://api.deepseek.com",
+        },
+        { configDir: "/tmp/iq-test-no-config-dir" },
+      ),
     ).toThrow(MissingApiKeyError);
   });
 
