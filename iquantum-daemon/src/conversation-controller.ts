@@ -95,7 +95,11 @@ export class ConversationController {
     this.#tokenCounter = options.tokenCounter ?? countTokens;
   }
 
-  async addMessage(sessionId: string, content: string): Promise<void> {
+  async addMessage(
+    sessionId: string,
+    content: string,
+    orgId?: string,
+  ): Promise<void> {
     this.#abortController?.abort();
     const abortController = new AbortController();
     this.#abortController = abortController;
@@ -118,9 +122,14 @@ export class ConversationController {
       const useTools = tools.length > 0 && !!this.#completer.completeWithTools;
 
       if (useTools) {
-        await this.#runToolLoop(sessionId, abortController, tools as McpTool[]);
+        await this.#runToolLoop(
+          sessionId,
+          abortController,
+          tools as McpTool[],
+          orgId,
+        );
       } else {
-        await this.#runTextLoop(sessionId, abortController);
+        await this.#runTextLoop(sessionId, abortController, orgId);
       }
     } catch (error) {
       if (abortController.signal.aborted) return;
@@ -141,30 +150,41 @@ export class ConversationController {
   async getMessages(
     sessionId: string,
     options: { before?: string; limit?: number } = {},
+    orgId?: string,
   ): Promise<ConversationPage> {
-    return this.#store.listPage(sessionId, {
-      ...(options.before ? { before: options.before } : {}),
-      limit: options.limit ?? 50,
-    });
+    return this.#store.listPage(
+      sessionId,
+      {
+        ...(options.before ? { before: options.before } : {}),
+        limit: options.limit ?? 50,
+      },
+      orgId,
+    );
   }
 
-  async getMessagesForApi(sessionId: string): Promise<ConversationMessage[]> {
-    return messagesSinceLastBoundary(await this.#store.listAll(sessionId));
+  async getMessagesForApi(
+    sessionId: string,
+    orgId?: string,
+  ): Promise<ConversationMessage[]> {
+    return messagesSinceLastBoundary(
+      await this.#store.listAll(sessionId, orgId),
+    );
   }
 
-  async getTokenCount(sessionId: string): Promise<number> {
-    return this.#tokenCounter(await this.getMessagesForApi(sessionId));
+  async getTokenCount(sessionId: string, orgId?: string): Promise<number> {
+    return this.#tokenCounter(await this.getMessagesForApi(sessionId, orgId));
   }
 
-  async clear(sessionId: string): Promise<void> {
-    await this.#store.deleteAll(sessionId);
+  async clear(sessionId: string, orgId?: string): Promise<void> {
+    await this.#store.deleteAll(sessionId, orgId);
   }
 
   async #runTextLoop(
     sessionId: string,
     abortController: AbortController,
+    orgId?: string,
   ): Promise<void> {
-    const llmMessages = (await this.getMessagesForApi(sessionId)).map(
+    const llmMessages = (await this.getMessagesForApi(sessionId, orgId)).map(
       toLLMMessage,
     );
     let response = "";
@@ -189,19 +209,20 @@ export class ConversationController {
     sessionId: string,
     abortController: AbortController,
     tools: McpTool[],
+    orgId?: string,
   ): Promise<void> {
     const completeWithTools = this.#completer.completeWithTools?.bind(
       this.#completer,
     );
     if (!completeWithTools) {
-      await this.#runTextLoop(sessionId, abortController);
+      await this.#runTextLoop(sessionId, abortController, orgId);
       return;
     }
 
     for (let turn = 0; turn < this.#maxToolTurns; turn++) {
       if (abortController.signal.aborted) break;
 
-      const llmMessages = (await this.getMessagesForApi(sessionId)).map(
+      const llmMessages = (await this.getMessagesForApi(sessionId, orgId)).map(
         toLLMMessage,
       );
       const toolUses: ToolUseCall[] = [];

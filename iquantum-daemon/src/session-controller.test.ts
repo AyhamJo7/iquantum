@@ -24,6 +24,7 @@ describe("SessionController", () => {
       id: "session-1",
       repoPath: "/repo",
       status: "idle",
+      mode: "piv",
       config: {
         testCommand: "bun test",
         requireApproval: false,
@@ -58,6 +59,16 @@ describe("SessionController", () => {
       requireApproval: true,
       autoApprove: true,
     });
+  });
+
+  it("stores chat mode when requested", async () => {
+    const harness = createHarness();
+
+    const session = await harness.controller.createSession("/repo", {
+      mode: "chat",
+    });
+
+    expect(session.mode).toBe("chat");
   });
 
   it("delegates plan actions to the live engine and reads the pending plan", async () => {
@@ -96,6 +107,11 @@ function createHarness() {
     },
     async delete(sessionId) {
       sessions.delete(sessionId);
+    },
+    async listByOrg(orgId) {
+      return [...sessions.values()].filter(
+        (session) => session.orgId === orgId,
+      );
     },
   };
   const pivStore: PIVStore & CurrentPlanStore = {

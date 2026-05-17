@@ -45,6 +45,12 @@ export interface SessionControllerOptions {
 export interface CreateSessionOptions {
   requireApproval?: boolean;
   autoApprove?: boolean;
+  mode?: "piv" | "chat";
+}
+
+export interface SessionContext {
+  userId: string;
+  orgId: string;
 }
 
 export interface CurrentPlanStore {
@@ -104,6 +110,7 @@ export class SessionController {
   async createSession(
     repoPath: string,
     options: CreateSessionOptions = {},
+    context?: SessionContext,
   ): Promise<Session> {
     const testCommand = (await this.#loadTestCommand(repoPath)) ?? "true";
 
@@ -121,6 +128,9 @@ export class SessionController {
         requireApproval: options.requireApproval ?? false,
         autoApprove: options.autoApprove ?? false,
       },
+      mode: options.mode ?? "piv",
+      userId: context?.userId ?? null,
+      orgId: context?.orgId ?? null,
       createdAt,
       updatedAt: createdAt,
     };
@@ -156,14 +166,18 @@ export class SessionController {
     return session;
   }
 
-  async getSession(sessionId: string): Promise<Session> {
-    const session = await this.#sessionStore.get(sessionId);
+  async getSession(sessionId: string, orgId?: string): Promise<Session> {
+    const session = await this.#sessionStore.get(sessionId, orgId);
 
     if (!session) {
       throw new SessionNotFoundError(sessionId);
     }
 
     return session;
+  }
+
+  async listSessions(orgId: string): Promise<Session[]> {
+    return this.#sessionStore.listByOrg(orgId);
   }
 
   async destroySession(sessionId: string): Promise<void> {
