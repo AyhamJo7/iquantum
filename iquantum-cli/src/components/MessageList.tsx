@@ -121,7 +121,7 @@ const UserMessage = memo(function UserMessage({ text }: { text: string }) {
   const content = `  > ${text}  `;
   const padded = content.length < cols ? content.padEnd(cols) : content;
   return (
-    <Text backgroundColor="green" color="black" bold>
+    <Text backgroundColor="#3a3a3a" color="white" bold>
       {padded}
     </Text>
   );
