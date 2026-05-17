@@ -4,7 +4,6 @@ import { useEffect, useMemo, useReducer, useRef } from "react";
 import type { DaemonClient } from "../client";
 import type { CommandRegistry } from "../commands/registry";
 import { ErrorCard } from "../components/ErrorCard";
-import { Header } from "../components/Header";
 import { PermissionRequest } from "../components/PermissionRequest";
 import { PIVPhaseStrip } from "../components/PIVPhaseStrip";
 import { PromptInput } from "../components/PromptInput";
@@ -118,11 +117,6 @@ export function REPL({
 
   return (
     <Box flexDirection="column">
-      <Header
-        version={version}
-        modelName={modelName}
-        repoPath={session.repoPath}
-      />
       <VirtualMessageList
         items={state.messages}
         streamingText={state.streamingText}
