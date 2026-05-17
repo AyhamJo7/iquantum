@@ -253,6 +253,9 @@ function fakeSession(sessionId = "session-1"): Session {
     containerId: "container-1",
     volumeId: "volume-1",
     config: {},
+    mode: "piv",
+    userId: null,
+    orgId: null,
     createdAt: fixedNow,
     updatedAt: fixedNow,
   };

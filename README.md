@@ -17,6 +17,9 @@
   <a href="https://bun.sh">
     <img src="https://img.shields.io/badge/Bun-%E2%89%A51.3-fbf0df?logo=bun&logoColor=black" alt="Bun ≥1.3" />
   </a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=iquantum.iquantum">
+    <img src="https://img.shields.io/visual-studio-marketplace/v/iquantum.iquantum?label=VS%20Code%20Marketplace" alt="VS Code Marketplace" />
+  </a>
   <img src="https://img.shields.io/badge/Docker-required-2496ED?logo=docker&logoColor=white" alt="Docker" />
   <a href="https://github.com/AyhamJo7/iquantum/pulls">
     <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" />
@@ -184,6 +187,7 @@ Type any of these inside the `iq` REPL:
 | `/clear` | Clear the visible transcript (session history is kept in the daemon) |
 | `/mcp` | List connected MCP tools and their current status |
 | `/restore [hash]` | Roll the sandbox back to a previous Git checkpoint |
+| `/task <prompt>` | Start a PIV task in task mode |
 | `/quit` | Exit the REPL — the daemon and sandbox stay running for resume |
 
 ### Keyboard shortcuts
@@ -196,6 +200,18 @@ Type any of these inside the `iq` REPL:
 | `Ctrl-C` twice | Exit `iq` immediately |
 
 ---
+
+## Chat mode
+
+For exploration without a plan/implement/validate loop, use:
+
+```bash
+iq chat
+```
+
+Chat mode keeps the same daemon-backed history and MCP tooling, but hides PIV-only UI and does not create commits.
+
+The VS Code extension is available from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=iquantum.iquantum) for visual plan review and side-by-side diff approval inside the editor.
 
 ## Non-interactive mode
 
@@ -251,6 +267,7 @@ Settings are saved in `~/.iquantum/config.json`. You can also set any of these a
 | `IQUANTUM_EDITOR_MODEL` | — | `claude-haiku-4-5-20251001` | The fast model used to write code changes |
 | `IQUANTUM_SANDBOX_IMAGE` | — | `ghcr.io/ayhamjo7/iquantum-sandbox:latest` | The Docker image used for the sandbox |
 | `IQUANTUM_SOCKET` | — | `~/.iquantum/daemon.sock` | Unix socket path for CLI ↔ daemon communication |
+| `IQUANTUM_TCP_PORT` | — | `51820` | Localhost TCP port used by the VS Code extension |
 | `MAX_RETRIES` | — | `3` | How many times the agent retries before giving up |
 | `IQUANTUM_EXEC_TIMEOUT_MS` | — | `120000` | How long (ms) a sandbox command can run before being killed |
 | `IQUANTUM_MCP_SERVERS` | — | `[]` | External tools to expose to the agent via MCP (JSON array) |
@@ -425,10 +442,11 @@ bun run typecheck        # TypeScript type check across all packages
 - [x] Configurable sandbox exec timeout
 - [x] First-run setup wizard
 - [x] `/restore <hash>` — roll back to any prior Git checkpoint from the REPL
+- [x] `iq chat` — conversational mode without the PIV loop
 - [x] OpenAI-compatible provider routing — bring your own model (DeepSeek, Ollama, Together, …)
 - [x] Polished terminal UI — PIV phase strip, live spinner, commit card, diff line numbers
 - [ ] Multi-repo context spanning more than one repository
-- [ ] VS Code extension — visual diff approval and side-by-side plan review
+- [x] VS Code extension — visual diff approval and side-by-side plan review
 - [ ] Cloud sandbox tier — hosted execution, zero local Docker setup
 
 ---

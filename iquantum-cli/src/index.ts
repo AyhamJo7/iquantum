@@ -8,6 +8,7 @@ import { render } from "ink";
 import { createElement } from "react";
 import { renderAndRun } from "./app";
 import { HttpDaemonClient } from "./client";
+import { runChat } from "./commands/chat";
 import { configGet, configList, configSet } from "./commands/config";
 import { daemonStatus, startDaemon, stopDaemon } from "./commands/daemon";
 import { InitWizard } from "./commands/init";
@@ -62,6 +63,13 @@ const program = new Command()
     await renderAndRun({
       version: VERSION,
     });
+  });
+
+program
+  .command("chat")
+  .description("Open a conversational session (no plan/implement/validate)")
+  .action(async () => {
+    await runChat(process.cwd());
   });
 
 program

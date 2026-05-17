@@ -37,6 +37,14 @@ export interface ExecResult {
   exitCode: Promise<number>;
 }
 
+export interface SandboxRuntime {
+  start(sessionId: string): Promise<{ containerId: string; volumeId: string }>;
+  exec(sessionId: string, command: string): Promise<ExecResult>;
+  stop(sessionId: string): Promise<void>;
+  isRunning(sessionId: string): Promise<boolean>;
+  volumePath(sessionId: string): string;
+}
+
 export class SandboxExecTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`Sandbox exec timed out after ${timeoutMs}ms`);
@@ -44,7 +52,7 @@ export class SandboxExecTimeoutError extends Error {
   }
 }
 
-export class SandboxManager {
+export class SandboxManager implements SandboxRuntime {
   readonly #docker: Docker;
   readonly #image: string;
   readonly #seedImage: string;
@@ -128,6 +136,30 @@ export class SandboxManager {
 
     this.#sandboxes.set(sessionId, info);
     return info;
+  }
+
+  async start(
+    sessionId: string,
+  ): Promise<{ containerId: string; volumeId: string }> {
+    const info = await this.resumeSandbox(sessionId);
+    return { containerId: info.containerName, volumeId: info.volumeName };
+  }
+
+  async stop(sessionId: string): Promise<void> {
+    const info = await this.#getSandboxInfo(sessionId);
+    await this.#docker.getContainer(info.containerName).stop();
+  }
+
+  async isRunning(sessionId: string): Promise<boolean> {
+    const info = await this.#getSandboxInfo(sessionId);
+    const inspection = await this.#docker
+      .getContainer(info.containerName)
+      .inspect();
+    return Boolean(inspection.State.Running);
+  }
+
+  volumePath(_sessionId: string): string {
+    return workspacePath;
   }
 
   async resumeSandbox(sessionId: string): Promise<SandboxInfo> {

@@ -1,5 +1,5 @@
+import type { REPLAction } from "@iquantum/ui-core";
 import { describe, expect, it, vi } from "vitest";
-import type { REPLAction } from "../screens/repl-state";
 import type { CommandContext } from "./registry";
 import { makeCommandRegistry } from "./slash-commands";
 

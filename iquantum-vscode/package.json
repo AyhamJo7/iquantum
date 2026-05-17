@@ -1,0 +1,108 @@
+{
+  "name": "iquantum",
+  "displayName": "iquantum",
+  "description": "AI coding agent in your editor",
+  "version": "2.0.0",
+  "publisher": "iquantum",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "workspaceContains:.iquantum/config.json"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "iquantum.openChat",
+        "title": "iquantum: Open Chat"
+      },
+      {
+        "command": "iquantum.showPlan",
+        "title": "iquantum: Show Plan"
+      },
+      {
+        "command": "iquantum.approvePlan",
+        "title": "iquantum: Approve Plan"
+      },
+      {
+        "command": "iquantum.rejectPlan",
+        "title": "iquantum: Reject Plan"
+      },
+      {
+        "command": "iquantum.applyDiff",
+        "title": "iquantum: Apply Diff"
+      },
+      {
+        "command": "iquantum.rejectDiff",
+        "title": "iquantum: Reject Diff"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "iquantum",
+          "title": "iquantum",
+          "icon": "$(brain)"
+        }
+      ]
+    },
+    "views": {
+      "iquantum": [
+        {
+          "type": "webview",
+          "id": "iquantum.chat",
+          "name": "Chat"
+        },
+        {
+          "id": "iquantum.plan",
+          "name": "Plan"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "iquantum.openChat",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i"
+      }
+    ],
+    "configuration": {
+      "title": "iquantum",
+      "properties": {
+        "iquantum.tcpPort": {
+          "type": "number",
+          "default": 51820
+        },
+        "iquantum.autoStartDaemon": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "bun build src/extension.ts --outdir dist --target node --external vscode && bun build webview/index.tsx --outdir dist/webview --target browser",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "dependencies": {
+    "@iquantum/types": "workspace:*",
+    "@iquantum/ui-core": "workspace:*",
+    "diff": "^9.0.0",
+    "marked": "^18.0.3",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@types/diff": "^8.0.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/vscode": "^1.109.0",
+    "@vscode/vsce": "^3.7.1"
+  }
+}

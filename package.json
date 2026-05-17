@@ -6,7 +6,8 @@
   "workspaces": [
     "packages/*",
     "iquantum-daemon",
-    "iquantum-cli"
+    "iquantum-cli",
+    "iquantum-vscode"
   ],
   "scripts": {
     "build": "tsc -b",

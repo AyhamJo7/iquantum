@@ -1,0 +1,23 @@
+replicaCount: 1
+image:
+  repository: ghcr.io/ayhamjo7/iquantum-daemon
+  tag: latest
+ingress:
+  host: iquantum.example.com
+efs:
+  claimName: ""
+  mountPath: /mnt/iquantum
+env:
+  IQUANTUM_CLOUD: "true"
+  IQUANTUM_TCP_PORT: "51820"
+  JWT_SECRET: ""
+  STRIPE_SECRET_KEY: ""
+  STRIPE_WEBHOOK_SECRET: ""
+  DATABASE_URL: ""
+  REDIS_URL: ""
+  AWS_REGION: ""
+  AWS_ECS_CLUSTER: ""
+  AWS_EFS_FILE_SYSTEM_ID: ""
+  AWS_SUBNET_IDS: ""
+  AWS_SECURITY_GROUP_IDS: ""
+  AWS_ASSIGN_PUBLIC_IP: "false"

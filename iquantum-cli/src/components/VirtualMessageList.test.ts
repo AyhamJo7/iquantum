@@ -1,5 +1,5 @@
+import type { TranscriptItem } from "@iquantum/ui-core";
 import { describe, expect, it } from "vitest";
-import type { TranscriptItem } from "../screens/repl-state";
 import { visibleTranscriptWindow } from "./virtual-transcript";
 
 describe("visibleTranscriptWindow", () => {

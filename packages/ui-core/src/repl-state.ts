@@ -1,5 +1,4 @@
 import type { Phase, ServerStreamFrame } from "@iquantum/protocol";
-import { countDiffChanges } from "../components/diff-parser";
 
 export type TranscriptItem =
   | {
@@ -350,4 +349,20 @@ function isPIVPhase(phase: Phase): phase is PIVPhase {
 
 function transcriptId(nextId: number): string {
   return `transcript-${nextId}`;
+}
+
+function countDiffChanges(patch: string): {
+  addCount: number;
+  delCount: number;
+} {
+  let addCount = 0;
+  let delCount = 0;
+
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) addCount += 1;
+    if (line.startsWith("-")) delCount += 1;
+  }
+
+  return { addCount, delCount };
 }

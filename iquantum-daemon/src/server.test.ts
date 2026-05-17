@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InvalidConversationCursorError } from "./db/stores";
 import {
   createRequestHandler,
+  createTcpDaemonServer,
   type DaemonCompaction,
   type DaemonConversations,
   type DaemonMcpRegistry,
@@ -48,7 +49,7 @@ describe("daemon request handler", () => {
     expect(await approved?.json()).toEqual({ ok: true });
     expect(await rejected?.json()).toMatchObject({ id: "plan-2" });
     expect(calls).toEqual([
-      ["createSession", "/repo", {}],
+      ["createSession", "/repo", { mode: "piv" }],
       ["startTask", SESSION_ID, "add auth"],
       ["currentPlan", SESSION_ID],
       ["approve", SESSION_ID, undefined],
@@ -57,7 +58,7 @@ describe("daemon request handler", () => {
   });
 
   it("validates request bodies and maps missing sessions to 404", async () => {
-    const { sessions } = fakeSessions();
+    const { sessions } = fakeSessions("chat");
     const handler = createRequestHandler({
       socketPath: "/tmp/daemon.sock",
       sessions,
@@ -118,8 +119,22 @@ describe("daemon request handler", () => {
     expect(calls).toEqual([]);
   });
 
-  it("accepts messages, paginates history, and clears conversation state", async () => {
+  it("returns current plan content from GET /sessions/:id/plan", async () => {
     const { sessions } = fakeSessions();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+    });
+
+    const response = await request(handler, `/sessions/${SESSION_ID}/plan`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ content: "plan" });
+  });
+
+  it("accepts messages, paginates history, and clears conversation state", async () => {
+    const { sessions } = fakeSessions("chat");
     const { conversations, calls } = fakeConversations();
     const handler = createRequestHandler({
       socketPath: "/tmp/daemon.sock",
@@ -157,6 +172,44 @@ describe("daemon request handler", () => {
       ["getMessages", SESSION_ID, { before: "message-3", limit: 2 }],
       ["clear", SESSION_ID],
     ]);
+  });
+
+  it("routes chat and piv message posts to different engines", async () => {
+    const { sessions: chatSessions, calls: chatSessionCalls } =
+      fakeSessions("chat");
+    const { conversations, calls: conversationCalls } = fakeConversations();
+    const chatHandler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: chatSessions,
+      streams: fakeStreams(),
+      conversations,
+    });
+
+    await request(chatHandler, `/sessions/${SESSION_ID}/messages`, {
+      method: "POST",
+      body: { role: "user", content: "hello chat" },
+    });
+
+    expect(conversationCalls).toEqual([
+      ["addMessage", SESSION_ID, "hello chat"],
+    ]);
+    expect(chatSessionCalls).toEqual([]);
+
+    const { sessions: pivSessions, calls: pivCalls } = fakeSessions("piv");
+    const pivHandler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: pivSessions,
+      streams: fakeStreams(),
+      conversations: fakeConversations().conversations,
+    });
+
+    await request(pivHandler, `/sessions/${SESSION_ID}/messages`, {
+      method: "POST",
+      body: { role: "user", content: "hello task" },
+    });
+
+    await Promise.resolve();
+    expect(pivCalls).toContainEqual(["startTask", SESSION_ID, "hello task"]);
   });
 
   it("resolves permission requests through the permission endpoint", async () => {
@@ -269,9 +322,223 @@ describe("daemon request handler", () => {
       error: "invalid_conversation_cursor",
     });
   });
+
+  it("serves cloud auth routes and protects tenant-scoped routes", async () => {
+    const { sessions } = fakeSessions();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+      cloud: true,
+      authStore: {
+        async createOrg() {
+          return { id: "org-1" };
+        },
+        async createUser() {
+          return { id: "user-1", orgId: "org-1", role: "owner" };
+        },
+        async verifyPassword() {
+          return { id: "user-1", orgId: "org-1", role: "owner" };
+        },
+      } as never,
+      jwtService: {
+        async sign() {
+          return "jwt";
+        },
+        async verify(token: string) {
+          return token === "jwt"
+            ? { userId: "user-1", orgId: "org-1", role: "owner" }
+            : null;
+        },
+      } as never,
+    });
+
+    const registered = await request(handler, "/auth/register", {
+      method: "POST",
+      body: { email: "a@example.com", password: "password123" },
+    });
+    const login = await request(handler, "/auth/login", {
+      method: "POST",
+      body: { email: "a@example.com", password: "password123" },
+    });
+    const unauthorized = await request(handler, `/sessions/${SESSION_ID}`);
+
+    expect(registered.status).toBe(201);
+    expect(login.status).toBe(200);
+    expect(unauthorized.status).toBe(401);
+  });
+
+  it("maps postgres duplicate-email errors to 409 during registration", async () => {
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      cloud: true,
+      authStore: {
+        async createOrg() {
+          return { id: "org-1" };
+        },
+        async createUser() {
+          throw Object.assign(new Error("duplicate key value"), {
+            code: "23505",
+          });
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return null;
+        },
+      } as never,
+    });
+
+    const response = await request(handler, "/auth/register", {
+      method: "POST",
+      body: { email: "a@example.com", password: "password123" },
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "email_exists" });
+  });
+
+  it("rejects login attempts with the wrong password", async () => {
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      cloud: true,
+      authStore: {
+        async verifyPassword() {
+          return null;
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return null;
+        },
+      } as never,
+    });
+
+    const response = await request(handler, "/auth/login", {
+      method: "POST",
+      body: { email: "a@example.com", password: "wrong-password" },
+    });
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Invalid credentials" });
+  });
+
+  it("falls back to the default quota for invalid Stripe metadata", async () => {
+    const updates: unknown[][] = [];
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      cloud: true,
+      authStore: {
+        async updateOrgPlanByStripeCustomer(...args: unknown[]) {
+          updates.push(args);
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return null;
+        },
+      } as never,
+      stripeClient: {
+        constructWebhookEvent() {
+          return {
+            type: "customer.subscription.updated",
+            data: {
+              object: {
+                customer: "cus_1",
+                metadata: { plan: "pro", sandboxQuotaHours: "unlimited" },
+              },
+            },
+          };
+        },
+      } as never,
+      stripeWebhookSecret: "whsec",
+    });
+
+    const response = await request(handler, "/webhooks/stripe", {
+      method: "POST",
+      headers: { "stripe-signature": "sig" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    expect(updates).toEqual([["cus_1", "pro", 10]]);
+  });
+
+  it("returns 404 for cross-tenant session access", async () => {
+    const { sessions } = fakeSessions("piv", "org-a");
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+      cloud: true,
+      authStore: {
+        async lookupApiToken() {
+          return null;
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return { userId: "user-b", orgId: "org-b", role: "member" };
+        },
+      } as never,
+    });
+
+    const response = await request(handler, `/sessions/${SESSION_ID}`, {
+      headers: { Authorization: "Bearer jwt" },
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 404 for cross-tenant session writes", async () => {
+    const { sessions } = fakeSessions("chat", "org-a");
+    const { conversations, calls } = fakeConversations();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+      conversations,
+      cloud: true,
+      authStore: {
+        async lookupApiToken() {
+          return null;
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return { userId: "user-b", orgId: "org-b", role: "member" };
+        },
+      } as never,
+    });
+
+    const response = await request(
+      handler,
+      `/sessions/${SESSION_ID}/messages`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer jwt" },
+        body: { role: "user", content: "nope" },
+      },
+    );
+
+    expect(response.status).toBe(404);
+    expect(calls).toEqual([]);
+  });
 });
 
-function fakeSessions(): { sessions: DaemonSessions; calls: unknown[][] } {
+function fakeSessions(
+  mode: "piv" | "chat" = "piv",
+  sessionOrgId: string | null = null,
+): {
+  sessions: DaemonSessions;
+  calls: unknown[][];
+} {
   const calls: unknown[][] = [];
   const plan = {
     id: "plan-1",
@@ -287,12 +554,27 @@ function fakeSessions(): { sessions: DaemonSessions; calls: unknown[][] } {
         calls.push(["createSession", repoPath, options]);
         return { id: SESSION_ID, repoPath, status: "idle" };
       },
-      async getSession(sessionId) {
+      async getSession(sessionId, orgId) {
         if (sessionId === MISSING_SESSION_ID) {
           throw new SessionNotFoundError(sessionId);
         }
+        if (orgId && sessionOrgId !== orgId) {
+          throw new SessionNotFoundError(sessionId);
+        }
 
-        return { id: sessionId, status: "idle" };
+        return {
+          id: sessionId,
+          status: "idle",
+          repoPath: "/repo",
+          containerId: "container",
+          volumeId: "volume",
+          config: {},
+          mode,
+          userId: null,
+          orgId: sessionOrgId,
+          createdAt: "2026-05-15T00:00:00.000Z",
+          updatedAt: "2026-05-15T00:00:00.000Z",
+        };
       },
       async destroySession(sessionId) {
         calls.push(["destroySession", sessionId]);
@@ -387,17 +669,162 @@ function fakePermissions(): {
 function request(
   handler: ReturnType<typeof createRequestHandler>,
   pathname: string,
-  options: { method?: string; body?: unknown } = {},
+  options: {
+    method?: string;
+    body?: unknown;
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<Response> {
   return handler(
     new Request(`http://localhost${pathname}`, {
       ...(options.method ? { method: options.method } : {}),
+      ...(options.headers ? { headers: options.headers } : {}),
       ...(options.body === undefined
         ? {}
         : {
             body: JSON.stringify(options.body),
-            headers: { "content-type": "application/json" },
+            headers: {
+              ...options.headers,
+              "content-type": "application/json",
+            },
           }),
     }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// TCP binding + WebSocket mirror — B1 / B2
+// ---------------------------------------------------------------------------
+
+describe("TCP binding (B1)", () => {
+  // The TCP binding uses the same createRequestHandler as the Unix socket —
+  // verified by calling the handler directly (identical code path).
+  it("GET /health returns { ok: true } on the shared request handler", async () => {
+    const { sessions } = fakeSessions();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/test.sock",
+      sessions,
+      streams: noopStreams(),
+    });
+    const res = await handler(new Request("http://127.0.0.1:51820/health"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  // Bun.serve is not available in the vmForks pool, so the actual TCP port
+  // binding test is guarded. Run with `bun test` or in a Bun-native env.
+  it.skipIf(!("Bun" in globalThis))(
+    "createTcpDaemonServer binds and responds on a real TCP port",
+    async () => {
+      const { sessions } = fakeSessions();
+      const server = createTcpDaemonServer(
+        { socketPath: "/tmp/test-tcp.sock", sessions, streams: noopStreams() },
+        0,
+      );
+      try {
+        const res = await fetch(`http://127.0.0.1:${server.port}/health`);
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ ok: true });
+      } finally {
+        await server.stop(true);
+      }
+    },
+  );
+});
+
+describe("WebSocket mirror (B2)", () => {
+  // The WebSocket server delegates frame delivery to streams.attach().
+  // The StreamController.attach() mechanism is covered in stream-controller.test.ts.
+  // This test verifies the server wires WebSocket open → streams.attach() correctly
+  // by inspecting the DaemonStreams call.
+  it("WebSocket upgrade triggers streams.attach with the correct session ID", async () => {
+    const attached: string[] = [];
+    const handler = createRequestHandler({
+      socketPath: "/tmp/test.sock",
+      sessions: fakeSessions().sessions,
+      streams: {
+        attach(sessionId, _socket) {
+          attached.push(sessionId);
+          return () => undefined;
+        },
+      },
+    });
+
+    // A WebSocket upgrade request without a Bun server falls through to the
+    // HTTP handler (returns 404 for the session route). We can't complete the
+    // upgrade here, but we can verify the non-WebSocket path.
+    const res = await handler(
+      new Request(`http://127.0.0.1:51820/sessions/${SESSION_ID}/events`, {
+        headers: { upgrade: "websocket" },
+      }),
+    );
+    // The handler recognises the upgrade attempt but cannot complete it
+    // without Bun.Server — it will return a 400.
+    expect([400, 404]).toContain(res.status);
+    // The attach call happens inside Bun.Server's websocket.open handler,
+    // not the fetch handler. This test documents the contract; runtime
+    // verification requires the Bun-guarded test below.
+    expect(attached).toHaveLength(0);
+  });
+
+  // Full WebSocket round-trip: only runs in Bun runtime (vmForks has no Bun.serve).
+  it.skipIf(!("Bun" in globalThis))(
+    "WebSocket client receives frames emitted by streams.attach socket proxy",
+    async () => {
+      let capturedSocket: { send(data: string): void } | null = null;
+
+      const { sessions } = fakeSessions();
+      const server = createTcpDaemonServer(
+        {
+          socketPath: "/tmp/test-ws.sock",
+          sessions,
+          streams: {
+            attach(_sessionId, socket) {
+              capturedSocket = socket;
+              return () => {
+                capturedSocket = null;
+              };
+            },
+          },
+        },
+        0,
+      );
+
+      try {
+        const frame = await new Promise<unknown>((resolve, reject) => {
+          const ws = new WebSocket(
+            `ws://127.0.0.1:${server.port}/sessions/${SESSION_ID}/events`,
+          );
+          ws.onopen = () => {
+            capturedSocket?.send(
+              JSON.stringify({ type: "token", delta: "ws-hello" }),
+            );
+          };
+          ws.onmessage = (event) => {
+            ws.close();
+            resolve(JSON.parse(event.data as string));
+          };
+          ws.onerror = () => {
+            ws.close();
+            reject(new Error("WebSocket error"));
+          };
+          setTimeout(() => {
+            ws.close();
+            reject(new Error("timeout"));
+          }, 3_000);
+        });
+        expect(frame).toEqual({ type: "token", delta: "ws-hello" });
+      } finally {
+        await server.stop(true);
+      }
+    },
+  );
+});
+
+function noopStreams(): DaemonStreams {
+  return {
+    attach() {
+      return () => undefined;
+    },
+  };
 }

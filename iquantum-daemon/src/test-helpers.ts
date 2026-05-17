@@ -14,6 +14,7 @@ export class InMemoryConversationStore implements ConversationStore {
   async listPage(
     sessionId: string,
     options: { before?: string; limit: number },
+    _orgId?: string,
   ) {
     const sessionMessages = this.messages.filter(
       (message) => message.sessionId === sessionId,
@@ -31,11 +32,14 @@ export class InMemoryConversationStore implements ConversationStore {
     };
   }
 
-  async listAll(sessionId: string): Promise<ConversationMessage[]> {
+  async listAll(
+    sessionId: string,
+    _orgId?: string,
+  ): Promise<ConversationMessage[]> {
     return this.messages.filter((message) => message.sessionId === sessionId);
   }
 
-  async deleteAll(sessionId: string): Promise<void> {
+  async deleteAll(sessionId: string, _orgId?: string): Promise<void> {
     for (let index = this.messages.length - 1; index >= 0; index -= 1) {
       if (this.messages[index]?.sessionId === sessionId) {
         this.messages.splice(index, 1);

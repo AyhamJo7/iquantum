@@ -1,4 +1,3 @@
-import { Database } from "bun:sqlite";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { loadConfig } from "@iquantum/config";
@@ -7,24 +6,30 @@ import {
   LLMRouter,
   OpenAICompatibleProvider,
 } from "@iquantum/llm";
-import { SandboxManager } from "@iquantum/sandbox";
+import { SandboxManager as LocalSandboxManager } from "@iquantum/sandbox";
 import type { LLMProvider, McpTool } from "@iquantum/types";
+import { AuthStore } from "./auth/auth-store";
+import { JwtService } from "./auth/jwt-service";
+import { BillingTracker } from "./billing-tracker";
 import { CompactionService } from "./compaction-service";
 import { ConversationController } from "./conversation-controller";
-import { initializeSchema } from "./db/schema";
+import { createDbAdapter, PostgresAdapter, SqliteAdapter } from "./db/adapter";
+import { initializePostgresSchema, initializeSchema } from "./db/schema";
 import {
-  SqliteConversationStore,
-  SqliteGitCheckpointStore,
-  SqlitePIVStore,
-  SqliteSessionStore,
+  AdapterConversationStore,
+  AdapterGitCheckpointStore,
+  AdapterPIVStore,
+  AdapterSessionStore,
 } from "./db/stores";
 import { logger } from "./logger";
 import { McpClient, McpRegistry } from "./mcp-client";
 import { PermissionGate } from "./permission-gate";
+import { createSandboxManager } from "./sandbox-factory";
 import type { DaemonMcpRegistry } from "./server";
-import { createDaemonServer } from "./server";
+import { createDaemonServer, createTcpDaemonServer } from "./server";
 import { SessionController } from "./session-controller";
 import { StreamController } from "./stream-controller";
+import { StripeClient } from "./stripe-client";
 
 const config = loadConfig();
 const stateDir = dirname(config.socketPath);
@@ -34,20 +39,33 @@ const dbPath = join(stateDir, "iquantum.sqlite");
 await mkdir(stateDir, { recursive: true });
 await rm(config.socketPath, { force: true });
 
-const db = new Database(dbPath);
-db.exec("PRAGMA journal_mode = WAL;");
-db.exec("PRAGMA foreign_keys = ON;");
-initializeSchema(db);
-
-const sessionStore = new SqliteSessionStore(db);
-const pivStore = new SqlitePIVStore(db);
-const conversationStore = new SqliteConversationStore(db);
-const checkpointStore = new SqliteGitCheckpointStore(db);
-const sandbox = new SandboxManager({
-  execTimeoutMs: config.execTimeoutMs,
-  image: config.sandboxImage,
-});
-await sandbox.ensureImageReady((msg) => logger.info({ msg }));
+const dbAdapter = createDbAdapter(config.databaseUrl ?? `file:${dbPath}`);
+if (dbAdapter instanceof SqliteAdapter) {
+  dbAdapter.db.exec("PRAGMA journal_mode = WAL;");
+  dbAdapter.db.exec("PRAGMA foreign_keys = ON;");
+  initializeSchema(dbAdapter.db);
+} else if (dbAdapter instanceof PostgresAdapter) {
+  await initializePostgresSchema(dbAdapter);
+}
+const sessionStore = new AdapterSessionStore(dbAdapter);
+const pivStore = new AdapterPIVStore(dbAdapter);
+const conversationStore = new AdapterConversationStore(dbAdapter);
+const checkpointStore = new AdapterGitCheckpointStore(dbAdapter);
+const authStore = config.cloud ? new AuthStore(dbAdapter) : undefined;
+const jwtService =
+  config.cloud && config.jwtSecret
+    ? new JwtService(config.jwtSecret)
+    : undefined;
+const stripeClient = config.stripeSecretKey
+  ? new StripeClient(config.stripeSecretKey)
+  : undefined;
+const billingTracker = config.cloud
+  ? new BillingTracker(dbAdapter, stripeClient ?? null)
+  : undefined;
+const sandbox = createSandboxManager(config);
+if (sandbox instanceof LocalSandboxManager) {
+  await sandbox.ensureImageReady((msg) => logger.info({ msg }));
+}
 const provider: LLMProvider =
   config.provider === "openai"
     ? new OpenAICompatibleProvider({
@@ -142,18 +160,22 @@ async function healthCheck(): Promise<{ db: boolean; docker: boolean }> {
   let dockerOk = false;
 
   try {
-    db.query("SELECT 1").get();
+    await dbAdapter.first("SELECT 1 AS ok");
     dbOk = true;
   } catch {}
 
-  try {
-    const proc = Bun.spawn(["docker", "info"], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const exitCode = await proc.exited;
-    dockerOk = exitCode === 0;
-  } catch {}
+  if (config.cloud) {
+    dockerOk = true;
+  } else {
+    try {
+      const proc = Bun.spawn(["docker", "info"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const exitCode = await proc.exited;
+      dockerOk = exitCode === 0;
+    } catch {}
+  }
 
   return { db: dbOk, docker: dockerOk };
 }
@@ -167,7 +189,36 @@ const server = createDaemonServer({
   permissions,
   ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
   healthCheck,
+  cloud: config.cloud,
+  ...(authStore ? { authStore } : {}),
+  ...(jwtService ? { jwtService } : {}),
+  ...(stripeClient ? { stripeClient } : {}),
+  ...(billingTracker ? { billingTracker } : {}),
+  ...(config.stripeWebhookSecret
+    ? { stripeWebhookSecret: config.stripeWebhookSecret }
+    : {}),
 });
+const tcpServer = createTcpDaemonServer(
+  {
+    socketPath: config.socketPath,
+    sessions,
+    streams,
+    conversations,
+    compaction,
+    permissions,
+    ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
+    healthCheck,
+    cloud: config.cloud,
+    ...(authStore ? { authStore } : {}),
+    ...(jwtService ? { jwtService } : {}),
+    ...(stripeClient ? { stripeClient } : {}),
+    ...(billingTracker ? { billingTracker } : {}),
+    ...(config.stripeWebhookSecret
+      ? { stripeWebhookSecret: config.stripeWebhookSecret }
+      : {}),
+  },
+  config.tcpPort,
+);
 
 await writeFile(pidPath, String(process.pid), "utf8");
 
@@ -176,6 +227,7 @@ logger.info({
   socket: config.socketPath,
   pid: process.pid,
 });
+logger.info({ msg: "tcp", port: config.tcpPort });
 
 let shuttingDown = false;
 
@@ -190,8 +242,11 @@ async function shutdown(reason: string, exitCode = 0): Promise<void> {
   streams.closeAll();
   await mcpRegistry?.closeAll();
   await server.stop(true);
-  db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
-  db.close();
+  await tcpServer.stop(true);
+  if (dbAdapter instanceof SqliteAdapter) {
+    dbAdapter.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+  }
+  await dbAdapter.close();
   await rm(config.socketPath, { force: true });
   await rm(pidPath, { force: true });
   process.exit(exitCode);

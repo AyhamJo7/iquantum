@@ -85,6 +85,7 @@ const commandDefs: LocalCommand[] = [
   {
     name: "plan",
     description: "Show the current plan",
+    chatUnavailable: true,
     async run(_, ctx) {
       try {
         const plan = await ctx.client.currentPlan(ctx.sessionId);
@@ -103,6 +104,7 @@ const commandDefs: LocalCommand[] = [
   {
     name: "approve",
     description: "Approve the current plan",
+    chatUnavailable: true,
     async run(_, ctx) {
       try {
         await ctx.client.approve(ctx.sessionId);
@@ -118,6 +120,7 @@ const commandDefs: LocalCommand[] = [
   {
     name: "reject",
     description: "Reject the current plan with feedback (/reject <reason>)",
+    chatUnavailable: true,
     async run(args, ctx) {
       const feedback = args.trim();
 
@@ -133,6 +136,27 @@ const commandDefs: LocalCommand[] = [
         sysError(
           ctx,
           `Reject failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
+    name: "task",
+    description: "Start a PIV task in task mode (/task <prompt>)",
+    async run(args, ctx) {
+      const prompt = args.trim();
+
+      if (!prompt) {
+        sysError(ctx, "Usage: /task <prompt>");
+        return;
+      }
+
+      try {
+        await ctx.client.postMessage(ctx.sessionId, prompt);
+      } catch (e) {
+        sysError(
+          ctx,
+          `Task failed: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     },

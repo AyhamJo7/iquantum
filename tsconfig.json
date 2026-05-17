@@ -32,6 +32,9 @@
       "path": "./packages/context-window"
     },
     {
+      "path": "./packages/ui-core"
+    },
+    {
       "path": "./iquantum-daemon"
     },
     {

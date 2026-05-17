@@ -28,7 +28,8 @@
       "@iquantum/git": ["packages/git/src/index.ts"],
       "@iquantum/piv-engine": ["packages/piv-engine/src/index.ts"],
       "@iquantum/protocol": ["packages/protocol/src/index.ts"],
-      "@iquantum/context-window": ["packages/context-window/src/index.ts"]
+      "@iquantum/context-window": ["packages/context-window/src/index.ts"],
+      "@iquantum/ui-core": ["packages/ui-core/src/index.ts"]
     }
   }
 }

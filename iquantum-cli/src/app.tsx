@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { type IquantumConfig, loadConfig } from "@iquantum/config";
 import type { Session } from "@iquantum/types";
+import type { TranscriptItem } from "@iquantum/ui-core";
 import { Box, render, Text } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationEntry, DaemonClient } from "./client";
@@ -12,7 +13,6 @@ import { makeCommandRegistry } from "./commands/slash-commands";
 import { ErrorCard } from "./components/ErrorCard";
 import { Splash } from "./components/Splash";
 import { REPL } from "./screens/REPL";
-import type { TranscriptItem } from "./screens/repl-state";
 import {
   readLastSession as defaultReadLastSession,
   writeLastSession as defaultWriteLastSession,
@@ -36,6 +36,7 @@ export interface IQAppProps {
   sleep?: (delayMs: number) => Promise<void>;
   readLastSession?: (dir: string) => Promise<string | null>;
   writeLastSession?: (dir: string, id: string) => Promise<void>;
+  chatMode?: boolean;
 }
 
 export function IQApp({
@@ -52,6 +53,7 @@ export function IQApp({
   sleep,
   readLastSession = defaultReadLastSession,
   writeLastSession = defaultWriteLastSession,
+  chatMode = false,
 }: IQAppProps) {
   const persistDir = iquantumDir ?? join(homedir(), ".iquantum");
   const updateStatus = useMemo(
@@ -86,6 +88,9 @@ export function IQApp({
             const candidateSession = (await client.getSession(
               savedId,
             )) as Session;
+            if (candidateSession.mode !== (chatMode ? "chat" : "piv")) {
+              throw new Error("saved session mode differs");
+            }
             // Sessions persist in SQLite, but only sessions recreated in the
             // current daemon process are actually resumable.
             await client.listCheckpoints(savedId);
@@ -100,6 +105,7 @@ export function IQApp({
           resolvedSession = await client.createSession(repoPath, {
             requireApproval: true,
             autoApprove: false,
+            mode: chatMode ? "chat" : "piv",
           });
           await writeLastSession(persistDir, resolvedSession.id).catch(
             () => undefined,
@@ -143,6 +149,7 @@ export function IQApp({
     socketPath,
     startDaemonFn,
     writeLastSession,
+    chatMode,
   ]);
 
   if (error) {
@@ -178,6 +185,7 @@ export function IQApp({
             maxRetries={maxRetries}
             registry={registryRef.current}
             initialMessages={initialMessages}
+            chatMode={chatMode}
           />
         </>
       ) : null}
@@ -192,6 +200,7 @@ export interface StartupAppProps {
   loadConfigFn?: LoadConfigFn;
   clientFactory?: (socketPath: string) => DaemonClient;
   startDaemonFn?: (socketPath: string) => Promise<void>;
+  chatMode?: boolean;
 }
 
 export function StartupApp({
@@ -201,6 +210,7 @@ export function StartupApp({
   loadConfigFn = loadConfig,
   clientFactory = (socketPath) => new HttpDaemonClient(socketPath),
   startDaemonFn,
+  chatMode = false,
 }: StartupAppProps) {
   const persistDir = iquantumDir ?? join(homedir(), ".iquantum");
   const [config, setConfig] = useState<IquantumConfig | null>(() =>
@@ -248,6 +258,7 @@ export function StartupApp({
       version={version}
       repoPath={repoPath}
       iquantumDir={persistDir}
+      chatMode={chatMode}
       {...(startDaemonFn
         ? { startDaemonFn: () => startDaemonFn(config.socketPath) }
         : {})}
@@ -285,6 +296,7 @@ export interface RenderAndRunOptions {
   loadConfigFn?: LoadConfigFn;
   clientFactory?: (socketPath: string) => DaemonClient;
   startDaemonFn?: (socketPath: string) => Promise<void>;
+  chatMode?: boolean;
 }
 
 export async function renderAndRun(
@@ -302,6 +314,7 @@ export async function renderAndRun(
       {...(options.startDaemonFn
         ? { startDaemonFn: options.startDaemonFn }
         : {})}
+      {...(options.chatMode ? { chatMode: options.chatMode } : {})}
     />,
     { exitOnCtrlC: false },
   );
