@@ -1,6 +1,6 @@
 {
   "name": "@iquantum/cli",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "type": "module",
   "bin": {
     "iq": "./dist/bin.js"
