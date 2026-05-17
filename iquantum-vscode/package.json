@@ -3,7 +3,7 @@
   "displayName": "iquantum",
   "description": "AI coding agent in your editor",
   "version": "2.0.0",
-  "publisher": "iquantum",
+  "publisher": "iQuantum",
   "engines": {
     "vscode": "^1.85.0"
   },
