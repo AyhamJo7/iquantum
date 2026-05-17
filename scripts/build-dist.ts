@@ -66,28 +66,28 @@ for (const [source, fileName] of grammarAssets) {
 }
 console.log(`  copied ${grammarAssets.length} grammar wasm assets`);
 
-// 5b. Copy tiktoken WASM - bundled daemon.js references it at runtime by scanning
-// co-located files; bun build inlines the JS but leaves the binary as an external asset.
+// 5b. Copy tiktoken WASM (lite variant) - the bundler replaces __dirname with the
+// compile-time source path inside tiktoken/lite, so at runtime the daemon searches
+// node_modules/tiktoken/lite/tiktoken_bg.wasm relative to the ancestors of that path.
+// Copying the lite variant to dist lets the Dockerfile place it at the expected path.
 let tiktokenWasmSrc: string | undefined;
 for await (const p of new Bun.Glob(
-  "node_modules/.bun/**/tiktoken/tiktoken_bg.wasm",
+  "node_modules/.bun/**/tiktoken/lite/tiktoken_bg.wasm",
 ).scan({
   cwd: root,
   absolute: true,
   onlyFiles: true,
   dot: true,
 })) {
-  if (!p.includes("/lite/")) {
-    tiktokenWasmSrc = p;
-    break;
-  }
+  tiktokenWasmSrc = p;
+  break;
 }
 if (!tiktokenWasmSrc)
   throw new Error(
-    "tiktoken_bg.wasm not found in node_modules — run bun install first",
+    "tiktoken lite tiktoken_bg.wasm not found in node_modules — run bun install first",
   );
 await copyFile(tiktokenWasmSrc, join(distDir, "tiktoken_bg.wasm"));
-console.log("  copied tiktoken_bg.wasm");
+console.log("  copied tiktoken_bg.wasm (lite)");
 
 // 6. Bundle CLI bin
 const cliResult = await Bun.build({
