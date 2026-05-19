@@ -111,6 +111,33 @@ const envSchema = z
     AWS_ASSIGN_PUBLIC_IP: envBoolean,
     IQUANTUM_CORS_ORIGINS: optionalCsv,
     SENTRY_DSN: optionalUrl,
+    IQUANTUM_MEMORY_TOKENS: z.coerce.number().int().min(100).default(2000),
+    IQUANTUM_AUTO_MEMORY: envBoolean,
+    IQUANTUM_FILE_TOOLS: z.preprocess((value) => {
+      if (value === undefined || value === "") return true;
+      if (typeof value === "string")
+        return value.trim().toLowerCase() === "true";
+      return value;
+    }, z.boolean()),
+    IQUANTUM_FILE_TOOL_MAX_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1024)
+      .default(10_485_760),
+    IQUANTUM_WEB_TOOLS: envBoolean,
+    IQUANTUM_SEARCH_PROVIDER: z
+      .enum(["brave", "tavily", "none"])
+      .default("brave"),
+    BRAVE_API_KEY: optionalNonEmptyString,
+    TAVILY_API_KEY: optionalNonEmptyString,
+    IQUANTUM_HOOKS_DIR: z.string().min(1).default("~/.iquantum/hooks"),
+    IQUANTUM_HOOK_TIMEOUT_MS: z.coerce.number().int().min(100).default(5000),
+    IQUANTUM_SKILLS_DIR: z.string().min(1).default("~/.iquantum/skills"),
+    IQUANTUM_KEYBINDINGS_FILE: z
+      .string()
+      .min(1)
+      .default("~/.iquantum/keybindings.json"),
+    IQUANTUM_REVIEW_MODEL: optionalNonEmptyString,
   })
   .superRefine((value, context) => {
     if (value.IQUANTUM_PROVIDER === "openai" && !value.IQUANTUM_BASE_URL) {
@@ -150,6 +177,19 @@ export interface IquantumConfig {
   awsAssignPublicIp: boolean;
   corsOrigins: string[] | undefined;
   sentryDsn: string | undefined;
+  memoryTokens: number;
+  autoMemory: boolean;
+  fileTools: boolean;
+  fileToolMaxBytes: number;
+  webTools: boolean;
+  searchProvider: "brave" | "tavily" | "none";
+  braveApiKey: string | undefined;
+  tavilyApiKey: string | undefined;
+  hooksDir: string;
+  hookTimeoutMs: number;
+  skillsDir: string;
+  keybindingsFile: string;
+  reviewModel: string | undefined;
 }
 
 export interface LoadConfigOptions {
@@ -198,6 +238,19 @@ export function loadConfig(
     awsAssignPublicIp: parsed.AWS_ASSIGN_PUBLIC_IP,
     corsOrigins: parsed.IQUANTUM_CORS_ORIGINS,
     sentryDsn: parsed.SENTRY_DSN,
+    memoryTokens: parsed.IQUANTUM_MEMORY_TOKENS,
+    autoMemory: parsed.IQUANTUM_AUTO_MEMORY,
+    fileTools: parsed.IQUANTUM_FILE_TOOLS,
+    fileToolMaxBytes: parsed.IQUANTUM_FILE_TOOL_MAX_BYTES,
+    webTools: parsed.IQUANTUM_WEB_TOOLS,
+    searchProvider: parsed.IQUANTUM_SEARCH_PROVIDER,
+    braveApiKey: parsed.BRAVE_API_KEY,
+    tavilyApiKey: parsed.TAVILY_API_KEY,
+    hooksDir: expandHome(parsed.IQUANTUM_HOOKS_DIR),
+    hookTimeoutMs: parsed.IQUANTUM_HOOK_TIMEOUT_MS,
+    skillsDir: expandHome(parsed.IQUANTUM_SKILLS_DIR),
+    keybindingsFile: expandHome(parsed.IQUANTUM_KEYBINDINGS_FILE),
+    reviewModel: parsed.IQUANTUM_REVIEW_MODEL,
   };
 }
 

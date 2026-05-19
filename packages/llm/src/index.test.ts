@@ -205,6 +205,47 @@ describe("LLMRouter", () => {
     expect(provider.calls).toEqual([]);
   });
 
+  it("routes effort levels: fast→editor, normal→architect, thorough→architect by default", async () => {
+    const architect = new MockProvider("arch-token", 5);
+    const editor = new MockProvider("edit-token", 3);
+    const router = new LLMRouter({
+      architect: { provider: architect, model: "architect-model" },
+      editor: { provider: editor, model: "editor-model" },
+      maxInputTokens: 100,
+    });
+
+    const msg = [{ role: "user" as const, content: "test" }];
+    await collect(router.completeWithEffort("fast", msg, { maxTokens: 10 }));
+    await collect(router.completeWithEffort("normal", msg, { maxTokens: 10 }));
+    await collect(
+      router.completeWithEffort("thorough", msg, { maxTokens: 10 }),
+    );
+
+    expect(editor.calls).toEqual(["editor-model"]);
+    expect(architect.calls).toEqual(["architect-model", "architect-model"]);
+  });
+
+  it("routes thorough to a dedicated thorough model when configured", async () => {
+    const thorough = new MockProvider("thorough-token", 5);
+    const architect = new MockProvider("arch-token", 5);
+    const editor = new MockProvider("edit-token", 3);
+    const router = new LLMRouter({
+      architect: { provider: architect, model: "architect-model" },
+      editor: { provider: editor, model: "editor-model" },
+      thorough: { provider: thorough, model: "thorough-model" },
+      maxInputTokens: 100,
+    });
+
+    const msg = [{ role: "user" as const, content: "test" }];
+    const result = await collect(
+      router.completeWithEffort("thorough", msg, { maxTokens: 10 }),
+    );
+
+    expect(result).toBe("thorough-token");
+    expect(thorough.calls).toEqual(["thorough-model"]);
+    expect(architect.calls).toEqual([]);
+  });
+
   it("defaults to thinking support and allows providers to disable it", () => {
     const provider = new MockProvider("unused", 1);
     const defaultRouter = new LLMRouter({

@@ -47,6 +47,19 @@ describe("loadConfig", () => {
       awsAssignPublicIp: false,
       corsOrigins: undefined,
       sentryDsn: undefined,
+      memoryTokens: 2000,
+      autoMemory: false,
+      fileTools: true,
+      fileToolMaxBytes: 10_485_760,
+      webTools: false,
+      searchProvider: "brave",
+      braveApiKey: undefined,
+      tavilyApiKey: undefined,
+      hooksDir: expect.stringContaining(".iquantum/hooks"),
+      hookTimeoutMs: 5000,
+      skillsDir: expect.stringContaining(".iquantum/skills"),
+      keybindingsFile: expect.stringContaining(".iquantum/keybindings.json"),
+      reviewModel: undefined,
     });
   });
 

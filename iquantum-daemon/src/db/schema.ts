@@ -219,6 +219,48 @@ const migrations: readonly Migration[] = [
       CREATE INDEX idx_invite_tokens_token_hash ON invite_tokens(token_hash);
     `,
   },
+  {
+    version: 12,
+    sql: `
+      CREATE TABLE memories (
+        id          TEXT PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        org_id      TEXT,
+        type        TEXT NOT NULL CHECK (type IN ('user','feedback','project','reference')),
+        name        TEXT NOT NULL,
+        description TEXT NOT NULL,
+        body        TEXT NOT NULL,
+        pinned      INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL,
+        UNIQUE (user_id, name)
+      );
+      CREATE INDEX memories_user_org ON memories (user_id, org_id);
+    `,
+  },
+  {
+    version: 13,
+    sql: `
+      CREATE TABLE hook_runs (
+        id          TEXT PRIMARY KEY,
+        hook_name   TEXT NOT NULL,
+        event_type  TEXT NOT NULL,
+        session_id  TEXT,
+        blocked     INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER NOT NULL,
+        created_at  TEXT NOT NULL
+      );
+      CREATE INDEX idx_hook_runs_session_id ON hook_runs(session_id);
+    `,
+  },
+  {
+    version: 14,
+    sql: `
+      ALTER TABLE sessions ADD COLUMN effort TEXT NOT NULL DEFAULT 'normal';
+      ALTER TABLE sessions ADD COLUMN worktree_path TEXT;
+      ALTER TABLE sessions ADD COLUMN start_checkpoint_hash TEXT;
+    `,
+  },
 ];
 
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
@@ -297,6 +339,9 @@ const postgresBootstrapStatements = [
     config TEXT NOT NULL,
     mode TEXT NOT NULL DEFAULT 'piv'
       CHECK (mode IN ('piv', 'chat')),
+    effort TEXT NOT NULL DEFAULT 'normal',
+    worktree_path TEXT,
+    start_checkpoint_hash TEXT,
     user_id TEXT REFERENCES users(id),
     org_id TEXT REFERENCES organizations(id),
     created_at TEXT NOT NULL,
@@ -407,6 +452,30 @@ const postgresBootstrapStatements = [
   "CREATE INDEX IF NOT EXISTS idx_invite_tokens_org_id ON invite_tokens(org_id)",
   "CREATE INDEX IF NOT EXISTS idx_invite_tokens_token_hash ON invite_tokens(token_hash)",
   "CREATE INDEX IF NOT EXISTS idx_billing_events_org_created ON billing_events(org_id, created_at)",
+  `CREATE TABLE IF NOT EXISTS memories (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    org_id      TEXT,
+    type        TEXT NOT NULL CHECK (type IN ('user','feedback','project','reference')),
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    pinned      INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    UNIQUE (user_id, name)
+  )`,
+  "CREATE INDEX IF NOT EXISTS memories_user_org ON memories (user_id, org_id)",
+  `CREATE TABLE IF NOT EXISTS hook_runs (
+    id          TEXT PRIMARY KEY,
+    hook_name   TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    session_id  TEXT,
+    blocked     INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL,
+    created_at  TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_hook_runs_session_id ON hook_runs(session_id)",
   `INSERT INTO schema_migrations (version, applied_at)
    VALUES (${latestSchemaVersion}, CURRENT_TIMESTAMP)
    ON CONFLICT (version) DO NOTHING`,

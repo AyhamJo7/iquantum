@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type {
   CompletionEvent,
+  EffortLevel,
   LLMCompletionOptions,
   LLMContentBlock,
   LLMMessage,
@@ -25,6 +26,10 @@ export interface OpenAICompatibleProviderOptions {
   sleep?: (delayMs: number) => Promise<void>;
 }
 
+export interface BuiltinTool extends McpTool {
+  execute(args: Record<string, unknown>): Promise<string>;
+}
+
 export interface LLMRoute {
   provider: LLMProvider;
   model: string;
@@ -33,6 +38,7 @@ export interface LLMRoute {
 export interface LLMRouterOptions {
   architect: LLMRoute;
   editor: LLMRoute;
+  thorough?: LLMRoute;
   maxInputTokens: number;
   supportsThinking?: boolean;
   usageSink?: TokenUsageSink;
@@ -247,6 +253,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 export class LLMRouter {
   readonly #architect: LLMRoute;
   readonly #editor: LLMRoute;
+  readonly #thorough: LLMRoute;
   readonly #maxInputTokens: number;
   readonly #usageSink: TokenUsageSink | undefined;
   readonly supportsThinking: boolean;
@@ -254,6 +261,7 @@ export class LLMRouter {
   constructor(options: LLMRouterOptions) {
     this.#architect = options.architect;
     this.#editor = options.editor;
+    this.#thorough = options.thorough ?? options.architect;
     this.#maxInputTokens = options.maxInputTokens;
     this.#usageSink = options.usageSink;
     this.supportsThinking = options.supportsThinking ?? true;
@@ -321,12 +329,45 @@ export class LLMRouter {
     });
   }
 
+  async *completeWithEffort(
+    effort: EffortLevel,
+    messages: LLMMessage[],
+    options: RoutedCompletionOptions,
+  ): AsyncIterable<string> {
+    const route = this.#routeForEffort(effort);
+    const inputTokens = await route.provider.countTokens(messages, route.model);
+
+    if (inputTokens > this.#maxInputTokens) {
+      throw new TokenBudgetExceededError(inputTokens, this.#maxInputTokens);
+    }
+
+    await this.#usageSink?.record({
+      phase: "plan",
+      model: route.model,
+      inputTokens,
+    });
+
+    yield* route.provider.complete(messages, {
+      model: route.model,
+      maxTokens: options.maxTokens,
+      ...(options.temperature === undefined
+        ? {}
+        : { temperature: options.temperature }),
+    });
+  }
+
   #routeForPhase(phase: PIVPhase): LLMRoute {
     if (phase === "plan") {
       return this.#architect;
     }
 
     return this.#editor;
+  }
+
+  #routeForEffort(effort: EffortLevel): LLMRoute {
+    if (effort === "fast") return this.#editor;
+    if (effort === "thorough") return this.#thorough;
+    return this.#architect;
   }
 }
 

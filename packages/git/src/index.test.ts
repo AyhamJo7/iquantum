@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { GitManager, InMemoryGitCheckpointStore } from "./index";
+import {
+  GitManager,
+  InMemoryGitCheckpointStore,
+  type WorktreeInfo,
+} from "./index";
 
 const run = promisify(execFile);
 const tempDirs: string[] = [];
@@ -52,6 +56,45 @@ describe("GitManager", () => {
     await expect(readFile(join(repoPath, "README.md"), "utf8")).resolves.toBe(
       "changed\n",
     );
+  });
+});
+
+describe("GitManager worktree methods", () => {
+  it("currentHead returns the HEAD commit hash", async () => {
+    const repoPath = await makeRepo();
+    const manager = new GitManager({
+      repoPath,
+      store: new InMemoryGitCheckpointStore(),
+    });
+
+    const head = await manager.currentHead();
+
+    expect(head).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("createWorktree, listWorktrees, removeWorktree round-trip", async () => {
+    const repoPath = await makeRepo();
+    const worktreePath = await mkdtemp(join(tmpdir(), "iquantum-wt-"));
+    tempDirs.push(worktreePath);
+
+    const manager = new GitManager({
+      repoPath,
+      store: new InMemoryGitCheckpointStore(),
+    });
+
+    await manager.createWorktree(worktreePath, "iquantum/session-test");
+
+    const worktrees = await manager.listWorktrees();
+    const added = worktrees.find((w) => w.path === worktreePath);
+
+    expect(added).toBeDefined();
+    expect((added as WorktreeInfo).branch).toBe("iquantum/session-test");
+    expect((added as WorktreeInfo).commitHash).toMatch(/^[0-9a-f]{40}$/);
+
+    await manager.removeWorktree(worktreePath);
+
+    const afterRemove = await manager.listWorktrees();
+    expect(afterRemove.find((w) => w.path === worktreePath)).toBeUndefined();
   });
 });
 

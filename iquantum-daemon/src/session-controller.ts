@@ -46,6 +46,7 @@ export interface CreateSessionOptions {
   requireApproval?: boolean;
   autoApprove?: boolean;
   mode?: "piv" | "chat";
+  effort?: import("@iquantum/types").EffortLevel;
   extraRepoPaths?: string[];
 }
 
@@ -130,6 +131,9 @@ export class SessionController {
         autoApprove: options.autoApprove ?? false,
       },
       mode: options.mode ?? "piv",
+      effort: options.effort ?? "normal",
+      worktreePath: null,
+      startCheckpointHash: null,
       userId: context?.userId ?? null,
       orgId: context?.orgId ?? null,
       createdAt,
