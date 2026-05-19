@@ -46,6 +46,7 @@ export interface CreateSessionOptions {
   requireApproval?: boolean;
   autoApprove?: boolean;
   mode?: "piv" | "chat";
+  extraRepoPaths?: string[];
 }
 
 export interface SessionContext {
@@ -146,6 +147,9 @@ export class SessionController {
     const engine = this.#createEngine({
       sessionId,
       repoPath,
+      ...(options.extraRepoPaths?.length
+        ? { extraRepoPaths: options.extraRepoPaths }
+        : {}),
       testCommand,
       store: this.#pivStore,
       llmRouter: this.#llmRouterFactory(),

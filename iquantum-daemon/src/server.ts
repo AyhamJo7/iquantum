@@ -119,6 +119,13 @@ const createSessionSchema = z.object({
   repoPath: z.string().min(1).refine(isAbsolute, {
     message: "repoPath must be an absolute path",
   }),
+  extraRepoPaths: z
+    .array(
+      z.string().min(1).refine(isAbsolute, {
+        message: "each extraRepoPath must be an absolute path",
+      }),
+    )
+    .optional(),
   requireApproval: z.boolean().optional(),
   autoApprove: z.boolean().optional(),
   mode: z.enum(["piv", "chat"]).default("piv"),
@@ -505,6 +512,9 @@ async function handleRequest(
             ? {}
             : { autoApprove: body.autoApprove }),
           mode: body.mode,
+          ...(body.extraRepoPaths?.length
+            ? { extraRepoPaths: body.extraRepoPaths }
+            : {}),
         },
         context ?? undefined,
       )) as Session;

@@ -457,9 +457,9 @@ bun run typecheck        # TypeScript type check across all packages
 - [x] `iq chat` — conversational mode without the PIV loop
 - [x] OpenAI-compatible provider routing — bring your own model (DeepSeek, Ollama, Together, …)
 - [x] Polished terminal UI — PIV phase strip, live spinner, commit card, diff line numbers
-- [ ] Multi-repo context spanning more than one repository
+- [x] Multi-repo context spanning more than one repository
 - [x] VS Code extension — visual diff approval and side-by-side plan review
-- [ ] Cloud sandbox tier — hosted execution, zero local Docker setup
+- [x] Cloud sandbox tier — hosted execution, zero local Docker setup
 
 ---
 
