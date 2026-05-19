@@ -96,6 +96,8 @@ describe("runInit", () => {
             awsSubnetIds: undefined,
             awsSecurityGroupIds: undefined,
             awsAssignPublicIp: false,
+            corsOrigins: undefined,
+            sentryDsn: undefined,
           };
         },
       },

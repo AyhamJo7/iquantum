@@ -1,5 +1,10 @@
+import { InvalidTransitionError } from "@iquantum/piv-engine";
 import { describe, expect, it } from "vitest";
-import { InvalidConversationCursorError } from "./db/stores";
+import {
+  InvalidCheckpointCursorError,
+  InvalidConversationCursorError,
+} from "./db/stores";
+import { InMemoryRateLimiter } from "./rate-limit";
 import {
   createRequestHandler,
   createTcpDaemonServer,
@@ -10,7 +15,10 @@ import {
   type DaemonSessions,
   type DaemonStreams,
 } from "./server";
-import { SessionNotFoundError } from "./session-controller";
+import {
+  SessionNotFoundError,
+  SessionNotLiveError,
+} from "./session-controller";
 
 const SESSION_ID = "00000000-0000-0000-0000-000000000001";
 const MISSING_SESSION_ID = "00000000-0000-0000-0000-000000000099";
@@ -272,6 +280,81 @@ describe("daemon request handler", () => {
     expect(await response.json()).toEqual([]);
   });
 
+  it("adds request IDs and configured CORS headers to responses", async () => {
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      corsOrigins: ["https://app.example.com"],
+    });
+
+    const response = await request(handler, "/health", {
+      headers: {
+        Origin: "https://app.example.com",
+        "x-request-id": "request-1",
+      },
+    });
+    const preflight = await request(handler, "/sessions", {
+      method: "OPTIONS",
+      headers: { Origin: "https://app.example.com" },
+    });
+
+    expect(response.headers.get("x-request-id")).toBe("request-1");
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "https://app.example.com",
+    );
+    expect(response.headers.get("vary")).toBe("Origin");
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-methods")).toContain(
+      "POST",
+    );
+    const disallowed = await request(handler, "/health", {
+      headers: { Origin: "https://evil.example.com" },
+    });
+    expect(disallowed.headers.get("access-control-allow-origin")).toBeNull();
+    expect(disallowed.headers.get("vary")).toBe("Origin");
+  });
+
+  it("maps session state conflicts to fixed client-safe errors", async () => {
+    const liveHandler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: {
+        ...fakeSessions("piv", "org-1").sessions,
+        async startTask() {
+          throw new SessionNotLiveError(SESSION_ID);
+        },
+      },
+      streams: fakeStreams(),
+    });
+    const transitionHandler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: {
+        ...fakeSessions("piv", "org-1").sessions,
+        async approve() {
+          throw new InvalidTransitionError("planning", "approve a plan");
+        },
+      },
+      streams: fakeStreams(),
+    });
+
+    const live = await request(liveHandler, `/sessions/${SESSION_ID}/task`, {
+      method: "POST",
+      body: { prompt: "run" },
+    });
+    const transition = await request(
+      transitionHandler,
+      `/sessions/${SESSION_ID}/approve`,
+      { method: "POST" },
+    );
+
+    expect(live.status).toBe(409);
+    expect(await live.json()).toEqual({ error: "session_not_live" });
+    expect(transition.status).toBe(409);
+    expect(await transition.json()).toEqual({
+      error: "invalid_session_state",
+    });
+  });
+
   it("GET /mcp/tools returns tools from the registry", async () => {
     const { sessions } = fakeSessions();
     const mcpRegistry: DaemonMcpRegistry = {
@@ -366,6 +449,216 @@ describe("daemon request handler", () => {
     expect(registered.status).toBe(201);
     expect(login.status).toBe(200);
     expect(unauthorized.status).toBe(401);
+  });
+
+  it("rate limits repeated login attempts", async () => {
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      cloud: true,
+      rateLimiter: new InMemoryRateLimiter(),
+      authStore: {
+        async verifyPassword() {
+          return null;
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return null;
+        },
+      } as never,
+    });
+
+    let response: Response | undefined;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      response = await request(handler, "/auth/login", {
+        method: "POST",
+        headers: { "x-real-ip": "203.0.113.10" },
+        body: { email: "a@example.com", password: "wrong-password" },
+      });
+    }
+
+    expect(response?.status).toBe(429);
+    expect(await response?.json()).toEqual({ error: "rate_limited" });
+    expect(response?.headers.get("retry-after")).toBeTruthy();
+  });
+
+  it("paginates org members and checkpoints", async () => {
+    const calls: unknown[][] = [];
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: {
+        ...fakeSessions("piv", "org-1").sessions,
+        async listCheckpoints(sessionId, options) {
+          calls.push(["listCheckpoints", sessionId, options]);
+          return {
+            checkpoints: [{ id: "checkpoint-1" }],
+            nextCursor: "checkpoint-1",
+          };
+        },
+      },
+      streams: fakeStreams(),
+      cloud: true,
+      authStore: {
+        async lookupApiToken() {
+          return null;
+        },
+        async listOrgMembersPage(orgId: string, options: unknown) {
+          calls.push(["listOrgMembersPage", orgId, options]);
+          return {
+            members: [{ id: "user-1" }],
+            nextCursor: "user-1",
+          };
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return { userId: "user-1", orgId: "org-1", role: "owner" };
+        },
+      } as never,
+    });
+
+    const members = await request(handler, "/org/members?limit=1", {
+      headers: { Authorization: "Bearer jwt" },
+    });
+    const checkpoints = await request(
+      handler,
+      `/sessions/${SESSION_ID}/checkpoints?limit=1&before=checkpoint-0`,
+      { headers: { Authorization: "Bearer jwt" } },
+    );
+
+    expect(await members.json()).toEqual({
+      members: [{ id: "user-1" }],
+      nextCursor: "user-1",
+    });
+    expect(await checkpoints.json()).toEqual({
+      checkpoints: [{ id: "checkpoint-1" }],
+      nextCursor: "checkpoint-1",
+    });
+    expect(calls).toContainEqual(["listOrgMembersPage", "org-1", { limit: 1 }]);
+    expect(calls).toContainEqual([
+      "listCheckpoints",
+      SESSION_ID,
+      { before: "checkpoint-0", limit: 1 },
+    ]);
+  });
+
+  it("returns 400 for invalid checkpoint cursors", async () => {
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: {
+        ...fakeSessions("piv", "org-1").sessions,
+        async listCheckpoints() {
+          throw new InvalidCheckpointCursorError("bad-cursor");
+        },
+      },
+      streams: fakeStreams(),
+      cloud: true,
+      authStore: {
+        async lookupApiToken() {
+          return null;
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return { userId: "user-1", orgId: "org-1", role: "owner" };
+        },
+      } as never,
+    });
+
+    const response = await request(
+      handler,
+      `/sessions/${SESSION_ID}/checkpoints?before=bad-cursor`,
+      { headers: { Authorization: "Bearer jwt" } },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "invalid_checkpoint_cursor",
+    });
+  });
+
+  it("uses invite tokens instead of returning plaintext temporary passwords", async () => {
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      cloud: true,
+      authStore: {
+        async lookupApiToken() {
+          return null;
+        },
+        async createInvite() {
+          return {
+            id: "invite-1",
+            token: "invite-token",
+            expiresAt: "2026-05-24T00:00:00.000Z",
+          };
+        },
+        async acceptInvite() {
+          return { id: "user-2", orgId: "org-1" };
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return { userId: "user-1", orgId: "org-1", role: "owner" };
+        },
+      } as never,
+    });
+
+    const invited = await request(handler, "/org/members/invite", {
+      method: "POST",
+      headers: { Authorization: "Bearer jwt" },
+      body: { email: "new@example.com", role: "member" },
+    });
+    const accepted = await request(handler, "/auth/invitations/accept", {
+      method: "POST",
+      body: { token: "invite-token", password: "password123" },
+    });
+
+    expect(await invited.json()).toEqual({
+      inviteId: "invite-1",
+      inviteToken: "invite-token",
+      expiresAt: "2026-05-24T00:00:00.000Z",
+      emailDeliveryRequired: true,
+    });
+    expect(JSON.stringify(await accepted.json())).not.toContain("password");
+  });
+
+  it("erases the authenticated user through DELETE /auth/me", async () => {
+    const calls: unknown[][] = [];
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      cloud: true,
+      authStore: {
+        async lookupApiToken() {
+          return null;
+        },
+        async eraseUser(userId: string) {
+          calls.push(["eraseUser", userId]);
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return { userId: "user-1", orgId: "org-1", role: "owner" };
+        },
+      } as never,
+    });
+
+    const erased = await request(handler, "/auth/me", {
+      method: "DELETE",
+      headers: { Authorization: "Bearer jwt" },
+    });
+    const unauthorized = await request(handler, "/auth/me", {
+      method: "DELETE",
+    });
+
+    expect(erased.status).toBe(204);
+    expect(unauthorized.status).toBe(401);
+    expect(calls).toEqual([["eraseUser", "user-1"]]);
   });
 
   it("maps postgres duplicate-email errors to 409 during registration", async () => {
@@ -596,7 +889,7 @@ function fakeSessions(
       },
       async listCheckpoints(sessionId) {
         calls.push(["listCheckpoints", sessionId]);
-        return [];
+        return { checkpoints: [], nextCursor: null };
       },
       async restore(sessionId, hash) {
         calls.push(["restore", sessionId, hash]);

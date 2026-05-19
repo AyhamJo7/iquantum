@@ -84,9 +84,10 @@ Before installing, make sure you have the following:
 
 | Requirement | Notes |
 |---|---|
-| **npm** | Comes with [Node.js](https://nodejs.org/) — used only to install `iq` globally |
+| **Bun 1.3+** | Required to run the `iq` CLI and the local sandbox runtime |
+| **npm** | Comes with [Node.js](https://nodejs.org/) — used to install `iq` globally |
 | **Docker** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) on macOS or Windows; [Docker Engine](https://docs.docker.com/engine/install/) on Linux |
-| **An Anthropic API key** | Get one at [console.anthropic.com](https://console.anthropic.com) — you pay only for what you use |
+| **An AI provider API key** | Anthropic is the default; OpenAI-compatible providers can be configured with `IQUANTUM_PROVIDER=openai` |
 
 > **Windows users:** run iquantum inside [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install). Docker Desktop must have WSL2 integration enabled.
 
@@ -101,6 +102,8 @@ npm install -g @iquantum/cli
 ```
 
 This installs the `iq` command globally on your machine.
+
+`iq` runs on Bun, so make sure `bun --version` works in the same shell before starting the CLI.
 
 ### Step 2 — Set up
 
@@ -166,7 +169,7 @@ PLAN ✓  ·  IMPLEMENT ✓  ·  VALIDATE ✓
 ╰────────────────────────────────────────────╯
 
 describe a task, or /help for commands
- iq v1.1.0  ·  claude-sonnet-4-6 ·  12k ▓▓▓░░░░░
+ iq v2.0.5  ·  claude-sonnet-4-6 ·  12k ▓▓▓░░░░░
 ```
 
 The agent waits for your approval before writing a single line of code. If you are not happy with the plan, type `no` and explain what to change — the agent will revise and show you a new plan.
@@ -268,9 +271,11 @@ Settings are saved in `~/.iquantum/config.json`. You can also set any of these a
 | `IQUANTUM_SANDBOX_IMAGE` | — | `ghcr.io/ayhamjo7/iquantum-sandbox:latest` | The Docker image used for the sandbox |
 | `IQUANTUM_SOCKET` | — | `~/.iquantum/daemon.sock` | Unix socket path for CLI ↔ daemon communication |
 | `IQUANTUM_TCP_PORT` | — | `51820` | Localhost TCP port used by the VS Code extension |
+| `IQUANTUM_CORS_ORIGINS` | For browser clients | — | Comma-separated browser origins allowed to call the cloud TCP API |
 | `MAX_RETRIES` | — | `3` | How many times the agent retries before giving up |
 | `IQUANTUM_EXEC_TIMEOUT_MS` | — | `120000` | How long (ms) a sandbox command can run before being killed |
 | `IQUANTUM_MCP_SERVERS` | — | `[]` | External tools to expose to the agent via MCP (JSON array) |
+| `SENTRY_DSN` | For production monitoring | — | Optional Sentry DSN used to capture daemon request and process errors |
 | `LOG_LEVEL` | — | `info` | Daemon log verbosity: `error` · `warn` · `info` · `debug` |
 
 \* When `IQUANTUM_PROVIDER=openai`, set either `IQUANTUM_API_KEY` or `ANTHROPIC_API_KEY`.
@@ -346,6 +351,13 @@ Link the CLI so you can run `iq` from your local build:
 
 ```bash
 bun link --cwd iquantum-cli
+```
+
+To test the same bundled artifact that is published to npm, run:
+
+```bash
+bun run build:dist
+npm pack ./iquantum-cli
 ```
 
 **6. Make your changes**
@@ -445,9 +457,9 @@ bun run typecheck        # TypeScript type check across all packages
 - [x] `iq chat` — conversational mode without the PIV loop
 - [x] OpenAI-compatible provider routing — bring your own model (DeepSeek, Ollama, Together, …)
 - [x] Polished terminal UI — PIV phase strip, live spinner, commit card, diff line numbers
-- [ ] Multi-repo context spanning more than one repository
+- [x] Multi-repo context spanning more than one repository
 - [x] VS Code extension — visual diff approval and side-by-side plan review
-- [ ] Cloud sandbox tier — hosted execution, zero local Docker setup
+- [x] Cloud sandbox tier — hosted execution, zero local Docker setup
 
 ---
 

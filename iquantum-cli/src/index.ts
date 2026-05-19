@@ -76,22 +76,30 @@ program
   .command("task <prompt>")
   .description("Run a PIV task in the current repository")
   .option("--repo <path>", "Repository path (default: cwd)")
-  .action(async (prompt: string, opts: { repo?: string }) => {
-    try {
-      await runTask(
-        prompt,
-        opts,
-        new HttpDaemonClient(configuredSocketPath()),
-        readlinePrompt,
-        stdoutWriter,
-      );
-    } catch (error) {
-      process.stderr.write(
-        `${error instanceof Error ? error.message : String(error)}\n`,
-      );
-      process.exit(1);
-    }
-  });
+  .option(
+    "--extra-repo <path>",
+    "Additional repository to include in context (repeatable)",
+    (val: string, prev: string[]) => [...prev, val],
+    [] as string[],
+  )
+  .action(
+    async (prompt: string, opts: { repo?: string; extraRepo?: string[] }) => {
+      try {
+        await runTask(
+          prompt,
+          opts,
+          new HttpDaemonClient(configuredSocketPath()),
+          readlinePrompt,
+          stdoutWriter,
+        );
+      } catch (error) {
+        process.stderr.write(
+          `${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        process.exit(1);
+      }
+    },
+  );
 
 const daemon = program.command("daemon").description("Daemon lifecycle");
 

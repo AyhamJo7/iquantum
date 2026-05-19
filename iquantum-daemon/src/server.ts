@@ -1,16 +1,24 @@
-import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { InvalidTransitionError } from "@iquantum/piv-engine";
 import type { Session } from "@iquantum/types";
 import { ZodError, z } from "zod";
 import { type AuthContext, authMiddleware } from "./auth/auth-middleware";
-import type { AuthStore } from "./auth/auth-store";
+import {
+  type AuthStore,
+  InvalidInviteTokenError,
+  InvalidMemberCursorError,
+} from "./auth/auth-store";
 import type { JwtService } from "./auth/jwt-service";
 import type { BillingTracker } from "./billing-tracker";
-import { InvalidConversationCursorError } from "./db/stores";
+import {
+  InvalidCheckpointCursorError,
+  InvalidConversationCursorError,
+} from "./db/stores";
+import type { ErrorReporter } from "./error-reporter";
 import { logger } from "./logger";
 import { PermissionRequestNotFoundError } from "./permission-gate";
+import type { RateLimiter, RateLimitOptions } from "./rate-limit";
 import {
   SessionNotFoundError,
   SessionNotLiveError,
@@ -37,13 +45,20 @@ export interface DaemonServerOptions {
   compaction?: DaemonCompaction;
   permissions?: DaemonPermissions;
   mcpRegistry?: DaemonMcpRegistry;
-  healthCheck?: () => Promise<{ db: boolean; docker: boolean }>;
+  healthCheck?: () => Promise<{
+    db: boolean;
+    docker: boolean;
+    redis?: boolean;
+  }>;
   cloud?: boolean;
   authStore?: AuthStore;
   jwtService?: JwtService;
   stripeClient?: StripeClient;
   stripeWebhookSecret?: string;
   billingTracker?: BillingTracker;
+  rateLimiter?: RateLimiter;
+  corsOrigins?: string[];
+  errorReporter?: ErrorReporter;
 }
 
 export interface DaemonSessions {
@@ -66,7 +81,10 @@ export interface DaemonSessions {
     feedback: string,
     planId?: string,
   ): Promise<unknown>;
-  listCheckpoints(sessionId: string): Promise<unknown>;
+  listCheckpoints(
+    sessionId: string,
+    options?: { before?: string; limit: number },
+  ): Promise<unknown>;
   restore(sessionId: string, hash: string): Promise<void>;
 }
 
@@ -101,6 +119,13 @@ const createSessionSchema = z.object({
   repoPath: z.string().min(1).refine(isAbsolute, {
     message: "repoPath must be an absolute path",
   }),
+  extraRepoPaths: z
+    .array(
+      z.string().min(1).refine(isAbsolute, {
+        message: "each extraRepoPath must be an absolute path",
+      }),
+    )
+    .optional(),
   requireApproval: z.boolean().optional(),
   autoApprove: z.boolean().optional(),
   mode: z.enum(["piv", "chat"]).default("piv"),
@@ -134,6 +159,11 @@ const inviteSchema = z.object({
   email: z.string().email(),
   role: z.enum(["owner", "member"]).default("member"),
 });
+const acceptInviteSchema = z.object({
+  token: z.string().min(32),
+  password: z.string().min(8),
+});
+const pageLimitSchema = z.coerce.number().int().min(1).max(100);
 
 const SESSION_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -164,591 +194,651 @@ export function createRequestHandler(options: DaemonServerOptions) {
   return async (request: Request): Promise<Response> => {
     const requestId =
       request.headers.get("x-request-id") ?? crypto.randomUUID();
+    const corsHeaders = corsHeadersFor(request, options);
 
-    try {
-      const url = new URL(request.url);
-      const parts = url.pathname.split("/").filter(Boolean);
+    if (request.method === "OPTIONS") {
+      return withStandardHeaders(
+        new Response(null, {
+          status: corsHeaders ? 204 : 404,
+          ...(corsHeaders ? { headers: corsHeaders } : {}),
+        }),
+        requestId,
+        corsHeaders,
+      );
+    }
 
-      let context: AuthContext | null = null;
-      if (options.cloud && !isAuthExempt(request.method, url.pathname)) {
-        const authStore = requireAuthStore(options);
-        const jwtService = requireJwtService(options);
-        context = await authMiddleware(request, authStore, jwtService);
-        if (!context) {
-          return Response.json({ error: "Unauthorized" }, { status: 401 });
-        }
+    const response = await handleRequest(options, request, requestId);
+    return withStandardHeaders(response, requestId, corsHeaders);
+  };
+}
+
+async function handleRequest(
+  options: DaemonServerOptions,
+  request: Request,
+  requestId: string,
+): Promise<Response> {
+  try {
+    const url = new URL(request.url);
+    const parts = url.pathname.split("/").filter(Boolean);
+
+    let context: AuthContext | null = null;
+    if (options.cloud && !isAuthExempt(request.method, url.pathname)) {
+      const authStore = requireAuthStore(options);
+      const jwtService = requireJwtService(options);
+      context = await authMiddleware(request, authStore, jwtService);
+      if (!context) {
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
+
+    if (request.method === "GET" && url.pathname === "/health") {
+      if (options.healthCheck) {
+        const status = await options.healthCheck();
+        const ok = status.db && status.docker && (status.redis ?? true);
+        return Response.json({ ok, ...status }, { status: ok ? 200 : 503 });
       }
 
-      if (request.method === "GET" && url.pathname === "/health") {
-        if (options.healthCheck) {
-          const status = await options.healthCheck();
-          const ok = status.db && status.docker;
-          return Response.json({ ok, ...status }, { status: ok ? 200 : 503 });
-        }
+      return Response.json({ ok: true });
+    }
 
-        return Response.json({ ok: true });
-      }
-
-      if (request.method === "POST" && url.pathname === "/auth/register") {
-        const body = registerSchema.parse(await request.json());
-        const authStore = requireAuthStore(options);
-        try {
-          const org = await authStore.createOrg(
-            body.orgName ?? body.email.split("@")[1] ?? body.email,
-          );
-          const user = await authStore.createUser(
-            org.id,
-            body.email,
-            body.password,
-            "owner",
-          );
-          return Response.json(
-            { userId: user.id, orgId: org.id },
-            { status: 201 },
-          );
-        } catch (error) {
-          const isDuplicate =
-            (error as { code?: string }).code === "23505" ||
-            String(error).includes("UNIQUE");
-          if (isDuplicate) {
-            return Response.json({ error: "email_exists" }, { status: 409 });
-          }
-          throw error;
-        }
-      }
-
-      if (request.method === "POST" && url.pathname === "/auth/login") {
-        const body = loginSchema.parse(await request.json());
-        const authStore = requireAuthStore(options);
-        const jwtService = requireJwtService(options);
-        const user = await authStore.verifyPassword(body.email, body.password);
-        if (!user) {
-          return Response.json(
-            { error: "Invalid credentials" },
-            { status: 401 },
-          );
-        }
-        return Response.json({
-          jwt: await jwtService.sign({
-            userId: user.id,
-            orgId: user.orgId,
-            role: user.role,
-          }),
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        });
-      }
-
-      if (request.method === "POST" && url.pathname === "/webhooks/stripe") {
-        const stripe = options.stripeClient;
-        const secret = options.stripeWebhookSecret;
-        const signature = request.headers.get("stripe-signature");
-        if (!stripe || !secret || !signature) {
-          return Response.json(
-            { error: "stripe_not_configured" },
-            { status: 400 },
-          );
-        }
-        const event = stripe.constructWebhookEvent(
-          await request.text(),
-          signature,
-          secret,
+    if (request.method === "POST" && url.pathname === "/auth/register") {
+      const body = registerSchema.parse(await request.json());
+      const limited = await enforceAuthRateLimit(options, request, {
+        endpoint: "register",
+        email: body.email,
+      });
+      if (limited) return limited;
+      const authStore = requireAuthStore(options);
+      try {
+        const org = await authStore.createOrg(
+          body.orgName ?? body.email.split("@")[1] ?? body.email,
         );
-        const authStore = requireAuthStore(options);
-        if (event.type === "customer.subscription.deleted") {
-          const subscription = event.data.object as {
-            customer: string;
-          };
-          await authStore.updateOrgPlanByStripeCustomer(
-            subscription.customer,
-            "free",
-            0,
-          );
-        }
-        if (event.type === "customer.subscription.updated") {
-          const subscription = event.data.object as {
-            customer: string;
-            metadata?: { plan?: string; sandboxQuotaHours?: string };
-          };
-          const plan =
-            subscription.metadata?.plan === "enterprise" ||
-            subscription.metadata?.plan === "pro"
-              ? subscription.metadata.plan
-              : "free";
-          const parsedQuota = Number.parseInt(
-            subscription.metadata?.sandboxQuotaHours ?? "10",
-            10,
-          );
-          await authStore.updateOrgPlanByStripeCustomer(
-            subscription.customer,
-            plan,
-            parsedQuota || 10,
-          );
-        }
-        return Response.json({ received: true });
-      }
-
-      if (request.method === "GET" && url.pathname === "/auth/tokens") {
-        const tokens = await requireAuthStore(options).listApiTokens(
-          requireContext(context).userId,
-        );
-        return Response.json({ tokens });
-      }
-
-      if (request.method === "POST" && url.pathname === "/auth/tokens") {
-        const body = apiTokenSchema.parse(await request.json());
-        const authStore = requireAuthStore(options);
-        const created = await authStore.createApiToken(
-          requireContext(context).userId,
-          body.name,
-          body.scopes,
-          body.expiresAt ? new Date(body.expiresAt) : undefined,
-        );
-        return Response.json({
-          id: created.record.id,
-          token: created.token,
-          name: created.record.name,
-          expiresAt: created.record.expiresAt,
-        });
-      }
-
-      if (
-        request.method === "DELETE" &&
-        parts[0] === "auth" &&
-        parts[1] === "tokens" &&
-        parts[2]
-      ) {
-        await requireAuthStore(options).revokeApiToken(
-          parts[2],
-          requireContext(context).userId,
-        );
-        return new Response(null, { status: 204 });
-      }
-
-      if (request.method === "GET" && url.pathname === "/org/usage") {
-        const authStore = requireAuthStore(options);
-        const auth = requireContext(context);
-        const now = new Date();
-        const monthStart = new Date(
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-        );
-        const [usage, org] = await Promise.all([
-          authStore.getOrgUsage(auth.orgId, monthStart),
-          authStore.getOrg(auth.orgId),
-        ]);
-        return Response.json({
-          containerMinutes: usage.containerMinutes,
-          quotaHours: org.sandboxQuotaHours,
-          percentUsed:
-            org.sandboxQuotaHours === 0
-              ? 100
-              : (usage.containerMinutes / (org.sandboxQuotaHours * 60)) * 100,
-        });
-      }
-
-      if (request.method === "GET" && url.pathname === "/org/members") {
-        const members = await requireAuthStore(options).listOrgMembers(
-          requireContext(context).orgId,
-        );
-        return Response.json({ members });
-      }
-
-      if (request.method === "POST" && url.pathname === "/org/members/invite") {
-        const authStore = requireAuthStore(options);
-        const auth = requireContext(context);
-        if (auth.role !== "owner") {
-          return Response.json({ error: "Forbidden" }, { status: 403 });
-        }
-        const body = inviteSchema.parse(await request.json());
-        const tempPassword = randomBytes(12).toString("base64url");
         const user = await authStore.createUser(
-          auth.orgId,
+          org.id,
           body.email,
-          tempPassword,
-          body.role,
+          body.password,
+          "owner",
         );
         return Response.json(
-          { userId: user.id, tempPassword },
+          { userId: user.id, orgId: org.id },
           { status: 201 },
         );
-      }
-
-      if (
-        request.method === "POST" &&
-        url.pathname === "/billing/portal-session" &&
-        options.stripeClient
-      ) {
-        const auth = requireContext(context);
-        const authStore = requireAuthStore(options);
-        const org = await authStore.getOrg(auth.orgId);
-        if (!org.stripeCustomerId) {
-          return Response.json(
-            { error: "no_stripe_customer" },
-            { status: 400 },
-          );
+      } catch (error) {
+        const isDuplicate =
+          (error as { code?: string }).code === "23505" ||
+          String(error).includes("UNIQUE");
+        if (isDuplicate) {
+          return Response.json({ error: "email_exists" }, { status: 409 });
         }
-        const { returnUrl } = z
-          .object({ returnUrl: z.string().url() })
-          .parse(await request.json());
-        const url_ = await options.stripeClient.createPortalSession(
-          org.stripeCustomerId,
-          returnUrl,
-        );
-        return Response.json({ url: url_ });
+        throw error;
       }
+    }
 
-      if (
-        request.method === "GET" &&
-        parts.length === 2 &&
-        parts[0] === "mcp" &&
-        parts[1] === "tools"
-      ) {
-        const tools = options.mcpRegistry
-          ? await options.mcpRegistry.listAllTools()
-          : [];
-        return Response.json(tools);
+    if (request.method === "POST" && url.pathname === "/auth/login") {
+      const body = loginSchema.parse(await request.json());
+      const limited = await enforceAuthRateLimit(options, request, {
+        endpoint: "login",
+        email: body.email,
+      });
+      if (limited) return limited;
+      const authStore = requireAuthStore(options);
+      const jwtService = requireJwtService(options);
+      const user = await authStore.verifyPassword(body.email, body.password);
+      if (!user) {
+        return Response.json({ error: "Invalid credentials" }, { status: 401 });
       }
+      return Response.json({
+        jwt: await jwtService.sign({
+          userId: user.id,
+          orgId: user.orgId,
+          role: user.role,
+        }),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+    }
 
-      if (parts[0] !== "sessions") {
-        return notFound();
-      }
+    if (
+      request.method === "POST" &&
+      url.pathname === "/auth/invitations/accept"
+    ) {
+      const rateLimitResponse = await enforceAuthRateLimit(options, request, {
+        endpoint: "acceptInvite",
+      });
+      if (rateLimitResponse) return rateLimitResponse;
+      const body = acceptInviteSchema.parse(await request.json());
+      const user = await requireAuthStore(options).acceptInvite(
+        body.token,
+        body.password,
+      );
+      return Response.json(
+        { userId: user.id, orgId: user.orgId },
+        { status: 201 },
+      );
+    }
 
-      if (request.method === "POST" && parts.length === 1) {
-        const body = createSessionSchema.parse(await request.json());
-        if (context && options.billingTracker) {
-          await options.billingTracker.checkQuota(context.orgId);
-        }
-        const session = (await options.sessions.createSession(
-          body.repoPath,
-          {
-            ...(body.requireApproval === undefined
-              ? {}
-              : { requireApproval: body.requireApproval }),
-            ...(body.autoApprove === undefined
-              ? {}
-              : { autoApprove: body.autoApprove }),
-            mode: body.mode,
-          },
-          context ?? undefined,
-        )) as Session;
-        if (context && options.billingTracker) {
-          await options.billingTracker.onContainerStart(
-            session.id,
-            context.orgId,
-          );
-        }
-        return Response.json(session, { status: 201 });
-      }
-
-      const sessionId = parts[1];
-
-      if (!sessionId || !isValidSessionId(sessionId)) {
-        return notFound();
-      }
-
-      if (options.cloud) {
-        await options.sessions.getSession(sessionId, context?.orgId);
-      }
-
-      if (request.method === "GET" && parts.length === 2) {
+    if (request.method === "POST" && url.pathname === "/webhooks/stripe") {
+      const stripe = options.stripeClient;
+      const secret = options.stripeWebhookSecret;
+      const signature = request.headers.get("stripe-signature");
+      if (!stripe || !secret || !signature) {
         return Response.json(
-          await options.sessions.getSession(sessionId, context?.orgId),
+          { error: "stripe_not_configured" },
+          { status: 400 },
         );
       }
-
-      if (request.method === "DELETE" && parts.length === 2) {
-        await options.sessions.destroySession(sessionId);
-        if (context && options.billingTracker) {
-          await options.billingTracker.onContainerStop(sessionId);
-        }
-        return new Response(null, { status: 204 });
+      const event = stripe.constructWebhookEvent(
+        await request.text(),
+        signature,
+        secret,
+      );
+      const authStore = requireAuthStore(options);
+      if (event.type === "customer.subscription.deleted") {
+        const subscription = event.data.object as {
+          customer: string;
+        };
+        await authStore.updateOrgPlanByStripeCustomer(
+          subscription.customer,
+          "free",
+          0,
+        );
       }
+      if (event.type === "customer.subscription.updated") {
+        const subscription = event.data.object as {
+          customer: string;
+          metadata?: { plan?: string; sandboxQuotaHours?: string };
+        };
+        const plan =
+          subscription.metadata?.plan === "enterprise" ||
+          subscription.metadata?.plan === "pro"
+            ? subscription.metadata.plan
+            : "free";
+        const parsedQuota = Number.parseInt(
+          subscription.metadata?.sandboxQuotaHours ?? "10",
+          10,
+        );
+        await authStore.updateOrgPlanByStripeCustomer(
+          subscription.customer,
+          plan,
+          parsedQuota || 10,
+        );
+      }
+      return Response.json({ received: true });
+    }
 
-      if (
-        request.method === "GET" &&
-        parts.length === 3 &&
-        parts[2] === "stream"
-      ) {
-        const encoder = new TextEncoder();
-        let detach: (() => void) | undefined;
+    if (request.method === "GET" && url.pathname === "/auth/tokens") {
+      const tokens = await requireAuthStore(options).listApiTokens(
+        requireContext(context).userId,
+      );
+      return Response.json({ tokens });
+    }
 
-        let heartbeat: ReturnType<typeof setInterval> | undefined;
-        const readable = new ReadableStream<Uint8Array>({
-          start(controller) {
-            const socket: StreamSocket = {
-              send(data: string) {
-                try {
-                  controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-                } catch {
-                  // client disconnected
-                }
-              },
-              close() {
-                clearInterval(heartbeat);
-                try {
-                  controller.close();
-                } catch {
-                  // already closed
-                }
-              },
-            };
+    if (request.method === "POST" && url.pathname === "/auth/tokens") {
+      const body = apiTokenSchema.parse(await request.json());
+      const authStore = requireAuthStore(options);
+      const created = await authStore.createApiToken(
+        requireContext(context).userId,
+        body.name,
+        body.scopes,
+        body.expiresAt ? new Date(body.expiresAt) : undefined,
+      );
+      return Response.json({
+        id: created.record.id,
+        token: created.token,
+        name: created.record.name,
+        expiresAt: created.record.expiresAt,
+      });
+    }
 
-            try {
-              detach = options.streams.attach(sessionId, socket);
-            } catch (error) {
-              socket.send(JSON.stringify(toErrorFrame(error)));
-              controller.close();
-              return;
-            }
+    if (
+      request.method === "DELETE" &&
+      parts[0] === "auth" &&
+      parts[1] === "tokens" &&
+      parts[2]
+    ) {
+      await requireAuthStore(options).revokeApiToken(
+        parts[2],
+        requireContext(context).userId,
+      );
+      return new Response(null, { status: 204 });
+    }
 
-            heartbeat = setInterval(() => {
+    if (request.method === "DELETE" && url.pathname === "/auth/me") {
+      await requireAuthStore(options).eraseUser(requireContext(context).userId);
+      return new Response(null, { status: 204 });
+    }
+
+    if (request.method === "GET" && url.pathname === "/org/usage") {
+      const authStore = requireAuthStore(options);
+      const auth = requireContext(context);
+      const now = new Date();
+      const monthStart = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+      );
+      const [usage, org] = await Promise.all([
+        authStore.getOrgUsage(auth.orgId, monthStart),
+        authStore.getOrg(auth.orgId),
+      ]);
+      return Response.json({
+        containerMinutes: usage.containerMinutes,
+        quotaHours: org.sandboxQuotaHours,
+        percentUsed:
+          org.sandboxQuotaHours === 0
+            ? 100
+            : (usage.containerMinutes / (org.sandboxQuotaHours * 60)) * 100,
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/org/members") {
+      const page = await requireAuthStore(options).listOrgMembersPage(
+        requireContext(context).orgId,
+        readPageOptions(url.searchParams),
+      );
+      return Response.json(page);
+    }
+
+    if (request.method === "POST" && url.pathname === "/org/members/invite") {
+      const authStore = requireAuthStore(options);
+      const auth = requireContext(context);
+      if (auth.role !== "owner") {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const body = inviteSchema.parse(await request.json());
+      const invite = await authStore.createInvite(
+        auth.orgId,
+        body.email,
+        body.role,
+        auth.userId,
+      );
+      return Response.json(
+        {
+          inviteId: invite.id,
+          inviteToken: invite.token,
+          expiresAt: invite.expiresAt,
+          emailDeliveryRequired: true,
+        },
+        { status: 201 },
+      );
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/billing/portal-session" &&
+      options.stripeClient
+    ) {
+      const auth = requireContext(context);
+      const authStore = requireAuthStore(options);
+      const org = await authStore.getOrg(auth.orgId);
+      if (!org.stripeCustomerId) {
+        return Response.json({ error: "no_stripe_customer" }, { status: 400 });
+      }
+      const { returnUrl } = z
+        .object({ returnUrl: z.string().url() })
+        .parse(await request.json());
+      const url_ = await options.stripeClient.createPortalSession(
+        org.stripeCustomerId,
+        returnUrl,
+      );
+      return Response.json({ url: url_ });
+    }
+
+    if (
+      request.method === "GET" &&
+      parts.length === 2 &&
+      parts[0] === "mcp" &&
+      parts[1] === "tools"
+    ) {
+      const tools = options.mcpRegistry
+        ? await options.mcpRegistry.listAllTools()
+        : [];
+      return Response.json(tools);
+    }
+
+    if (parts[0] !== "sessions") {
+      return notFound();
+    }
+
+    if (request.method === "POST" && parts.length === 1) {
+      const body = createSessionSchema.parse(await request.json());
+      if (context && options.billingTracker) {
+        await options.billingTracker.checkQuota(context.orgId);
+      }
+      const session = (await options.sessions.createSession(
+        body.repoPath,
+        {
+          ...(body.requireApproval === undefined
+            ? {}
+            : { requireApproval: body.requireApproval }),
+          ...(body.autoApprove === undefined
+            ? {}
+            : { autoApprove: body.autoApprove }),
+          mode: body.mode,
+          ...(body.extraRepoPaths?.length
+            ? { extraRepoPaths: body.extraRepoPaths }
+            : {}),
+        },
+        context ?? undefined,
+      )) as Session;
+      if (context && options.billingTracker) {
+        await options.billingTracker.onContainerStart(
+          session.id,
+          context.orgId,
+        );
+      }
+      return Response.json(session, { status: 201 });
+    }
+
+    const sessionId = parts[1];
+
+    if (!sessionId || !isValidSessionId(sessionId)) {
+      return notFound();
+    }
+
+    if (options.cloud) {
+      await options.sessions.getSession(sessionId, context?.orgId);
+    }
+
+    if (request.method === "GET" && parts.length === 2) {
+      return Response.json(
+        await options.sessions.getSession(sessionId, context?.orgId),
+      );
+    }
+
+    if (request.method === "DELETE" && parts.length === 2) {
+      await options.sessions.destroySession(sessionId);
+      if (context && options.billingTracker) {
+        await options.billingTracker.onContainerStop(sessionId);
+      }
+      return new Response(null, { status: 204 });
+    }
+
+    if (
+      request.method === "GET" &&
+      parts.length === 3 &&
+      parts[2] === "stream"
+    ) {
+      const encoder = new TextEncoder();
+      let detach: (() => void) | undefined;
+
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      const readable = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const socket: StreamSocket = {
+            send(data: string) {
               try {
-                controller.enqueue(encoder.encode(": keepalive\n\n"));
+                controller.enqueue(encoder.encode(`data: ${data}\n\n`));
               } catch {
-                clearInterval(heartbeat);
+                // client disconnected
               }
-            }, 5000);
-          },
-          cancel() {
-            clearInterval(heartbeat);
-            detach?.();
-          },
-        });
+            },
+            close() {
+              clearInterval(heartbeat);
+              try {
+                controller.close();
+              } catch {
+                // already closed
+              }
+            },
+          };
 
-        return new Response(readable, {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-          },
-        });
+          try {
+            detach = options.streams.attach(sessionId, socket);
+          } catch (error) {
+            socket.send(JSON.stringify(toErrorFrame(error)));
+            controller.close();
+            return;
+          }
+
+          heartbeat = setInterval(() => {
+            try {
+              controller.enqueue(encoder.encode(": keepalive\n\n"));
+            } catch {
+              clearInterval(heartbeat);
+            }
+          }, 5000);
+        },
+        cancel() {
+          clearInterval(heartbeat);
+          detach?.();
+        },
+      });
+
+      return new Response(readable, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+        },
+      });
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
+      parts[2] === "permission"
+    ) {
+      const body = permissionSchema.parse(await request.json());
+      const permissions = requirePermissions(options);
+      await options.sessions.getSession(sessionId);
+      permissions.resolvePermission(sessionId, body.requestId, body.approved);
+      return Response.json({ ok: true });
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
+      parts[2] === "messages"
+    ) {
+      const body = messageSchema.parse(await request.json());
+      const conversations = requireConversations(options);
+      const session = await options.sessions.getSession(
+        sessionId,
+        context?.orgId,
+      );
+      if (session.mode === "chat") {
+        void conversations
+          .addMessage(sessionId, body.content, context?.orgId)
+          .catch((error: unknown) => {
+            logger.error({
+              msg: "conversation response failed",
+              requestId,
+              sessionId,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            });
+          });
+      } else {
+        void options.sessions
+          .startTask(sessionId, body.content)
+          .catch((error: unknown) => {
+            logger.error({
+              msg: "task start failed",
+              requestId,
+              sessionId,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            });
+          });
       }
+      return Response.json({ accepted: true }, { status: 202 });
+    }
 
-      if (
-        request.method === "POST" &&
-        parts.length === 3 &&
-        parts[2] === "permission"
-      ) {
-        const body = permissionSchema.parse(await request.json());
-        const permissions = requirePermissions(options);
-        await options.sessions.getSession(sessionId);
-        permissions.resolvePermission(sessionId, body.requestId, body.approved);
-        return Response.json({ ok: true });
+    if (
+      request.method === "GET" &&
+      parts.length === 3 &&
+      parts[2] === "messages"
+    ) {
+      const conversations = requireConversations(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      const before = url.searchParams.get("before");
+      return Response.json(
+        await conversations.getMessages(
+          sessionId,
+          {
+            ...(before ? { before } : {}),
+            limit: readMessageLimit(url.searchParams.get("limit")),
+          },
+          context?.orgId,
+        ),
+      );
+    }
+
+    if (
+      request.method === "DELETE" &&
+      parts.length === 3 &&
+      parts[2] === "messages"
+    ) {
+      const conversations = requireConversations(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      await conversations.clear(sessionId, context?.orgId);
+      return new Response(null, { status: 204 });
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
+      parts[2] === "cancel"
+    ) {
+      const conversations = requireConversations(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      conversations.cancel(sessionId);
+      return Response.json({ ok: true });
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
+      parts[2] === "compact"
+    ) {
+      const compaction = requireCompaction(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      const summary = await compaction.compact(sessionId);
+      return Response.json({ compacted: summary !== null, summary });
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
+      (parts[2] === "task" || parts[2] === "tasks")
+    ) {
+      const body = taskSchema.parse(await request.json());
+      const plan = await options.sessions.startTask(sessionId, body.prompt);
+      return Response.json(plan, { status: 202 });
+    }
+
+    if (
+      request.method === "GET" &&
+      ((parts.length === 3 && parts[2] === "plan") ||
+        (parts.length === 4 && parts[2] === "plans" && parts[3] === "current"))
+    ) {
+      await options.sessions.getSession(sessionId, context?.orgId);
+      const plan = (await options.sessions.currentPlan(sessionId)) as
+        | ({ content?: string } & Record<string, unknown>)
+        | null;
+      if (!plan) {
+        return notFound();
       }
-
-      if (
-        request.method === "POST" &&
-        parts.length === 3 &&
-        parts[2] === "messages"
-      ) {
-        const body = messageSchema.parse(await request.json());
-        const conversations = requireConversations(options);
+      if (parts.length === 3 && parts[2] === "plan") {
         const session = await options.sessions.getSession(
           sessionId,
           context?.orgId,
         );
-        if (session.mode === "chat") {
-          void conversations
-            .addMessage(sessionId, body.content, context?.orgId)
-            .catch((error: unknown) => {
-              logger.error({
-                msg: "conversation response failed",
-                requestId,
-                sessionId,
-                error: error instanceof Error ? error.message : String(error),
-                stack: error instanceof Error ? error.stack : undefined,
-              });
-            });
-        } else {
-          void options.sessions
-            .startTask(sessionId, body.content)
-            .catch((error: unknown) => {
-              logger.error({
-                msg: "task start failed",
-                requestId,
-                sessionId,
-                error: error instanceof Error ? error.message : String(error),
-                stack: error instanceof Error ? error.stack : undefined,
-              });
-            });
-        }
-        return Response.json({ accepted: true }, { status: 202 });
+        const content = await readFile(
+          join(session.repoPath, "PLAN.md"),
+          "utf8",
+        ).catch(() => plan.content);
+        return Response.json({ ...plan, content });
       }
-
-      if (
-        request.method === "GET" &&
-        parts.length === 3 &&
-        parts[2] === "messages"
-      ) {
-        const conversations = requireConversations(options);
-        await options.sessions.getSession(sessionId, context?.orgId);
-        const before = url.searchParams.get("before");
-        return Response.json(
-          await conversations.getMessages(
-            sessionId,
-            {
-              ...(before ? { before } : {}),
-              limit: readMessageLimit(url.searchParams.get("limit")),
-            },
-            context?.orgId,
-          ),
-        );
-      }
-
-      if (
-        request.method === "DELETE" &&
-        parts.length === 3 &&
-        parts[2] === "messages"
-      ) {
-        const conversations = requireConversations(options);
-        await options.sessions.getSession(sessionId, context?.orgId);
-        await conversations.clear(sessionId, context?.orgId);
-        return new Response(null, { status: 204 });
-      }
-
-      if (
-        request.method === "POST" &&
-        parts.length === 3 &&
-        parts[2] === "cancel"
-      ) {
-        const conversations = requireConversations(options);
-        await options.sessions.getSession(sessionId, context?.orgId);
-        conversations.cancel(sessionId);
-        return Response.json({ ok: true });
-      }
-
-      if (
-        request.method === "POST" &&
-        parts.length === 3 &&
-        parts[2] === "compact"
-      ) {
-        const compaction = requireCompaction(options);
-        await options.sessions.getSession(sessionId, context?.orgId);
-        const summary = await compaction.compact(sessionId);
-        return Response.json({ compacted: summary !== null, summary });
-      }
-
-      if (
-        request.method === "POST" &&
-        parts.length === 3 &&
-        (parts[2] === "task" || parts[2] === "tasks")
-      ) {
-        const body = taskSchema.parse(await request.json());
-        const plan = await options.sessions.startTask(sessionId, body.prompt);
-        return Response.json(plan, { status: 202 });
-      }
-
-      if (
-        request.method === "GET" &&
-        ((parts.length === 3 && parts[2] === "plan") ||
-          (parts.length === 4 &&
-            parts[2] === "plans" &&
-            parts[3] === "current"))
-      ) {
-        await options.sessions.getSession(sessionId, context?.orgId);
-        const plan = (await options.sessions.currentPlan(sessionId)) as
-          | ({ content?: string } & Record<string, unknown>)
-          | null;
-        if (!plan) {
-          return notFound();
-        }
-        if (parts.length === 3 && parts[2] === "plan") {
-          const session = await options.sessions.getSession(
-            sessionId,
-            context?.orgId,
-          );
-          const content = await readFile(
-            join(session.repoPath, "PLAN.md"),
-            "utf8",
-          ).catch(() => plan.content);
-          return Response.json({ ...plan, content });
-        }
-        return Response.json(plan);
-      }
-
-      if (
-        request.method === "POST" &&
-        parts.length === 3 &&
-        parts[2] === "approve"
-      ) {
-        await options.sessions.approve(sessionId);
-        return Response.json({ ok: true });
-      }
-
-      if (
-        request.method === "POST" &&
-        parts.length === 5 &&
-        parts[2] === "plans" &&
-        parts[4] === "approve"
-      ) {
-        const planId = parts[3];
-
-        if (!planId || !PLAN_ID_RE.test(planId)) {
-          return notFound();
-        }
-
-        await options.sessions.approve(sessionId, planId);
-        return Response.json({ ok: true });
-      }
-
-      if (
-        request.method === "POST" &&
-        parts.length === 3 &&
-        parts[2] === "reject"
-      ) {
-        const body = rejectSchema.parse(await request.json());
-        const plan = await options.sessions.reject(sessionId, body.feedback);
-        return Response.json(plan);
-      }
-
-      if (
-        request.method === "POST" &&
-        parts.length === 5 &&
-        parts[2] === "plans" &&
-        parts[4] === "reject"
-      ) {
-        const planId = parts[3];
-
-        if (!planId || !PLAN_ID_RE.test(planId)) {
-          return notFound();
-        }
-
-        const body = rejectSchema.parse(await request.json());
-        const plan = await options.sessions.reject(
-          sessionId,
-          body.feedback,
-          planId,
-        );
-        return Response.json(plan);
-      }
-
-      if (
-        request.method === "GET" &&
-        parts.length === 3 &&
-        parts[2] === "checkpoints"
-      ) {
-        return Response.json(await options.sessions.listCheckpoints(sessionId));
-      }
-
-      if (
-        request.method === "POST" &&
-        parts.length === 5 &&
-        parts[2] === "checkpoints" &&
-        parts[4] === "restore"
-      ) {
-        const hash = parts[3];
-
-        if (!hash || !COMMIT_HASH_RE.test(hash)) {
-          return notFound();
-        }
-
-        await options.sessions.restore(sessionId, hash);
-        return Response.json({ ok: true });
-      }
-
-      return notFound();
-    } catch (error) {
-      return toErrorResponse(error, requestId);
+      return Response.json(plan);
     }
-  };
+
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
+      parts[2] === "approve"
+    ) {
+      await options.sessions.approve(sessionId);
+      return Response.json({ ok: true });
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 5 &&
+      parts[2] === "plans" &&
+      parts[4] === "approve"
+    ) {
+      const planId = parts[3];
+
+      if (!planId || !PLAN_ID_RE.test(planId)) {
+        return notFound();
+      }
+
+      await options.sessions.approve(sessionId, planId);
+      return Response.json({ ok: true });
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
+      parts[2] === "reject"
+    ) {
+      const body = rejectSchema.parse(await request.json());
+      const plan = await options.sessions.reject(sessionId, body.feedback);
+      return Response.json(plan);
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 5 &&
+      parts[2] === "plans" &&
+      parts[4] === "reject"
+    ) {
+      const planId = parts[3];
+
+      if (!planId || !PLAN_ID_RE.test(planId)) {
+        return notFound();
+      }
+
+      const body = rejectSchema.parse(await request.json());
+      const plan = await options.sessions.reject(
+        sessionId,
+        body.feedback,
+        planId,
+      );
+      return Response.json(plan);
+    }
+
+    if (
+      request.method === "GET" &&
+      parts.length === 3 &&
+      parts[2] === "checkpoints"
+    ) {
+      return Response.json(
+        await options.sessions.listCheckpoints(
+          sessionId,
+          readPageOptions(url.searchParams),
+        ),
+      );
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 5 &&
+      parts[2] === "checkpoints" &&
+      parts[4] === "restore"
+    ) {
+      const hash = parts[3];
+
+      if (!hash || !COMMIT_HASH_RE.test(hash)) {
+        return notFound();
+      }
+
+      await options.sessions.restore(sessionId, hash);
+      return Response.json({ ok: true });
+    }
+
+    return notFound();
+  } catch (error) {
+    return toErrorResponse(error, requestId, options.errorReporter);
+  }
 }
 
 interface WebSocketData {
@@ -787,14 +877,24 @@ function createServeOptions(
             requireJwtService(options),
           );
           if (!context) {
-            return Response.json({ error: "Unauthorized" }, { status: 401 });
+            return withStandardHeaders(
+              Response.json({ error: "Unauthorized" }, { status: 401 }),
+              request.headers.get("x-request-id") ?? crypto.randomUUID(),
+              corsHeadersFor(request, options),
+            );
           }
         }
 
         try {
           await options.sessions.getSession(parts[1], context?.orgId);
         } catch (error) {
-          return toErrorResponse(error, crypto.randomUUID());
+          const requestId =
+            request.headers.get("x-request-id") ?? crypto.randomUUID();
+          return withStandardHeaders(
+            toErrorResponse(error, requestId, options.errorReporter),
+            requestId,
+            corsHeadersFor(request, options),
+          );
         }
 
         const upgraded = server.upgrade(request, {
@@ -887,6 +987,7 @@ function isAuthExempt(method: string, pathname: string): boolean {
     (method === "POST" &&
       (pathname === "/auth/register" ||
         pathname === "/auth/login" ||
+        pathname === "/auth/invitations/accept" ||
         pathname === "/webhooks/stripe")) ||
     (method === "GET" && pathname === "/health")
   );
@@ -900,11 +1001,143 @@ function readMessageLimit(value: string | null): number {
   return messageLimitSchema.parse(value);
 }
 
+function readPageOptions(params: { get(name: string): string | null }): {
+  before?: string;
+  limit: number;
+} {
+  const before = params.get("before");
+  return {
+    ...(before ? { before } : {}),
+    limit:
+      params.get("limit") === null
+        ? 50
+        : pageLimitSchema.parse(params.get("limit")),
+  };
+}
+
+function withStandardHeaders(
+  response: Response,
+  requestId: string,
+  corsHeaders: Record<string, string> | null,
+): Response {
+  const headers = new Headers(response.headers);
+  headers.set("X-Request-ID", requestId);
+  for (const [key, value] of Object.entries(corsHeaders ?? {})) {
+    headers.set(key, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function corsHeadersFor(
+  request: Request,
+  options: DaemonServerOptions,
+): Record<string, string> | null {
+  if (!options.corsOrigins?.length) {
+    return null;
+  }
+
+  const origin = request.headers.get("origin");
+  if (!origin || !options.corsOrigins.includes(origin)) {
+    return { Vary: "Origin" };
+  }
+
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Request-ID",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    Vary: "Origin",
+  };
+}
+
+async function enforceAuthRateLimit(
+  options: DaemonServerOptions,
+  request: Request,
+  target:
+    | { endpoint: "login" | "register"; email: string }
+    | { endpoint: "acceptInvite" },
+): Promise<Response | null> {
+  if (!options.rateLimiter) {
+    return null;
+  }
+
+  const ip = clientIp(request);
+  const checks =
+    target.endpoint === "login"
+      ? [
+          { key: `auth:login:ip:${ip}`, options: AUTH_LIMITS.loginIp },
+          {
+            key: `auth:login:email:${target.email.trim().toLowerCase()}`,
+            options: AUTH_LIMITS.loginEmail,
+          },
+        ]
+      : target.endpoint === "register"
+        ? [{ key: `auth:register:ip:${ip}`, options: AUTH_LIMITS.registerIp }]
+        : [
+            {
+              key: `auth:accept-invite:ip:${ip}`,
+              options: AUTH_LIMITS.acceptInviteIp,
+            },
+          ];
+
+  for (const check of checks) {
+    const result = await options.rateLimiter.consume(check.key, check.options);
+    if (!result.allowed) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((result.resetAt - Date.now()) / 1000),
+      );
+      return Response.json(
+        { error: "rate_limited" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(retryAfterSeconds),
+            "RateLimit-Limit": String(check.options.limit),
+            "RateLimit-Remaining": String(result.remaining),
+            "RateLimit-Reset": String(Math.ceil(result.resetAt / 1000)),
+          },
+        },
+      );
+    }
+  }
+
+  return null;
+}
+
+const AUTH_LIMITS = {
+  loginIp: { limit: 20, windowMs: 60_000 },
+  loginEmail: { limit: 5, windowMs: 15 * 60_000 },
+  registerIp: { limit: 5, windowMs: 60 * 60_000 },
+  acceptInviteIp: { limit: 10, windowMs: 60 * 60_000 },
+} satisfies Record<string, RateLimitOptions>;
+
+function clientIp(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded) {
+    return forwarded.split(",", 1)[0]?.trim() || "unknown";
+  }
+
+  return (
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-real-ip") ??
+    "local"
+  );
+}
+
 function notFound(): Response {
   return Response.json({ error: "not_found" }, { status: 404 });
 }
 
-function toErrorResponse(error: unknown, requestId: string): Response {
+function toErrorResponse(
+  error: unknown,
+  requestId: string,
+  errorReporter?: ErrorReporter,
+): Response {
   if (error instanceof ZodError) {
     return Response.json(
       { error: "invalid_request", issues: error.issues },
@@ -930,13 +1163,37 @@ function toErrorResponse(error: unknown, requestId: string): Response {
     );
   }
 
+  if (error instanceof InvalidCheckpointCursorError) {
+    return Response.json(
+      { error: "invalid_checkpoint_cursor" },
+      { status: 400 },
+    );
+  }
+
+  if (
+    error instanceof InvalidInviteTokenError ||
+    error instanceof InvalidMemberCursorError
+  ) {
+    return Response.json({ error: error.message }, { status: 400 });
+  }
+
   if (
     error instanceof SessionNotLiveError ||
     error instanceof InvalidTransitionError
   ) {
-    return Response.json({ error: error.message }, { status: 409 });
+    const code =
+      error instanceof SessionNotLiveError
+        ? "session_not_live"
+        : "invalid_session_state";
+    logger.warn({
+      msg: "client state conflict",
+      requestId,
+      error: error.message,
+    });
+    return Response.json({ error: code }, { status: 409 });
   }
 
+  errorReporter?.captureException(error, { requestId });
   logger.error({
     msg: "unhandled request error",
     requestId,
@@ -947,6 +1204,14 @@ function toErrorResponse(error: unknown, requestId: string): Response {
 }
 
 function toErrorFrame(error: unknown): { type: "error"; message: string } {
+  if (error instanceof SessionNotLiveError) {
+    return { type: "error", message: "session_not_live" };
+  }
+
+  if (error instanceof InvalidTransitionError) {
+    return { type: "error", message: "invalid_session_state" };
+  }
+
   return {
     type: "error",
     message: error instanceof Error ? error.message : String(error),

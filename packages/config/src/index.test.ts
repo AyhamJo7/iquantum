@@ -45,6 +45,8 @@ describe("loadConfig", () => {
       awsSubnetIds: undefined,
       awsSecurityGroupIds: undefined,
       awsAssignPublicIp: false,
+      corsOrigins: undefined,
+      sentryDsn: undefined,
     });
   });
 
@@ -166,11 +168,16 @@ describe("loadConfig", () => {
         AWS_EFS_FILE_SYSTEM_ID: "fs-123",
         AWS_SUBNET_IDS: "subnet-a,subnet-b",
         AWS_SECURITY_GROUP_IDS: "sg-a",
+        IQUANTUM_CORS_ORIGINS:
+          "https://app.example.com,https://admin.example.com",
+        SENTRY_DSN: "https://public@example.com/1",
       }),
     ).toMatchObject({
       cloud: true,
       awsSubnetIds: ["subnet-a", "subnet-b"],
       awsSecurityGroupIds: ["sg-a"],
+      corsOrigins: ["https://app.example.com", "https://admin.example.com"],
+      sentryDsn: "https://public@example.com/1",
     });
   });
 

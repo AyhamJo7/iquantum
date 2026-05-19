@@ -375,6 +375,73 @@ describe("buildRepoMap", () => {
     expect(result.map).toContain("loadConfig");
     expect(result.map).toContain("extractSymbolSignatures");
   });
+
+  it("merges symbols from extra repos into the map", async () => {
+    const primary = await makeTempRepo();
+    const extra = await makeTempRepo();
+
+    await writeRepoFile(
+      primary,
+      "src/primary.ts",
+      "export function primaryFn() {}",
+    );
+    await writeRepoFile(extra, "src/extra.ts", "export function extraFn() {}");
+
+    const result = await buildRepoMap(primary, {
+      extraRepoPaths: [extra],
+    });
+
+    expect(result.map).toContain("primaryFn");
+    expect(result.map).toContain("extraFn");
+    expect(result.fromCache).toBe(false);
+  });
+
+  it("caches merged multi-repo maps by combined hash", async () => {
+    const primary = await makeTempRepo();
+    const extra = await makeTempRepo();
+
+    await writeRepoFile(primary, "src/a.ts", "export function aFn() {}");
+    await writeRepoFile(extra, "src/b.ts", "export function bFn() {}");
+
+    const values = new Map<string, string>();
+    const cache: RepoMapCache = {
+      async get(key) {
+        return values.get(key) ?? null;
+      },
+      async set(key, value) {
+        values.set(key, value);
+      },
+    };
+
+    const opts = { extraRepoPaths: [extra], cache };
+    const first = await buildRepoMap(primary, opts);
+    const second = await buildRepoMap(primary, opts);
+
+    expect(first.fromCache).toBe(false);
+    expect(second.fromCache).toBe(true);
+    expect(second.map).toBe(first.map);
+  });
+
+  it("returns only primary repo symbols when extraRepoPaths is empty", async () => {
+    const primary = await makeTempRepo();
+    const extra = await makeTempRepo();
+
+    await writeRepoFile(
+      primary,
+      "src/primary.ts",
+      "export function onlyPrimary() {}",
+    );
+    await writeRepoFile(
+      extra,
+      "src/extra.ts",
+      "export function notIncluded() {}",
+    );
+
+    const result = await buildRepoMap(primary, { extraRepoPaths: [] });
+
+    expect(result.map).toContain("onlyPrimary");
+    expect(result.map).not.toContain("notIncluded");
+  });
 });
 
 function pickComparableFields(symbol: {

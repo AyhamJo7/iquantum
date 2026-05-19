@@ -39,6 +39,8 @@ describe("resolveStartupConfig", () => {
         awsSubnetIds: undefined,
         awsSecurityGroupIds: undefined,
         awsAssignPublicIp: false,
+        corsOrigins: undefined,
+        sentryDsn: undefined,
       }),
       "/tmp/iq",
     );

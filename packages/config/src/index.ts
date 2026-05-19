@@ -109,6 +109,8 @@ const envSchema = z
     AWS_SUBNET_IDS: optionalCsv,
     AWS_SECURITY_GROUP_IDS: optionalCsv,
     AWS_ASSIGN_PUBLIC_IP: envBoolean,
+    IQUANTUM_CORS_ORIGINS: optionalCsv,
+    SENTRY_DSN: optionalUrl,
   })
   .superRefine((value, context) => {
     if (value.IQUANTUM_PROVIDER === "openai" && !value.IQUANTUM_BASE_URL) {
@@ -146,6 +148,8 @@ export interface IquantumConfig {
   awsSubnetIds: string[] | undefined;
   awsSecurityGroupIds: string[] | undefined;
   awsAssignPublicIp: boolean;
+  corsOrigins: string[] | undefined;
+  sentryDsn: string | undefined;
 }
 
 export interface LoadConfigOptions {
@@ -192,6 +196,8 @@ export function loadConfig(
     awsSubnetIds: parsed.AWS_SUBNET_IDS,
     awsSecurityGroupIds: parsed.AWS_SECURITY_GROUP_IDS,
     awsAssignPublicIp: parsed.AWS_ASSIGN_PUBLIC_IP,
+    corsOrigins: parsed.IQUANTUM_CORS_ORIGINS,
+    sentryDsn: parsed.SENTRY_DSN,
   };
 }
 

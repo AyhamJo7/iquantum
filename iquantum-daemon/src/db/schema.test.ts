@@ -37,6 +37,10 @@ describe("initializeSchema", () => {
     expect(
       statements.some((sql) => sql.includes("CREATE TABLE tool_uses")),
     ).toBe(true);
+    expect(
+      statements.some((sql) => sql.includes("CREATE TABLE invite_tokens")),
+    ).toBe(true);
+    expect(statements.some((sql) => sql.includes("deleted_at"))).toBe(true);
     expect(statements.some((sql) => sql.includes("ADD COLUMN task_id"))).toBe(
       true,
     );
@@ -71,6 +75,11 @@ describe("initializeSchema", () => {
     expect(
       statements.some((sql) =>
         sql.includes("CREATE TABLE IF NOT EXISTS api_tokens"),
+      ),
+    ).toBe(true);
+    expect(
+      statements.some((sql) =>
+        sql.includes("CREATE TABLE IF NOT EXISTS invite_tokens"),
       ),
     ).toBe(true);
     expect(

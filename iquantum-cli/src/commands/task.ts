@@ -3,6 +3,7 @@ import { isDaemonNotRunning } from "../client";
 
 export interface TaskOptions {
   repo?: string;
+  extraRepo?: string[];
 }
 
 export type PromptFn = (question: string) => Promise<string>;
@@ -27,6 +28,9 @@ export async function runTask(
     session = await client.createSession(repoPath, {
       requireApproval: true,
       autoApprove: true,
+      ...(options.extraRepo?.length
+        ? { extraRepoPaths: options.extraRepo }
+        : {}),
     });
   } catch (error) {
     if (isDaemonNotRunning(error)) {

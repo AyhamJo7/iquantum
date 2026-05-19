@@ -1,12 +1,12 @@
 import { DiffEngine } from "@iquantum/diff-engine";
-import type { GitCheckpointStore } from "@iquantum/git";
+import type { GitCheckpointPage, GitCheckpointStore } from "@iquantum/git";
 import { GitManager } from "@iquantum/git";
 import type { LLMRouter } from "@iquantum/llm";
 import type { PIVEngineOptions, PIVStore } from "@iquantum/piv-engine";
 import { PIVEngine } from "@iquantum/piv-engine";
 import type { SandboxManager } from "@iquantum/sandbox";
 import { loadTestCommand } from "@iquantum/sandbox";
-import type { GitCheckpoint, Plan, Session } from "@iquantum/types";
+import type { Plan, Session } from "@iquantum/types";
 import type { SessionStore } from "./db/stores";
 
 export interface SessionEngine {
@@ -46,6 +46,7 @@ export interface CreateSessionOptions {
   requireApproval?: boolean;
   autoApprove?: boolean;
   mode?: "piv" | "chat";
+  extraRepoPaths?: string[];
 }
 
 export interface SessionContext {
@@ -146,6 +147,9 @@ export class SessionController {
     const engine = this.#createEngine({
       sessionId,
       repoPath,
+      ...(options.extraRepoPaths?.length
+        ? { extraRepoPaths: options.extraRepoPaths }
+        : {}),
       testCommand,
       store: this.#pivStore,
       llmRouter: this.#llmRouterFactory(),
@@ -222,10 +226,14 @@ export class SessionController {
     return this.#pivStore.getCurrentPlan(sessionId);
   }
 
-  async listCheckpoints(sessionId: string): Promise<GitCheckpoint[]> {
+  async listCheckpoints(
+    sessionId: string,
+    options: { before?: string; limit: number } = { limit: 50 },
+  ): Promise<GitCheckpointPage> {
     await this.getSession(sessionId);
     return this.#requireLiveSession(sessionId).gitManager.listCheckpoints(
       sessionId,
+      options,
     );
   }
 

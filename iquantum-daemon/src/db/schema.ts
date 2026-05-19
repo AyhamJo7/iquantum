@@ -197,6 +197,28 @@ const migrations: readonly Migration[] = [
       CREATE INDEX idx_billing_events_org_created ON billing_events(org_id, created_at);
     `,
   },
+  {
+    version: 11,
+    sql: `
+      ALTER TABLE users ADD COLUMN deleted_at TEXT;
+
+      CREATE TABLE invite_tokens (
+        id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL REFERENCES organizations(id),
+        email TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member'
+          CHECK (role IN ('owner', 'member')),
+        token_hash TEXT NOT NULL UNIQUE,
+        created_by_user_id TEXT NOT NULL REFERENCES users(id),
+        expires_at TEXT NOT NULL,
+        accepted_at TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_invite_tokens_org_id ON invite_tokens(org_id);
+      CREATE INDEX idx_invite_tokens_token_hash ON invite_tokens(token_hash);
+    `,
+  },
 ];
 
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
@@ -263,7 +285,8 @@ const postgresBootstrapStatements = [
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'member'
       CHECK (role IN ('owner', 'member')),
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    deleted_at TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -357,6 +380,18 @@ const postgresBootstrapStatements = [
     revoked_at TEXT,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS invite_tokens (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES organizations(id),
+    email TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member'
+      CHECK (role IN ('owner', 'member')),
+    token_hash TEXT NOT NULL UNIQUE,
+    created_by_user_id TEXT NOT NULL REFERENCES users(id),
+    expires_at TEXT NOT NULL,
+    accepted_at TEXT,
+    created_at TEXT NOT NULL
+  )`,
   "CREATE INDEX IF NOT EXISTS idx_users_org_id ON users(org_id)",
   "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
   "CREATE INDEX IF NOT EXISTS idx_sessions_org_id ON sessions(org_id)",
@@ -369,6 +404,8 @@ const postgresBootstrapStatements = [
   "CREATE INDEX IF NOT EXISTS idx_tool_uses_message_id ON tool_uses(message_id)",
   "CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id)",
   "CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash)",
+  "CREATE INDEX IF NOT EXISTS idx_invite_tokens_org_id ON invite_tokens(org_id)",
+  "CREATE INDEX IF NOT EXISTS idx_invite_tokens_token_hash ON invite_tokens(token_hash)",
   "CREATE INDEX IF NOT EXISTS idx_billing_events_org_created ON billing_events(org_id, created_at)",
   `INSERT INTO schema_migrations (version, applied_at)
    VALUES (${latestSchemaVersion}, CURRENT_TIMESTAMP)

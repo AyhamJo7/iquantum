@@ -40,6 +40,7 @@ export interface PIVStore {
 export interface PIVEngineOptions {
   sessionId: string;
   repoPath: string;
+  extraRepoPaths?: string[];
   testCommand: string;
   store: PIVStore;
   llmRouter: Pick<LLMRouter, "complete">;
@@ -114,6 +115,7 @@ export class PIVEngine {
   readonly events = new EventEmitter<PIVEngineEventMap>();
   readonly #sessionId: string;
   readonly #repoPath: string;
+  readonly #extraRepoPaths: string[];
   readonly #testCommand: string;
   readonly #store: PIVStore;
   readonly #llmRouter: Pick<LLMRouter, "complete">;
@@ -141,6 +143,7 @@ export class PIVEngine {
   constructor(options: PIVEngineOptions) {
     this.#sessionId = options.sessionId;
     this.#repoPath = options.repoPath;
+    this.#extraRepoPaths = options.extraRepoPaths ?? [];
     this.#testCommand = options.testCommand;
     this.#store = options.store;
     this.#llmRouter = options.llmRouter;
@@ -214,7 +217,14 @@ export class PIVEngine {
   async #plan(feedback?: string): Promise<Plan> {
     await this.#transition("planning");
     const planId = this.#createId();
-    this.#repoMap ??= (await this.#repoMapBuilder(this.#repoPath)).map;
+    this.#repoMap ??= (
+      await this.#repoMapBuilder(
+        this.#repoPath,
+        this.#extraRepoPaths.length > 0
+          ? { extraRepoPaths: this.#extraRepoPaths }
+          : {},
+      )
+    ).map;
 
     const content = await this.#complete("plan", this.#planMessages(feedback), {
       maxTokens: this.#maxPlanTokens,

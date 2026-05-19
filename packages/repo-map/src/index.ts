@@ -35,6 +35,7 @@ export interface RepoMapCache {
 export interface BuildRepoMapOptions {
   budget?: number;
   cache?: RepoMapCache;
+  extraRepoPaths?: string[];
 }
 
 export interface RepoMapResult {
@@ -365,9 +366,12 @@ export async function buildRepoMap(
   opts: BuildRepoMapOptions = {},
 ): Promise<RepoMapResult> {
   const repoRoot = resolve(repoPath);
+  const extraRoots = (opts.extraRepoPaths ?? []).map((p) => resolve(p));
+  const allRoots = [repoRoot, ...extraRoots];
   const budget = opts.budget ?? 1000;
-  const hash = await contentHash(repoRoot);
-  const cacheKey = `${repoRoot}:${hash}`;
+
+  const hashes = await Promise.all(allRoots.map(contentHash));
+  const cacheKey = allRoots.map((r, i) => `${r}:${hashes[i]}`).join("|");
 
   if (opts.cache) {
     const cached = await opts.cache.get(cacheKey);
@@ -381,9 +385,16 @@ export async function buildRepoMap(
     }
   }
 
-  const graph = await buildDependencyGraph(repoRoot);
-  const scores = scoreSymbols(graph);
-  const map = trimTobudget(graph, scores, budget);
+  const graphs = await Promise.all(allRoots.map(buildDependencyGraph));
+  const merged: DependencyGraph = new Map();
+  for (const graph of graphs) {
+    for (const [key, value] of graph) {
+      merged.set(key, value);
+    }
+  }
+
+  const scores = scoreSymbols(merged);
+  const map = trimTobudget(merged, scores, budget);
   const tokenCount = roughTokenCount(map);
 
   await opts.cache?.set(cacheKey, map, tokenCount);
