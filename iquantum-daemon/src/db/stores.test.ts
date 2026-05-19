@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { DbAdapter } from "./adapter";
-import { AdapterConversationStore, SqliteSessionStore } from "./stores";
+import {
+  AdapterConversationStore,
+  AdapterMemoryStore,
+  SqliteHookRunStore,
+  SqliteMemoryStore,
+  SqliteSessionStore,
+} from "./stores";
 
 describe("SqliteSessionStore", () => {
   it("deletes session children before removing the session row", async () => {
@@ -69,6 +75,191 @@ describe("AdapterConversationStore", () => {
     expect(db.lastQueryParams).toEqual(["session-1", "org-1"]);
   });
 });
+
+describe("SqliteMemoryStore", () => {
+  it("inserts memory with all fields and pinned as integer", async () => {
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const store = new SqliteMemoryStore({
+      query(sql: string) {
+        return {
+          run(...params: unknown[]) {
+            statements.push({ sql, params });
+          },
+          get() {
+            return null;
+          },
+          all() {
+            return [];
+          },
+        };
+      },
+    } as never);
+
+    await store.insert({
+      id: "mem-1",
+      userId: "user-1",
+      orgId: null,
+      type: "user",
+      name: "test-memory",
+      description: "desc",
+      body: "body content",
+      pinned: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+      updatedAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    expect(statements).toHaveLength(1);
+    expect(statements[0]?.sql).toContain("INSERT INTO memories");
+    expect(statements[0]?.params).toContain(1);
+    expect(statements[0]?.params).toContain("user-1");
+    expect(statements[0]?.params).toContain("test-memory");
+  });
+
+  it("listByUser applies org filter when orgId is provided", async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const store = new SqliteMemoryStore({
+      query(sql: string) {
+        return {
+          all(...params: unknown[]) {
+            queries.push({ sql, params: params.flat() });
+            return [];
+          },
+        };
+      },
+    } as never);
+
+    await store.listByUser("user-1", "org-1");
+
+    expect(queries[0]?.sql).toContain("org_id = ?");
+    expect(queries[0]?.params).toEqual(["user-1", "org-1"]);
+  });
+
+  it("listByUser without orgId omits org filter", async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const store = new SqliteMemoryStore({
+      query(sql: string) {
+        return {
+          all(...params: unknown[]) {
+            queries.push({ sql, params: params.flat() });
+            return [];
+          },
+        };
+      },
+    } as never);
+
+    await store.listByUser("user-1");
+
+    expect(queries[0]?.sql).not.toContain("org_id = ?");
+    expect(queries[0]?.params).toEqual(["user-1"]);
+  });
+});
+
+describe("SqliteHookRunStore", () => {
+  it("inserts hook run with blocked as integer", async () => {
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const store = new SqliteHookRunStore({
+      query(sql: string) {
+        return {
+          run(...params: unknown[]) {
+            statements.push({ sql, params });
+          },
+        };
+      },
+    } as never);
+
+    await store.insert({
+      id: "run-1",
+      hookName: "pre_tool_call",
+      eventType: "pre_tool_call",
+      sessionId: "session-1",
+      blocked: true,
+      durationMs: 42,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    expect(statements[0]?.sql).toContain("INSERT INTO hook_runs");
+    expect(statements[0]?.params).toContain(1);
+    expect(statements[0]?.params).toContain("session-1");
+  });
+
+  it("listBySession applies default limit of 100", async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const store = new SqliteHookRunStore({
+      query(sql: string) {
+        return {
+          all(...params: unknown[]) {
+            queries.push({ sql, params: params.flat() });
+            return [];
+          },
+        };
+      },
+    } as never);
+
+    await store.listBySession("session-1");
+
+    expect(queries[0]?.params).toEqual(["session-1", 100]);
+  });
+});
+
+describe("AdapterMemoryStore", () => {
+  it("upsertByName uses ON CONFLICT DO UPDATE", async () => {
+    const statements: string[] = [];
+    const db = new RecordingMemoryDb(statements);
+    const store = new AdapterMemoryStore(db);
+
+    await store.upsertByName({
+      id: "mem-1",
+      userId: "user-1",
+      orgId: null,
+      type: "feedback",
+      name: "my-memory",
+      description: "desc",
+      body: "body",
+      pinned: false,
+      createdAt: "2026-05-19T00:00:00.000Z",
+      updatedAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    expect(statements.some((sql) => sql.includes("ON CONFLICT"))).toBe(true);
+    expect(statements.some((sql) => sql.includes("DO UPDATE SET"))).toBe(true);
+  });
+});
+
+class RecordingMemoryDb implements DbAdapter {
+  constructor(private readonly statements: string[] = []) {}
+
+  async query<T extends object>(): Promise<T[]> {
+    return [];
+  }
+
+  async first<T extends object>(sql: string): Promise<T | null> {
+    if (sql.includes("WHERE user_id = ? AND name = ?")) {
+      return {
+        id: "mem-1",
+        userId: "user-1",
+        orgId: null,
+        type: "feedback",
+        name: "my-memory",
+        description: "desc",
+        body: "body",
+        pinned: 0,
+        createdAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      } as T;
+    }
+    return null;
+  }
+
+  async execute(sql: string): Promise<void> {
+    this.statements.push(sql);
+  }
+
+  async transaction<T>(fn: (db: DbAdapter) => Promise<T>): Promise<T> {
+    return fn(this);
+  }
+
+  async close(): Promise<void> {}
+}
 
 class RecordingConversationDb implements DbAdapter {
   lastQuerySql = "";

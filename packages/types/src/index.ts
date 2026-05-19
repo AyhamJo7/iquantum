@@ -1,3 +1,72 @@
+export type EffortLevel = "fast" | "normal" | "thorough";
+
+export type MemoryType = "user" | "feedback" | "project" | "reference";
+
+export interface Memory {
+  id: string;
+  userId: string;
+  orgId: string | null;
+  type: MemoryType;
+  name: string;
+  description: string;
+  body: string;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HookRun {
+  id: string;
+  hookName: string;
+  eventType: string;
+  sessionId: string | null;
+  blocked: boolean;
+  durationMs: number;
+  createdAt: string;
+}
+
+export type HookEvent =
+  | { type: "pre_tool_call"; tool: string; input: unknown; sessionId: string }
+  | {
+      type: "post_tool_call";
+      tool: string;
+      input: unknown;
+      output: string;
+      durationMs: number;
+    }
+  | { type: "pre_apply_diff"; file: string; patch: string; sessionId: string }
+  | {
+      type: "post_validate";
+      passed: boolean;
+      stdout: string;
+      stderr: string;
+      sessionId: string;
+    }
+  | {
+      type: "on_permission_request";
+      tool: string;
+      input: unknown;
+      sessionId: string;
+    }
+  | { type: "session_created"; sessionId: string; repoPath: string }
+  | { type: "session_destroyed"; sessionId: string }
+  | {
+      type: "plan_generated";
+      planId: string;
+      content: string;
+      sessionId: string;
+    }
+  | { type: "plan_approved"; planId: string; sessionId: string }
+  | {
+      type: "plan_rejected";
+      planId: string;
+      feedback: string;
+      sessionId: string;
+    }
+  | { type: "checkpoint_created"; commitHash: string; sessionId: string }
+  | { type: "task_started"; taskId: string; prompt: string; sessionId: string }
+  | { type: "task_completed"; taskId: string; sessionId: string };
+
 export type SessionStatus =
   | "idle"
   | "planning"
@@ -21,6 +90,9 @@ export interface Session {
   volumeId: string;
   config: Record<string, unknown>;
   mode: "piv" | "chat";
+  effort: EffortLevel;
+  worktreePath: string | null;
+  startCheckpointHash: string | null;
   userId: string | null;
   orgId: string | null;
   createdAt: string;

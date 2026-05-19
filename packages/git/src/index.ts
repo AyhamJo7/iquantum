@@ -14,6 +14,12 @@ export interface GitCheckpointPage {
   nextCursor: string | null;
 }
 
+export interface WorktreeInfo {
+  path: string;
+  branch: string;
+  commitHash: string;
+}
+
 export interface GitManagerOptions {
   repoPath: string;
   store: GitCheckpointStore;
@@ -66,6 +72,23 @@ export class GitManager {
   async restore(hash: string): Promise<void> {
     await this.#git.reset(["--hard", hash]);
   }
+
+  async currentHead(): Promise<string> {
+    return (await this.#git.revparse(["HEAD"])).trim();
+  }
+
+  async createWorktree(worktreePath: string, branch: string): Promise<void> {
+    await this.#git.raw(["worktree", "add", "-b", branch, worktreePath]);
+  }
+
+  async removeWorktree(worktreePath: string): Promise<void> {
+    await this.#git.raw(["worktree", "remove", "--force", worktreePath]);
+  }
+
+  async listWorktrees(): Promise<WorktreeInfo[]> {
+    const output = await this.#git.raw(["worktree", "list", "--porcelain"]);
+    return parseWorktreeList(output);
+  }
 }
 
 export class InMemoryGitCheckpointStore implements GitCheckpointStore {
@@ -95,6 +118,35 @@ export class InMemoryGitCheckpointStore implements GitCheckpointStore {
         checkpoints.length > options.limit ? (page.at(-1)?.id ?? null) : null,
     };
   }
+}
+
+function parseWorktreeList(output: string): WorktreeInfo[] {
+  const worktrees: WorktreeInfo[] = [];
+  const blocks = output.trim().split(/\n\n+/);
+
+  for (const block of blocks) {
+    const lines = block.split("\n");
+    const worktree: Partial<WorktreeInfo> = {};
+
+    for (const line of lines) {
+      if (line.startsWith("worktree ")) {
+        worktree.path = line.slice("worktree ".length).trim();
+      } else if (line.startsWith("HEAD ")) {
+        worktree.commitHash = line.slice("HEAD ".length).trim();
+      } else if (line.startsWith("branch ")) {
+        worktree.branch = line
+          .slice("branch ".length)
+          .trim()
+          .replace(/^refs\/heads\//, "");
+      }
+    }
+
+    if (worktree.path && worktree.commitHash && worktree.branch) {
+      worktrees.push(worktree as WorktreeInfo);
+    }
+  }
+
+  return worktrees;
 }
 
 function compareCheckpoints(left: GitCheckpoint, right: GitCheckpoint): number {

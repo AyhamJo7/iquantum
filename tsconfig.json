@@ -35,6 +35,21 @@
       "path": "./packages/ui-core"
     },
     {
+      "path": "./packages/file-tools"
+    },
+    {
+      "path": "./packages/web-tools"
+    },
+    {
+      "path": "./packages/memory"
+    },
+    {
+      "path": "./packages/hooks"
+    },
+    {
+      "path": "./packages/skills"
+    },
+    {
       "path": "./iquantum-daemon"
     },
     {

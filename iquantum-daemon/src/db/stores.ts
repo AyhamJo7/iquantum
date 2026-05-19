@@ -3,6 +3,8 @@ import type { GitCheckpointPage, GitCheckpointStore } from "@iquantum/git";
 import type { PIVStore } from "@iquantum/piv-engine";
 import type {
   GitCheckpoint,
+  HookRun,
+  Memory,
   Message,
   Plan,
   Session,
@@ -77,8 +79,10 @@ export class SqliteSessionStore implements SessionStore {
     this.#db
       .query(
         `INSERT INTO sessions (
-          id, status, repo_path, container_id, volume_id, config, mode, user_id, org_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, status, repo_path, container_id, volume_id, config, mode,
+          effort, worktree_path, start_checkpoint_hash,
+          user_id, org_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         session.id,
@@ -88,6 +92,9 @@ export class SqliteSessionStore implements SessionStore {
         session.volumeId,
         JSON.stringify(session.config),
         session.mode,
+        session.effort,
+        session.worktreePath,
+        session.startCheckpointHash,
         session.userId,
         session.orgId,
         session.createdAt,
@@ -106,6 +113,9 @@ export class SqliteSessionStore implements SessionStore {
           volume_id AS "volumeId",
           config,
           mode,
+          effort,
+          worktree_path AS "worktreePath",
+          start_checkpoint_hash AS "startCheckpointHash",
           user_id AS "userId",
           org_id AS "orgId",
           created_at AS "createdAt",
@@ -166,6 +176,9 @@ export class SqliteSessionStore implements SessionStore {
           volume_id AS "volumeId",
           config,
           mode,
+          effort,
+          worktree_path AS "worktreePath",
+          start_checkpoint_hash AS "startCheckpointHash",
           user_id AS "userId",
           org_id AS "orgId",
           created_at AS "createdAt",
@@ -561,7 +574,390 @@ export class SqliteGitCheckpointStore implements GitCheckpointStore {
   }
 }
 
+export interface MemoryStore {
+  insert(memory: Memory): Promise<void>;
+  get(id: string, userId: string): Promise<Memory | null>;
+  getByName(userId: string, name: string): Promise<Memory | null>;
+  listByUser(userId: string, orgId?: string): Promise<Memory[]>;
+  update(
+    id: string,
+    userId: string,
+    updates: Partial<
+      Pick<Memory, "type" | "name" | "description" | "body" | "pinned">
+    >,
+  ): Promise<Memory | null>;
+  upsertByName(memory: Memory): Promise<Memory>;
+  delete(id: string, userId: string): Promise<void>;
+}
+
+export interface HookRunStore {
+  insert(run: HookRun): Promise<void>;
+  listBySession(sessionId: string, limit?: number): Promise<HookRun[]>;
+}
+
+export class SqliteMemoryStore implements MemoryStore {
+  readonly #db: Database;
+
+  constructor(db: Database) {
+    this.#db = db;
+  }
+
+  async insert(memory: Memory): Promise<void> {
+    this.#db
+      .query(
+        `INSERT INTO memories (
+          id, user_id, org_id, type, name, description, body, pinned, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        memory.id,
+        memory.userId,
+        memory.orgId,
+        memory.type,
+        memory.name,
+        memory.description,
+        memory.body,
+        Number(memory.pinned),
+        memory.createdAt,
+        memory.updatedAt,
+      );
+  }
+
+  async get(id: string, userId: string): Promise<Memory | null> {
+    const row = this.#db
+      .query(
+        `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+                body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
+         FROM memories WHERE id = ? AND user_id = ?`,
+      )
+      .get(id, userId) as MemoryRow | null;
+    return row ? toMemory(row) : null;
+  }
+
+  async getByName(userId: string, name: string): Promise<Memory | null> {
+    const row = this.#db
+      .query(
+        `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+                body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
+         FROM memories WHERE user_id = ? AND name = ?`,
+      )
+      .get(userId, name) as MemoryRow | null;
+    return row ? toMemory(row) : null;
+  }
+
+  async listByUser(userId: string, orgId?: string): Promise<Memory[]> {
+    const rows = this.#db
+      .query(
+        `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+                body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
+         FROM memories
+         WHERE user_id = ? ${orgId ? "AND (org_id = ? OR org_id IS NULL)" : ""}
+         ORDER BY pinned DESC, updated_at DESC`,
+      )
+      .all(...(orgId ? [userId, orgId] : [userId])) as MemoryRow[];
+    return rows.map(toMemory);
+  }
+
+  async update(
+    id: string,
+    userId: string,
+    updates: Partial<
+      Pick<Memory, "type" | "name" | "description" | "body" | "pinned">
+    >,
+  ): Promise<Memory | null> {
+    const setClauses: string[] = ["updated_at = ?"];
+    const values: unknown[] = [new Date().toISOString()];
+
+    if (updates.type !== undefined) {
+      setClauses.push("type = ?");
+      values.push(updates.type);
+    }
+    if (updates.name !== undefined) {
+      setClauses.push("name = ?");
+      values.push(updates.name);
+    }
+    if (updates.description !== undefined) {
+      setClauses.push("description = ?");
+      values.push(updates.description);
+    }
+    if (updates.body !== undefined) {
+      setClauses.push("body = ?");
+      values.push(updates.body);
+    }
+    if (updates.pinned !== undefined) {
+      setClauses.push("pinned = ?");
+      values.push(Number(updates.pinned));
+    }
+
+    values.push(id, userId);
+    this.#db
+      .query(
+        `UPDATE memories SET ${setClauses.join(", ")} WHERE id = ? AND user_id = ?`,
+      )
+      .run(...(values as (string | number | null)[]));
+
+    return this.get(id, userId);
+  }
+
+  async upsertByName(memory: Memory): Promise<Memory> {
+    this.#db
+      .query(
+        `INSERT INTO memories (
+          id, user_id, org_id, type, name, description, body, pinned, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id, name) DO UPDATE SET
+          type = excluded.type,
+          description = excluded.description,
+          body = excluded.body,
+          pinned = excluded.pinned,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        memory.id,
+        memory.userId,
+        memory.orgId,
+        memory.type,
+        memory.name,
+        memory.description,
+        memory.body,
+        Number(memory.pinned),
+        memory.createdAt,
+        memory.updatedAt,
+      );
+    const result = await this.getByName(memory.userId, memory.name);
+    if (!result)
+      throw new Error(
+        `Memory upsert failed for user=${memory.userId} name=${memory.name}`,
+      );
+    return result;
+  }
+
+  async delete(id: string, userId: string): Promise<void> {
+    this.#db
+      .query("DELETE FROM memories WHERE id = ? AND user_id = ?")
+      .run(id, userId);
+  }
+}
+
+export class SqliteHookRunStore implements HookRunStore {
+  readonly #db: Database;
+
+  constructor(db: Database) {
+    this.#db = db;
+  }
+
+  async insert(run: HookRun): Promise<void> {
+    this.#db
+      .query(
+        `INSERT INTO hook_runs (
+          id, hook_name, event_type, session_id, blocked, duration_ms, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        run.id,
+        run.hookName,
+        run.eventType,
+        run.sessionId,
+        Number(run.blocked),
+        run.durationMs,
+        run.createdAt,
+      );
+  }
+
+  async listBySession(sessionId: string, limit = 100): Promise<HookRun[]> {
+    const rows = this.#db
+      .query(
+        `SELECT id, hook_name AS "hookName", event_type AS "eventType",
+                session_id AS "sessionId", blocked, duration_ms AS "durationMs",
+                created_at AS "createdAt"
+         FROM hook_runs
+         WHERE session_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(sessionId, limit) as HookRunRow[];
+    return rows.map(toHookRun);
+  }
+}
+
+export class AdapterMemoryStore implements MemoryStore {
+  constructor(private readonly db: DbAdapter) {}
+
+  async insert(memory: Memory): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO memories (
+        id, user_id, org_id, type, name, description, body, pinned, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        memory.id,
+        memory.userId,
+        memory.orgId,
+        memory.type,
+        memory.name,
+        memory.description,
+        memory.body,
+        Number(memory.pinned),
+        memory.createdAt,
+        memory.updatedAt,
+      ],
+    );
+  }
+
+  async get(id: string, userId: string): Promise<Memory | null> {
+    const row = await this.db.first<MemoryRow>(
+      `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+              body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
+       FROM memories WHERE id = ? AND user_id = ?`,
+      [id, userId],
+    );
+    return row ? toMemory(row) : null;
+  }
+
+  async getByName(userId: string, name: string): Promise<Memory | null> {
+    const row = await this.db.first<MemoryRow>(
+      `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+              body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
+       FROM memories WHERE user_id = ? AND name = ?`,
+      [userId, name],
+    );
+    return row ? toMemory(row) : null;
+  }
+
+  async listByUser(userId: string, orgId?: string): Promise<Memory[]> {
+    const rows = await this.db.query<MemoryRow>(
+      `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+              body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
+       FROM memories
+       WHERE user_id = ? ${orgId ? "AND (org_id = ? OR org_id IS NULL)" : ""}
+       ORDER BY pinned DESC, updated_at DESC`,
+      orgId ? [userId, orgId] : [userId],
+    );
+    return rows.map(toMemory);
+  }
+
+  async update(
+    id: string,
+    userId: string,
+    updates: Partial<
+      Pick<Memory, "type" | "name" | "description" | "body" | "pinned">
+    >,
+  ): Promise<Memory | null> {
+    const setClauses: string[] = ["updated_at = ?"];
+    const values: unknown[] = [new Date().toISOString()];
+
+    if (updates.type !== undefined) {
+      setClauses.push("type = ?");
+      values.push(updates.type);
+    }
+    if (updates.name !== undefined) {
+      setClauses.push("name = ?");
+      values.push(updates.name);
+    }
+    if (updates.description !== undefined) {
+      setClauses.push("description = ?");
+      values.push(updates.description);
+    }
+    if (updates.body !== undefined) {
+      setClauses.push("body = ?");
+      values.push(updates.body);
+    }
+    if (updates.pinned !== undefined) {
+      setClauses.push("pinned = ?");
+      values.push(Number(updates.pinned));
+    }
+
+    values.push(id, userId);
+    await this.db.execute(
+      `UPDATE memories SET ${setClauses.join(", ")} WHERE id = ? AND user_id = ?`,
+      values,
+    );
+    return this.get(id, userId);
+  }
+
+  async upsertByName(memory: Memory): Promise<Memory> {
+    await this.db.execute(
+      `INSERT INTO memories (
+        id, user_id, org_id, type, name, description, body, pinned, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (user_id, name) DO UPDATE SET
+        type = excluded.type,
+        description = excluded.description,
+        body = excluded.body,
+        pinned = excluded.pinned,
+        updated_at = excluded.updated_at`,
+      [
+        memory.id,
+        memory.userId,
+        memory.orgId,
+        memory.type,
+        memory.name,
+        memory.description,
+        memory.body,
+        Number(memory.pinned),
+        memory.createdAt,
+        memory.updatedAt,
+      ],
+    );
+    const result = await this.getByName(memory.userId, memory.name);
+    if (!result)
+      throw new Error(
+        `Memory upsert failed for user=${memory.userId} name=${memory.name}`,
+      );
+    return result;
+  }
+
+  async delete(id: string, userId: string): Promise<void> {
+    await this.db.execute("DELETE FROM memories WHERE id = ? AND user_id = ?", [
+      id,
+      userId,
+    ]);
+  }
+}
+
+export class AdapterHookRunStore implements HookRunStore {
+  constructor(private readonly db: DbAdapter) {}
+
+  async insert(run: HookRun): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO hook_runs (
+        id, hook_name, event_type, session_id, blocked, duration_ms, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        run.id,
+        run.hookName,
+        run.eventType,
+        run.sessionId,
+        Number(run.blocked),
+        run.durationMs,
+        run.createdAt,
+      ],
+    );
+  }
+
+  async listBySession(sessionId: string, limit = 100): Promise<HookRun[]> {
+    const rows = await this.db.query<HookRunRow>(
+      `SELECT id, hook_name AS "hookName", event_type AS "eventType",
+              session_id AS "sessionId", blocked, duration_ms AS "durationMs",
+              created_at AS "createdAt"
+       FROM hook_runs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`,
+      [sessionId, limit],
+    );
+    return rows.map(toHookRun);
+  }
+}
+
 type SessionRow = Omit<Session, "config"> & { config: string };
+type MemoryRow = Omit<Memory, "pinned"> & { pinned: number };
+type HookRunRow = Omit<HookRun, "blocked"> & { blocked: number };
+
+function toMemory(row: MemoryRow): Memory {
+  return { ...row, pinned: Boolean(row.pinned) };
+}
+
+function toHookRun(row: HookRunRow): HookRun {
+  return { ...row, blocked: Boolean(row.blocked) };
+}
+
 type MessageRow = Omit<
   Message,
   "content" | "hasThinking" | "compactionBoundary"
@@ -646,8 +1042,10 @@ export class AdapterSessionStore implements SessionStore {
   async insert(session: Session): Promise<void> {
     await this.db.execute(
       `INSERT INTO sessions (
-        id, status, repo_path, container_id, volume_id, config, mode, user_id, org_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, status, repo_path, container_id, volume_id, config, mode,
+        effort, worktree_path, start_checkpoint_hash,
+        user_id, org_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         session.id,
         session.status,
@@ -656,6 +1054,9 @@ export class AdapterSessionStore implements SessionStore {
         session.volumeId,
         JSON.stringify(session.config),
         session.mode,
+        session.effort,
+        session.worktreePath,
+        session.startCheckpointHash,
         session.userId,
         session.orgId,
         session.createdAt,
@@ -667,7 +1068,9 @@ export class AdapterSessionStore implements SessionStore {
   async get(sessionId: string, orgId?: string): Promise<Session | null> {
     const row = await this.db.first<SessionRow>(
       `SELECT id, status, repo_path AS "repoPath", container_id AS "containerId",
-              volume_id AS "volumeId", config, mode, user_id AS "userId", org_id AS "orgId",
+              volume_id AS "volumeId", config, mode, effort,
+              worktree_path AS "worktreePath", start_checkpoint_hash AS "startCheckpointHash",
+              user_id AS "userId", org_id AS "orgId",
               created_at AS "createdAt", updated_at AS "updatedAt"
        FROM sessions WHERE id = ? ${orgId ? "AND org_id = ?" : ""}`,
       orgId ? [sessionId, orgId] : [sessionId],
@@ -700,7 +1103,9 @@ export class AdapterSessionStore implements SessionStore {
   async listByOrg(orgId: string): Promise<Session[]> {
     const rows = await this.db.query<SessionRow>(
       `SELECT id, status, repo_path AS "repoPath", container_id AS "containerId",
-              volume_id AS "volumeId", config, mode, user_id AS "userId", org_id AS "orgId",
+              volume_id AS "volumeId", config, mode, effort,
+              worktree_path AS "worktreePath", start_checkpoint_hash AS "startCheckpointHash",
+              user_id AS "userId", org_id AS "orgId",
               created_at AS "createdAt", updated_at AS "updatedAt"
        FROM sessions WHERE org_id = ? ORDER BY created_at, id`,
       [orgId],
