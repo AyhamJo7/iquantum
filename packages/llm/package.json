@@ -6,6 +6,8 @@
   "exports": "./src/index.ts",
   "dependencies": {
     "@anthropic-ai/sdk": "latest",
+    "@iquantum/file-tools": "workspace:*",
+    "@iquantum/sandbox": "workspace:*",
     "@iquantum/types": "workspace:*",
     "openai": "latest"
   },

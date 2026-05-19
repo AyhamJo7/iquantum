@@ -6,6 +6,7 @@
   "exports": "./src/index.ts",
   "dependencies": {
     "@iquantum/diff-engine": "workspace:*",
+    "@iquantum/file-tools": "workspace:*",
     "@iquantum/git": "workspace:*",
     "@iquantum/llm": "workspace:*",
     "@iquantum/repo-map": "workspace:*",

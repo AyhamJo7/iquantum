@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { loadConfig } from "@iquantum/config";
+import { SandboxFileTools } from "@iquantum/file-tools";
 import {
   AnthropicProvider,
   LLMRouter,
@@ -107,6 +108,9 @@ const llmRouter = new LLMRouter({
   maxInputTokens,
   supportsThinking: config.provider !== "openai",
 });
+const fileTools = config.fileTools
+  ? new SandboxFileTools(config.fileToolMaxBytes)
+  : undefined;
 let streams: StreamController;
 const permissions = new PermissionGate({
   publish(sessionId, frame) {
@@ -121,6 +125,7 @@ const sessions = new SessionController({
   maxRetries: config.maxRetries,
   llmRouterFactory: () => llmRouter,
   permissionGate: permissions,
+  ...(config.fileTools ? { fileToolMaxBytes: config.fileToolMaxBytes } : {}),
 });
 streams = new StreamController(sessions);
 const conversationCompleter = {
@@ -169,6 +174,7 @@ const conversations = new ConversationController({
   streams,
   compactor: compaction,
   ...(mcpRegistry ? { mcpClient: mcpRegistry } : {}),
+  ...(fileTools ? { fileTools: { tools: fileTools, sandbox } } : {}),
   permissionChecker: permissions,
 });
 

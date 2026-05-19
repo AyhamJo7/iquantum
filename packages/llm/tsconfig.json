@@ -6,5 +6,9 @@
     "outDir": "./dist"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../types" }]
+  "references": [
+    { "path": "../types" },
+    { "path": "../file-tools" },
+    { "path": "../sandbox" }
+  ]
 }

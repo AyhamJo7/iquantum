@@ -50,6 +50,13 @@ export class StreamController {
           file: preview.file,
           patch: preview.patch,
         }),
+      tool_call: (call) =>
+        this.#send(socket, {
+          type: "tool_call",
+          toolName: call.toolName,
+          input: call.input,
+          result: call.result,
+        }),
       error: (error) =>
         this.#send(socket, { type: "error", message: error.message }),
     });

@@ -7,10 +7,12 @@ import { APIError } from "openai";
 import { describe, expect, it } from "vitest";
 import {
   AnthropicProvider,
+  createFileToolBuiltins,
   LLMRouter,
   OpenAICompatibleProvider,
   TokenBudgetExceededError,
   type TokenUsage,
+  ToolLoopExceededError,
 } from "./index";
 
 describe("AnthropicProvider", () => {
@@ -90,14 +92,148 @@ describe("OpenAICompatibleProvider", () => {
     ).resolves.toBe("hello");
   });
 
-  it("does not advertise tool use until it has an implementation", () => {
-    expect(
-      (
-        new OpenAICompatibleProvider({
-          apiKey: "test-key",
-        }) as LLMProvider
-      ).completeWithTools,
-    ).toBeUndefined();
+  it("streams OpenAI-compatible tool calls", async () => {
+    const requests: unknown[] = [];
+    const provider = new OpenAICompatibleProvider({
+      client: {
+        chat: {
+          completions: {
+            async create(request: unknown) {
+              requests.push(request);
+              return asyncIterable([
+                { choices: [{ delta: { content: "Checking" } }] },
+                {
+                  choices: [
+                    {
+                      delta: {
+                        tool_calls: [
+                          {
+                            index: 0,
+                            id: "call-1",
+                            function: {
+                              name: "file_read",
+                              arguments: '{"path"',
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+                {
+                  choices: [
+                    {
+                      delta: {
+                        tool_calls: [
+                          {
+                            index: 0,
+                            function: { arguments: ':"src/index.ts"}' },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              ]);
+            },
+          },
+        },
+      } as never,
+    });
+
+    const events = await collectEvents(
+      provider.completeWithTools?.(
+        [{ role: "user", content: "Read a file" }],
+        [
+          {
+            name: "file_read",
+            description: "read",
+            inputSchema: { type: "object" },
+          },
+        ],
+        baseOptions,
+      ) ?? asyncIterable([]),
+    );
+
+    expect(events).toEqual([
+      { type: "token", delta: "Checking" },
+      {
+        type: "tool_use",
+        id: "call-1",
+        name: "file_read",
+        input: { path: "src/index.ts" },
+      },
+    ]);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "file_read",
+              description: "read",
+              parameters: { type: "object" },
+            },
+          },
+        ],
+      }),
+    ]);
+  });
+
+  it("uses empty input for malformed OpenAI-compatible tool arguments", async () => {
+    const provider = new OpenAICompatibleProvider({
+      client: {
+        chat: {
+          completions: {
+            async create() {
+              return asyncIterable([
+                {
+                  choices: [
+                    {
+                      delta: {
+                        tool_calls: [
+                          {
+                            index: 0,
+                            id: "call-1",
+                            function: {
+                              name: "file_read",
+                              arguments: '{"path"',
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              ]);
+            },
+          },
+        },
+      } as never,
+    });
+
+    const events = await collectEvents(
+      provider.completeWithTools?.(
+        [{ role: "user", content: "Read a file" }],
+        [
+          {
+            name: "file_read",
+            description: "read",
+            inputSchema: { type: "object" },
+          },
+        ],
+        baseOptions,
+      ) ?? asyncIterable([]),
+    );
+
+    expect(events).toEqual([
+      {
+        type: "tool_use",
+        id: "call-1",
+        name: "file_read",
+        input: {},
+      },
+    ]);
   });
 
   it("uses the documented rough token estimate", async () => {
@@ -225,6 +361,37 @@ describe("LLMRouter", () => {
     expect(architect.calls).toEqual(["architect-model", "architect-model"]);
   });
 
+  it("routes tool streams through the selected provider", async () => {
+    const architect = new MockToolProvider("arch", 5);
+    const editor = new MockToolProvider("edit", 3);
+    const router = new LLMRouter({
+      architect: { provider: architect, model: "architect-model" },
+      editor: { provider: editor, model: "editor-model" },
+      maxInputTokens: 100,
+    });
+
+    const events = await collectEvents(
+      router.completeWithTools(
+        "implement",
+        [{ role: "user", content: "use tool" }],
+        [
+          {
+            name: "file_read",
+            description: "read",
+            inputSchema: { type: "object" },
+          },
+        ],
+        { maxTokens: 10 },
+      ),
+    );
+
+    expect(events).toEqual([{ type: "token", delta: "edit" }]);
+    expect(editor.toolCalls).toEqual([
+      { model: "editor-model", tools: ["file_read"] },
+    ]);
+    expect(architect.toolCalls).toEqual([]);
+  });
+
   it("routes thorough to a dedicated thorough model when configured", async () => {
     const thorough = new MockProvider("thorough-token", 5);
     const architect = new MockProvider("arch-token", 5);
@@ -265,6 +432,58 @@ describe("LLMRouter", () => {
   });
 });
 
+describe("createFileToolBuiltins", () => {
+  it("wraps sandbox file tools as executable builtin tools", async () => {
+    const sandbox = {
+      exec: async () => {
+        throw new Error("not used");
+      },
+    };
+    const fileTools = {
+      getAll: () => [
+        {
+          name: "file_read",
+          description: "read",
+          inputSchema: { type: "object" },
+          mutates: true,
+          async execute(
+            input: unknown,
+            receivedSandbox: unknown,
+            sessionId: string,
+          ) {
+            return JSON.stringify({ input, receivedSandbox, sessionId });
+          },
+        },
+      ],
+    };
+
+    const [tool] = createFileToolBuiltins(
+      fileTools as never,
+      sandbox,
+      "sess-1",
+    );
+
+    expect(tool?.name).toBe("file_read");
+    expect(tool?.mutates).toBe(true);
+    await expect(tool?.execute({ path: "a.ts" })).resolves.toBe(
+      JSON.stringify({
+        input: { path: "a.ts" },
+        receivedSandbox: sandbox,
+        sessionId: "sess-1",
+      }),
+    );
+  });
+});
+
+describe("ToolLoopExceededError", () => {
+  it("records the exceeded round count", () => {
+    const error = new ToolLoopExceededError(11);
+
+    expect(error.rounds).toBe(11);
+    expect(error.message).toBe("Tool loop exceeded 11 rounds");
+  });
+});
+
 const baseOptions = {
   model: "claude-model",
   maxTokens: 32,
@@ -291,11 +510,37 @@ class MockProvider implements LLMProvider {
   }
 }
 
+class MockToolProvider extends MockProvider {
+  readonly toolCalls: Array<{ model: string; tools: string[] }> = [];
+
+  async *completeWithTools(
+    _messages: LLMMessage[],
+    tools: readonly { name: string }[],
+    options: LLMCompletionOptions,
+  ) {
+    this.toolCalls.push({
+      model: options.model,
+      tools: tools.map((tool) => tool.name),
+    });
+    yield { type: "token" as const, delta: this.token };
+  }
+}
+
 async function collect(stream: AsyncIterable<string>): Promise<string> {
   let output = "";
 
   for await (const token of stream) {
     output += token;
+  }
+
+  return output;
+}
+
+async function collectEvents<T>(stream: AsyncIterable<T>): Promise<T[]> {
+  const output: T[] = [];
+
+  for await (const event of stream) {
+    output.push(event);
   }
 
   return output;

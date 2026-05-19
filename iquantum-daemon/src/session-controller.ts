@@ -1,8 +1,12 @@
 import { DiffEngine } from "@iquantum/diff-engine";
+import { SandboxFileTools } from "@iquantum/file-tools";
 import type { GitCheckpointPage, GitCheckpointStore } from "@iquantum/git";
 import { GitManager } from "@iquantum/git";
-import type { LLMRouter } from "@iquantum/llm";
-import type { PIVEngineOptions, PIVStore } from "@iquantum/piv-engine";
+import type {
+  PIVEngineOptions,
+  PIVLLMRouter,
+  PIVStore,
+} from "@iquantum/piv-engine";
 import { PIVEngine } from "@iquantum/piv-engine";
 import type { SandboxManager } from "@iquantum/sandbox";
 import { loadTestCommand } from "@iquantum/sandbox";
@@ -32,10 +36,11 @@ export interface SessionControllerOptions {
     SandboxManager,
     "createSandbox" | "destroySandbox" | "exec" | "syncToHost"
   >;
-  llmRouterFactory: () => Pick<LLMRouter, "complete">;
+  llmRouterFactory: () => PIVLLMRouter;
   permissionGate?: PIVEngineOptions["permissionGate"];
   createEngine?: (options: PIVEngineOptions) => SessionEngine;
   createGitManager?: (repoPath: string) => SessionGitManager;
+  fileToolMaxBytes?: number;
   maxRetries?: number;
   now?: () => string;
   createId?: () => string;
@@ -79,6 +84,7 @@ export class SessionController {
   readonly #sandbox: SessionControllerOptions["sandbox"];
   readonly #llmRouterFactory: SessionControllerOptions["llmRouterFactory"];
   readonly #permissionGate: PIVEngineOptions["permissionGate"];
+  readonly #fileToolMaxBytes: number | undefined;
   readonly #createEngine: NonNullable<SessionControllerOptions["createEngine"]>;
   readonly #createGitManager: NonNullable<
     SessionControllerOptions["createGitManager"]
@@ -97,6 +103,7 @@ export class SessionController {
     this.#sandbox = options.sandbox;
     this.#llmRouterFactory = options.llmRouterFactory;
     this.#permissionGate = options.permissionGate;
+    this.#fileToolMaxBytes = options.fileToolMaxBytes;
     this.#createEngine =
       options.createEngine ?? ((engineOptions) => new PIVEngine(engineOptions));
     this.#createGitManager =
@@ -160,6 +167,9 @@ export class SessionController {
       diffEngine: new DiffEngine(this.#sandbox),
       sandbox: this.#sandbox,
       gitManager,
+      ...(this.#fileToolMaxBytes === undefined
+        ? {}
+        : { fileTools: new SandboxFileTools(this.#fileToolMaxBytes) }),
       ...(this.#permissionGate === undefined
         ? {}
         : { permissionGate: this.#permissionGate }),

@@ -6,8 +6,13 @@ import {
   parseUnifiedDiff,
   patchTargetPath,
 } from "@iquantum/diff-engine";
+import type { SandboxFileTools } from "@iquantum/file-tools";
 import type { GitManager } from "@iquantum/git";
-import type { LLMRouter } from "@iquantum/llm";
+import {
+  type BuiltinTool,
+  createFileToolBuiltins,
+  ToolLoopExceededError,
+} from "@iquantum/llm";
 import {
   type BuildRepoMapOptions,
   buildRepoMap,
@@ -15,7 +20,9 @@ import {
 } from "@iquantum/repo-map";
 import type { ExecResult, SandboxManager } from "@iquantum/sandbox";
 import type {
+  CompletionEvent,
   GitCheckpoint,
+  LLMContentBlock,
   LLMMessage,
   Message,
   PIVPhase,
@@ -37,16 +44,31 @@ export interface PIVStore {
   insertValidateRun(run: ValidateRun): Promise<void>;
 }
 
+export interface PIVLLMRouter {
+  complete(
+    phase: PIVPhase,
+    messages: LLMMessage[],
+    options: { maxTokens: number },
+  ): AsyncIterable<string>;
+  completeWithTools?(
+    phase: PIVPhase,
+    messages: LLMMessage[],
+    tools: readonly BuiltinTool[],
+    options: { maxTokens: number },
+  ): AsyncIterable<CompletionEvent>;
+}
+
 export interface PIVEngineOptions {
   sessionId: string;
   repoPath: string;
   extraRepoPaths?: string[];
   testCommand: string;
   store: PIVStore;
-  llmRouter: Pick<LLMRouter, "complete">;
+  llmRouter: PIVLLMRouter;
   diffEngine: Pick<DiffEngine, "apply">;
   sandbox: Pick<SandboxManager, "exec" | "syncToHost">;
   gitManager: Pick<GitManager, "checkpoint">;
+  fileTools?: SandboxFileTools;
   permissionGate?: PermissionRequester;
   requireApproval?: boolean;
   autoApprove?: boolean;
@@ -77,6 +99,18 @@ export interface DiffPreviewEvent {
   patch: string;
 }
 
+export interface ToolCallEvent {
+  toolName: string;
+  input: unknown;
+  result: string;
+}
+
+interface ToolUseCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
 export interface PermissionRequester {
   requestPermission(
     sessionId: string,
@@ -94,6 +128,7 @@ export interface PIVEngineEventMap {
   validate_result: [ValidateRun];
   checkpoint: [GitCheckpoint];
   diff_preview: [DiffPreviewEvent];
+  tool_call: [ToolCallEvent];
   error: [Error];
 }
 
@@ -118,10 +153,11 @@ export class PIVEngine {
   readonly #extraRepoPaths: string[];
   readonly #testCommand: string;
   readonly #store: PIVStore;
-  readonly #llmRouter: Pick<LLMRouter, "complete">;
+  readonly #llmRouter: PIVLLMRouter;
   readonly #diffEngine: Pick<DiffEngine, "apply">;
   readonly #sandbox: Pick<SandboxManager, "exec" | "syncToHost">;
   readonly #gitManager: Pick<GitManager, "checkpoint">;
+  readonly #fileTools: SandboxFileTools | undefined;
   readonly #permissionGate: PermissionRequester | undefined;
   readonly #requireApproval: boolean;
   readonly #autoApprove: boolean;
@@ -150,6 +186,7 @@ export class PIVEngine {
     this.#diffEngine = options.diffEngine;
     this.#sandbox = options.sandbox;
     this.#gitManager = options.gitManager;
+    this.#fileTools = options.fileTools;
     this.#permissionGate = options.permissionGate;
     this.#requireApproval = options.requireApproval ?? false;
     this.#autoApprove = options.autoApprove ?? false;
@@ -269,11 +306,11 @@ export class PIVEngine {
 
   async #implement(): Promise<boolean> {
     await this.#transition("implementing");
-    const content = await this.#complete(
-      "implement",
+    const implementation = await this.#completeImplement(
       await this.#implementMessages(),
       { maxTokens: this.#maxImplementTokens },
     );
+    const content = implementation.content;
     await this.#insertMessage("assistant", "implement", content);
 
     const previews = this.#previewDiff(content);
@@ -293,6 +330,10 @@ export class PIVEngine {
       );
       await this.#consumeRetry();
       return false;
+    }
+
+    if (previews.length === 0 && implementation.mutated) {
+      return true;
     }
 
     try {
@@ -406,6 +447,121 @@ export class PIVEngine {
     }
 
     return content;
+  }
+
+  async #completeImplement(
+    messages: LLMMessage[],
+    options: { maxTokens: number },
+  ): Promise<{ content: string; mutated: boolean }> {
+    const completeWithTools = this.#llmRouter.completeWithTools?.bind(
+      this.#llmRouter,
+    );
+
+    if (!this.#fileTools || !completeWithTools) {
+      return {
+        content: await this.#complete("implement", messages, options),
+        mutated: false,
+      };
+    }
+
+    const tools = createFileToolBuiltins(
+      this.#fileTools,
+      this.#sandbox,
+      this.#sessionId,
+    );
+
+    if (tools.length === 0) {
+      return {
+        content: await this.#complete("implement", messages, options),
+        mutated: false,
+      };
+    }
+
+    const toolMessages = [...messages];
+    let mutated = false;
+
+    for (let turn = 0; turn < 10; turn++) {
+      const toolUses: ToolUseCall[] = [];
+      let content = "";
+
+      for await (const event of completeWithTools(
+        "implement",
+        toolMessages,
+        tools,
+        options,
+      )) {
+        if (event.type === "token") {
+          content += event.delta;
+          this.events.emit("token", { phase: "implement", token: event.delta });
+        } else if (event.type === "tool_use") {
+          toolUses.push(event);
+        }
+      }
+
+      if (toolUses.length === 0) {
+        return { content, mutated };
+      }
+
+      const assistantContent: LLMContentBlock[] = [];
+      if (content) {
+        assistantContent.push({ type: "text", text: content });
+      }
+      for (const toolUse of toolUses) {
+        assistantContent.push({
+          type: "tool_use",
+          id: toolUse.id,
+          name: toolUse.name,
+          input: toolUse.input,
+        });
+      }
+      toolMessages.push({
+        role: "assistant",
+        content: assistantContent,
+      });
+
+      for (const toolUse of toolUses) {
+        const result = await this.#executeBuiltinTool(tools, toolUse);
+        mutated ||=
+          tools.find((tool) => tool.name === toolUse.name)?.mutates === true;
+        toolMessages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: toolUse.id,
+              content: result,
+            },
+          ],
+        });
+      }
+    }
+
+    throw await this.#fail(new ToolLoopExceededError(10));
+  }
+
+  async #executeBuiltinTool(
+    tools: BuiltinTool[],
+    toolUse: ToolUseCall,
+  ): Promise<string> {
+    const tool = tools.find((candidate) => candidate.name === toolUse.name);
+    let result: string;
+
+    if (!tool) {
+      result = `Tool unavailable: ${toolUse.name}`;
+    } else {
+      try {
+        result = await tool.execute(toolUse.input);
+      } catch (error) {
+        result = `Tool error: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+
+    this.events.emit("tool_call", {
+      toolName: toolUse.name,
+      input: toolUse.input,
+      result,
+    });
+    return result;
   }
 
   #planMessages(feedback?: string): LLMMessage[] {
