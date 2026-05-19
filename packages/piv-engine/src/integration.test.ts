@@ -82,7 +82,10 @@ describe.skipIf(!sandboxReady)("PIVEngine integration", () => {
     await expect(
       readFile(join(repoPath, "src/value.ts"), "utf8"),
     ).resolves.toContain("return 42;");
-    await expect(checkpoints.listBySession(sessionId)).resolves.toHaveLength(1);
+    await expect(checkpoints.listBySession(sessionId)).resolves.toMatchObject({
+      checkpoints: [expect.objectContaining({ sessionId })],
+      nextCursor: null,
+    });
     expect(engine.status).toBe("completed");
   }, 60_000);
 });

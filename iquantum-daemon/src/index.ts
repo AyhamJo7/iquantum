@@ -8,6 +8,7 @@ import {
 } from "@iquantum/llm";
 import { SandboxManager as LocalSandboxManager } from "@iquantum/sandbox";
 import type { LLMProvider, McpTool } from "@iquantum/types";
+import Redis from "ioredis";
 import { AuthStore } from "./auth/auth-store";
 import { JwtService } from "./auth/jwt-service";
 import { BillingTracker } from "./billing-tracker";
@@ -21,9 +22,11 @@ import {
   AdapterPIVStore,
   AdapterSessionStore,
 } from "./db/stores";
+import { createErrorReporter } from "./error-reporter";
 import { logger } from "./logger";
 import { McpClient, McpRegistry } from "./mcp-client";
 import { PermissionGate } from "./permission-gate";
+import { InMemoryRateLimiter, RedisRateLimiter } from "./rate-limit";
 import { createSandboxManager } from "./sandbox-factory";
 import type { DaemonMcpRegistry } from "./server";
 import { createDaemonServer, createTcpDaemonServer } from "./server";
@@ -32,6 +35,7 @@ import { StreamController } from "./stream-controller";
 import { StripeClient } from "./stripe-client";
 
 const config = loadConfig();
+const errorReporter = createErrorReporter(config.sentryDsn);
 const stateDir = dirname(config.socketPath);
 const pidPath = join(stateDir, "daemon.pid");
 const dbPath = join(stateDir, "iquantum.sqlite");
@@ -61,6 +65,19 @@ const stripeClient = config.stripeSecretKey
   : undefined;
 const billingTracker = config.cloud
   ? new BillingTracker(dbAdapter, stripeClient ?? null)
+  : undefined;
+const redis =
+  config.cloud && config.redisUrl
+    ? new Redis(config.redisUrl, {
+        lazyConnect: true,
+        maxRetriesPerRequest: 2,
+      })
+    : undefined;
+await redis?.connect();
+const rateLimiter = config.cloud
+  ? redis
+    ? new RedisRateLimiter(redis)
+    : new InMemoryRateLimiter()
   : undefined;
 const sandbox = createSandboxManager(config);
 if (sandbox instanceof LocalSandboxManager) {
@@ -155,9 +172,14 @@ const conversations = new ConversationController({
   permissionChecker: permissions,
 });
 
-async function healthCheck(): Promise<{ db: boolean; docker: boolean }> {
+async function healthCheck(): Promise<{
+  db: boolean;
+  docker: boolean;
+  redis?: boolean;
+}> {
   let dbOk = false;
   let dockerOk = false;
+  let redisOk: boolean | undefined;
 
   try {
     await dbAdapter.first("SELECT 1 AS ok");
@@ -166,6 +188,11 @@ async function healthCheck(): Promise<{ db: boolean; docker: boolean }> {
 
   if (config.cloud) {
     dockerOk = true;
+    try {
+      redisOk = redis ? (await redis.ping()) === "PONG" : false;
+    } catch {
+      redisOk = false;
+    }
   } else {
     try {
       const proc = Bun.spawn(["docker", "info"], {
@@ -177,7 +204,11 @@ async function healthCheck(): Promise<{ db: boolean; docker: boolean }> {
     } catch {}
   }
 
-  return { db: dbOk, docker: dockerOk };
+  return {
+    db: dbOk,
+    docker: dockerOk,
+    ...(redisOk === undefined ? {} : { redis: redisOk }),
+  };
 }
 
 const server = createDaemonServer({
@@ -194,6 +225,9 @@ const server = createDaemonServer({
   ...(jwtService ? { jwtService } : {}),
   ...(stripeClient ? { stripeClient } : {}),
   ...(billingTracker ? { billingTracker } : {}),
+  ...(rateLimiter ? { rateLimiter } : {}),
+  ...(config.corsOrigins ? { corsOrigins: config.corsOrigins } : {}),
+  ...(errorReporter ? { errorReporter } : {}),
   ...(config.stripeWebhookSecret
     ? { stripeWebhookSecret: config.stripeWebhookSecret }
     : {}),
@@ -213,6 +247,9 @@ const tcpServer = createTcpDaemonServer(
     ...(jwtService ? { jwtService } : {}),
     ...(stripeClient ? { stripeClient } : {}),
     ...(billingTracker ? { billingTracker } : {}),
+    ...(rateLimiter ? { rateLimiter } : {}),
+    ...(config.corsOrigins ? { corsOrigins: config.corsOrigins } : {}),
+    ...(errorReporter ? { errorReporter } : {}),
     ...(config.stripeWebhookSecret
       ? { stripeWebhookSecret: config.stripeWebhookSecret }
       : {}),
@@ -241,8 +278,10 @@ async function shutdown(reason: string, exitCode = 0): Promise<void> {
   permissions.drainAll();
   streams.closeAll();
   await mcpRegistry?.closeAll();
+  await errorReporter?.flush?.();
   await server.stop(true);
   await tcpServer.stop(true);
+  await redis?.quit();
   if (dbAdapter instanceof SqliteAdapter) {
     dbAdapter.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
   }
@@ -261,6 +300,7 @@ process.once("SIGTERM", () => {
 });
 
 process.on("unhandledRejection", (reason) => {
+  errorReporter?.captureException(reason, { source: "unhandledRejection" });
   logger.error({
     msg: "unhandled rejection",
     error: reason instanceof Error ? reason.message : String(reason),

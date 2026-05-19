@@ -3,7 +3,15 @@ import { type SimpleGit, simpleGit } from "simple-git";
 
 export interface GitCheckpointStore {
   insert(checkpoint: GitCheckpoint): Promise<void>;
-  listBySession(sessionId: string): Promise<GitCheckpoint[]>;
+  listBySession(
+    sessionId: string,
+    options?: { before?: string; limit: number },
+  ): Promise<GitCheckpointPage>;
+}
+
+export interface GitCheckpointPage {
+  checkpoints: GitCheckpoint[];
+  nextCursor: string | null;
 }
 
 export interface GitManagerOptions {
@@ -48,8 +56,11 @@ export class GitManager {
     return checkpoint;
   }
 
-  async listCheckpoints(sessionId: string): Promise<GitCheckpoint[]> {
-    return this.#store.listBySession(sessionId);
+  async listCheckpoints(
+    sessionId: string,
+    options: { before?: string; limit: number } = { limit: 50 },
+  ): Promise<GitCheckpointPage> {
+    return this.#store.listBySession(sessionId, options);
   }
 
   async restore(hash: string): Promise<void> {
@@ -64,9 +75,31 @@ export class InMemoryGitCheckpointStore implements GitCheckpointStore {
     this.#checkpoints.push(checkpoint);
   }
 
-  async listBySession(sessionId: string): Promise<GitCheckpoint[]> {
-    return this.#checkpoints.filter(
-      (checkpoint) => checkpoint.sessionId === sessionId,
-    );
+  async listBySession(
+    sessionId: string,
+    options: { before?: string; limit: number } = { limit: 50 },
+  ): Promise<GitCheckpointPage> {
+    let checkpoints = this.#checkpoints
+      .filter((checkpoint) => checkpoint.sessionId === sessionId)
+      .sort(compareCheckpoints);
+    if (options.before) {
+      const cursor = checkpoints.findIndex(
+        (checkpoint) => checkpoint.id === options.before,
+      );
+      checkpoints = cursor === -1 ? [] : checkpoints.slice(cursor + 1);
+    }
+    const page = checkpoints.slice(0, options.limit);
+    return {
+      checkpoints: page,
+      nextCursor:
+        checkpoints.length > options.limit ? (page.at(-1)?.id ?? null) : null,
+    };
   }
+}
+
+function compareCheckpoints(left: GitCheckpoint, right: GitCheckpoint): number {
+  return (
+    left.createdAt.localeCompare(right.createdAt) ||
+    left.id.localeCompare(right.id)
+  );
 }

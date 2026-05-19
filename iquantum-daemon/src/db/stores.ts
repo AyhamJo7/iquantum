@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { GitCheckpointStore } from "@iquantum/git";
+import type { GitCheckpointPage, GitCheckpointStore } from "@iquantum/git";
 import type { PIVStore } from "@iquantum/piv-engine";
 import type {
   GitCheckpoint,
@@ -56,6 +56,13 @@ export class InvalidConversationCursorError extends Error {
   constructor(readonly cursor: string) {
     super(`Unknown conversation cursor ${cursor}`);
     this.name = "InvalidConversationCursorError";
+  }
+}
+
+export class InvalidCheckpointCursorError extends Error {
+  constructor(readonly cursor: string) {
+    super("invalid_checkpoint_cursor");
+    this.name = "InvalidCheckpointCursorError";
   }
 }
 
@@ -497,8 +504,39 @@ export class SqliteGitCheckpointStore implements GitCheckpointStore {
       );
   }
 
-  async listBySession(sessionId: string): Promise<GitCheckpoint[]> {
-    return this.#db
+  async listBySession(
+    sessionId: string,
+    options: { before?: string; limit: number } = { limit: 50 },
+  ): Promise<GitCheckpointPage> {
+    if (options.before) {
+      const cursor = this.#db
+        .query("SELECT 1 FROM git_checkpoints WHERE id = ? AND session_id = ?")
+        .get(options.before, sessionId);
+      if (!cursor) {
+        throw new InvalidCheckpointCursorError(options.before);
+      }
+    }
+    const beforeClause = options.before
+      ? `AND (
+          created_at > (SELECT created_at FROM git_checkpoints WHERE id = ? AND session_id = ?)
+          OR (
+            created_at = (SELECT created_at FROM git_checkpoints WHERE id = ? AND session_id = ?)
+            AND id > ?
+          )
+        )`
+      : "";
+    const params = options.before
+      ? [
+          sessionId,
+          options.before,
+          sessionId,
+          options.before,
+          sessionId,
+          options.before,
+          options.limit + 1,
+        ]
+      : [sessionId, options.limit + 1];
+    const rows = this.#db
       .query(
         `SELECT
           id,
@@ -509,10 +547,17 @@ export class SqliteGitCheckpointStore implements GitCheckpointStore {
           created_at AS "createdAt"
         FROM git_checkpoints
         WHERE session_id = ?
+        ${beforeClause}
         ORDER BY created_at, rowid
-        LIMIT 500`,
+        LIMIT ?`,
       )
-      .all(sessionId) as GitCheckpoint[];
+      .all(...params) as GitCheckpoint[];
+    const checkpoints = rows.slice(0, options.limit);
+    return {
+      checkpoints,
+      nextCursor:
+        rows.length > options.limit ? (checkpoints.at(-1)?.id ?? null) : null,
+    };
   }
 }
 
@@ -880,10 +925,48 @@ export class AdapterGitCheckpointStore implements GitCheckpointStore {
       ],
     );
   }
-  async listBySession(sessionId: string): Promise<GitCheckpoint[]> {
-    return this.db.query<GitCheckpoint>(
-      `SELECT id, session_id AS "sessionId", validate_run_id AS "validateRunId", commit_hash AS "commitHash", commit_message AS "commitMessage", created_at AS "createdAt" FROM git_checkpoints WHERE session_id = ? ORDER BY created_at, id LIMIT 500`,
-      [sessionId],
+  async listBySession(
+    sessionId: string,
+    options: { before?: string; limit: number } = { limit: 50 },
+  ): Promise<GitCheckpointPage> {
+    if (options.before) {
+      const cursor = await this.db.first(
+        "SELECT 1 AS ok FROM git_checkpoints WHERE id = ? AND session_id = ?",
+        [options.before, sessionId],
+      );
+      if (!cursor) {
+        throw new InvalidCheckpointCursorError(options.before);
+      }
+    }
+    const beforeClause = options.before
+      ? `AND (
+          created_at > (SELECT created_at FROM git_checkpoints WHERE id = ? AND session_id = ?)
+          OR (
+            created_at = (SELECT created_at FROM git_checkpoints WHERE id = ? AND session_id = ?)
+            AND id > ?
+          )
+        )`
+      : "";
+    const params = options.before
+      ? [
+          sessionId,
+          options.before,
+          sessionId,
+          options.before,
+          sessionId,
+          options.before,
+          options.limit + 1,
+        ]
+      : [sessionId, options.limit + 1];
+    const rows = await this.db.query<GitCheckpoint>(
+      `SELECT id, session_id AS "sessionId", validate_run_id AS "validateRunId", commit_hash AS "commitHash", commit_message AS "commitMessage", created_at AS "createdAt" FROM git_checkpoints WHERE session_id = ? ${beforeClause} ORDER BY created_at, id LIMIT ?`,
+      params,
     );
+    const checkpoints = rows.slice(0, options.limit);
+    return {
+      checkpoints,
+      nextCursor:
+        rows.length > options.limit ? (checkpoints.at(-1)?.id ?? null) : null,
+    };
   }
 }

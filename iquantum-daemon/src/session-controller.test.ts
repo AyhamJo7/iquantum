@@ -156,7 +156,7 @@ function createHarness() {
       throw new Error("not used");
     },
     async listCheckpoints() {
-      return [];
+      return { checkpoints: [], nextCursor: null };
     },
     async restore() {
       return undefined;
@@ -171,7 +171,7 @@ function createHarness() {
         return undefined;
       },
       async listBySession() {
-        return [];
+        return { checkpoints: [], nextCursor: null };
       },
     },
     sandbox: {

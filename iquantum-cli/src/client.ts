@@ -111,8 +111,11 @@ export class HttpDaemonClient implements DaemonClient {
     return this.#post(`/sessions/${sessionId}/reject`, { feedback });
   }
 
-  listCheckpoints(sessionId: string): Promise<GitCheckpoint[]> {
-    return this.#get(`/sessions/${sessionId}/checkpoints`);
+  async listCheckpoints(sessionId: string): Promise<GitCheckpoint[]> {
+    const response = await this.#get<
+      GitCheckpoint[] | { checkpoints: GitCheckpoint[] }
+    >(`/sessions/${sessionId}/checkpoints`);
+    return Array.isArray(response) ? response : response.checkpoints;
   }
 
   async restore(sessionId: string, hash: string): Promise<void> {

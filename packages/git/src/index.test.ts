@@ -41,9 +41,10 @@ describe("GitManager", () => {
       validateRunId: "validate-1",
       commitMessage: "apply validated edit",
     });
-    await expect(manager.listCheckpoints("session-1")).resolves.toEqual([
-      checkpoint,
-    ]);
+    await expect(manager.listCheckpoints("session-1")).resolves.toEqual({
+      checkpoints: [checkpoint],
+      nextCursor: null,
+    });
 
     await writeFile(join(repoPath, "README.md"), "dirty\n", "utf8");
     await manager.restore(checkpoint.commitHash);
