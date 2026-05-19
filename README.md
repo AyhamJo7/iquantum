@@ -218,7 +218,7 @@ The VS Code extension is available from the [VS Code Marketplace](https://market
 
 ## Non-interactive mode
 
-If you prefer to run a task from a script or another tool, use `iq task`:
+If you prefer to run a task from a script or another tool, use `iq task`. Make sure the daemon is running first (`iq daemon start`):
 
 ```bash
 iq task "refactor the database connection module to use a connection pool"
@@ -228,6 +228,12 @@ The agent will print the plan, prompt for approval interactively, then proceed. 
 
 ```bash
 iq task --repo /path/to/project "add OpenAPI documentation to all routes"
+```
+
+Use `--extra-repo` (repeatable) to pull in context from additional repositories when the task spans more than one codebase:
+
+```bash
+iq task --repo /path/to/server --extra-repo /path/to/shared-lib "update the API to match the types in shared-lib"
 ```
 
 ---
@@ -242,7 +248,7 @@ iq daemon stop     # Gracefully stop the daemon
 iq daemon status   # Check whether the daemon is running
 ```
 
-The daemon starts automatically on first use and restarts automatically if it goes down.
+When you run `iq` (the interactive REPL) or `iq chat`, the daemon starts automatically if it is not already running. The `iq task` command requires the daemon to already be running.
 
 ---
 
@@ -347,16 +353,18 @@ docker build -t iquantum/sandbox:local -f docker/sandbox.Dockerfile docker/
 echo "IQUANTUM_SANDBOX_IMAGE=iquantum/sandbox:local" >> .env
 ```
 
-Link the CLI so you can run `iq` from your local build:
-
-```bash
-bun link --cwd iquantum-cli
-```
-
-To test the same bundled artifact that is published to npm, run:
+Bundle and link the CLI so you can run `iq` from your local build:
 
 ```bash
 bun run build:dist
+cd iquantum-cli && bun link && cd ..
+```
+
+> **Note:** `bun link` must be run from inside the `iquantum-cli/` directory after `build:dist` so the symlink points to the compiled bundle.
+
+To produce the same artifact that is published to npm:
+
+```bash
 npm pack ./iquantum-cli
 ```
 
@@ -413,6 +421,7 @@ iquantum is a TypeScript monorepo built on [Bun](https://bun.sh):
 iquantum/
 ├── iquantum-cli/      Terminal client — the iq command
 ├── iquantum-daemon/   Background agent runtime (HTTP + WebSocket over Unix socket)
+├── iquantum-vscode/   VS Code extension
 └── packages/
     ├── config/        Environment config loader with runtime validation
     ├── types/         Shared TypeScript interfaces
@@ -423,6 +432,7 @@ iquantum/
     ├── git/           Git checkpoint commits and sandbox restore
     ├── piv-engine/    Plan → Implement → Validate state machine
     ├── protocol/      CLI ↔ daemon message types
+    ├── ui-core/       Headless state hooks shared by CLI and VS Code webview
     └── context-window/  Token budget management
 ```
 
