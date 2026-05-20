@@ -21,6 +21,7 @@ import {
 import type { ExecResult, SandboxManager } from "@iquantum/sandbox";
 import type {
   CompletionEvent,
+  EffortLevel,
   GitCheckpoint,
   LLMContentBlock,
   LLMMessage,
@@ -61,6 +62,11 @@ export interface PIVLLMRouter {
     tools: readonly BuiltinTool[],
     options: { maxTokens: number },
   ): AsyncIterable<CompletionEvent>;
+  completeWithEffort?(
+    effort: EffortLevel,
+    messages: LLMMessage[],
+    options: { maxTokens: number },
+  ): AsyncIterable<string>;
 }
 
 export interface PIVEngineOptions {
@@ -69,6 +75,7 @@ export interface PIVEngineOptions {
   repoPath: string;
   extraRepoPaths?: string[];
   testCommand: string;
+  effort?: EffortLevel;
   store: PIVStore;
   llmRouter: PIVLLMRouter;
   diffEngine: Pick<DiffEngine, "apply">;
@@ -171,6 +178,7 @@ export class PIVEngine {
   readonly #webTools: WebToolExecutor | undefined;
   readonly #webToolRateLimiter: WebToolRateLimiter | undefined;
   #memoryBlock: string | undefined;
+  #effort: EffortLevel;
   readonly #permissionGate: PermissionRequester | undefined;
   readonly #requireApproval: boolean;
   readonly #autoApprove: boolean;
@@ -204,6 +212,7 @@ export class PIVEngine {
     this.#webTools = options.webTools;
     this.#webToolRateLimiter = options.webToolRateLimiter;
     this.#memoryBlock = options.memoryBlock;
+    this.#effort = options.effort ?? "normal";
     this.#permissionGate = options.permissionGate;
     this.#requireApproval = options.requireApproval ?? false;
     this.#autoApprove = options.autoApprove ?? false;
@@ -226,6 +235,10 @@ export class PIVEngine {
 
   get currentPlan(): Plan | undefined {
     return this.#currentPlan;
+  }
+
+  setEffort(effort: EffortLevel): void {
+    this.#effort = effort;
   }
 
   async startTask(
@@ -458,17 +471,18 @@ export class PIVEngine {
     messages: LLMMessage[],
     options: { maxTokens: number },
   ): Promise<string> {
-    let content = "";
+    const completeWithEffort = this.#llmRouter.completeWithEffort?.bind(
+      this.#llmRouter,
+    );
+    const source = completeWithEffort
+      ? completeWithEffort(this.#effort, messages, options)
+      : this.#llmRouter.complete(phase, messages, options);
 
-    for await (const token of this.#llmRouter.complete(
-      phase,
-      messages,
-      options,
-    )) {
+    let content = "";
+    for await (const token of source) {
       content += token;
       this.events.emit("token", { phase, token });
     }
-
     return content;
   }
 

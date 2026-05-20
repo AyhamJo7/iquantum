@@ -1,3 +1,7 @@
+import { loadConfig, MissingApiKeyError } from "@iquantum/config";
+import { formatContextStats } from "../components/context-bar-format";
+import { ClipboardUnavailableError, copyToClipboard } from "../utils/clipboard";
+import { formatDoctorResults, runAllChecks } from "./doctor";
 import type { CommandContext, LocalCommand } from "./registry";
 import { CommandRegistry } from "./registry";
 
@@ -306,6 +310,166 @@ const commandDefs: LocalCommand[] = [
         sysInfo(ctx, `MCP tools (${tools.length}):\n${list}`);
       } catch {
         sysError(ctx, "Failed to fetch MCP tools.");
+      }
+    },
+  },
+  {
+    name: "fast",
+    description: "Switch to fast (editor-model) effort",
+    async run(_, ctx) {
+      try {
+        await ctx.client.patchSessionConfig(ctx.sessionId, { effort: "fast" });
+        sysInfo(ctx, "Effort set to fast.");
+      } catch (e) {
+        sysError(
+          ctx,
+          `Failed to set effort: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
+    name: "normal",
+    description: "Switch to normal effort (default)",
+    async run(_, ctx) {
+      try {
+        await ctx.client.patchSessionConfig(ctx.sessionId, {
+          effort: "normal",
+        });
+        sysInfo(ctx, "Effort set to normal.");
+      } catch (e) {
+        sysError(
+          ctx,
+          `Failed to set effort: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
+    name: "thorough",
+    description: "Switch to thorough (extended-thinking) effort",
+    async run(_, ctx) {
+      try {
+        await ctx.client.patchSessionConfig(ctx.sessionId, {
+          effort: "thorough",
+        });
+        sysInfo(ctx, "Effort set to thorough.");
+      } catch (e) {
+        sysError(
+          ctx,
+          `Failed to set effort: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
+    name: "context",
+    description: "Show context token breakdown",
+    async run(_, ctx) {
+      try {
+        const stats = await ctx.client.getContextStats(ctx.sessionId);
+        sysInfo(ctx, formatContextStats(stats));
+      } catch (e) {
+        sysError(
+          ctx,
+          `Failed to fetch context stats: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
+    name: "diff",
+    description: "Show uncommitted diff (/diff [from] [to])",
+    async run(args, ctx) {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const [from, to] = parts;
+      try {
+        const diffOptions: { from?: string; to?: string } = {};
+        if (from) diffOptions.from = from;
+        if (to) diffOptions.to = to;
+        const diff = await ctx.client.getDiff(ctx.sessionId, diffOptions);
+        if (!diff.trim()) {
+          sysInfo(ctx, "No changes.");
+          return;
+        }
+        sysInfo(ctx, diff);
+      } catch (e) {
+        sysError(
+          ctx,
+          `Diff failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
+    name: "export",
+    description:
+      "Export session as markdown or JSON (/export [markdown|json] [--copy])",
+    async run(args, ctx) {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const format =
+        parts[0] === "json" ? ("json" as const) : ("markdown" as const);
+      const copy = parts.includes("--copy");
+
+      try {
+        const text = await ctx.client.exportSession(ctx.sessionId, { format });
+
+        if (copy) {
+          try {
+            copyToClipboard(text);
+            sysInfo(
+              ctx,
+              `Exported ${format} to clipboard (${text.length} chars).`,
+            );
+          } catch (e) {
+            if (e instanceof ClipboardUnavailableError) {
+              sysError(ctx, e.message);
+            } else {
+              sysError(ctx, "Failed to copy to clipboard.");
+            }
+          }
+          return;
+        }
+
+        sysInfo(ctx, text);
+      } catch (e) {
+        sysError(
+          ctx,
+          `Export failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
+    name: "doctor",
+    description: "Run system diagnostics",
+    async run(_, ctx) {
+      sysInfo(ctx, "Running diagnostics…");
+      try {
+        let config: ReturnType<typeof loadConfig>;
+        try {
+          config = loadConfig();
+        } catch (e) {
+          if (e instanceof MissingApiKeyError) {
+            sysError(
+              ctx,
+              "API key not configured — run: iq config set ANTHROPIC_API_KEY sk-ant-...",
+            );
+          } else {
+            sysError(
+              ctx,
+              `Config error: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+          return;
+        }
+        const results = await runAllChecks(config);
+        sysInfo(ctx, formatDoctorResults(results));
+      } catch (e) {
+        sysError(
+          ctx,
+          `Doctor failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     },
   },

@@ -85,6 +85,9 @@ function fakeEngine(events: EventEmitter<PIVEngineEventMap>) {
     async reject() {
       return fakePlan();
     },
+    setEffort() {
+      return undefined;
+    },
   };
 }
 

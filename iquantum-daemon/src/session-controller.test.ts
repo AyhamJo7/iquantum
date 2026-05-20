@@ -152,7 +152,148 @@ describe("SessionController", () => {
     expect(harness.engineCalls[1]).toEqual(["approve", "plan-1"]);
     expect(harness.engineCalls[2]).toEqual(["reject", "plan-1", "split it"]);
   });
+
+  it("updateConfig updates effort in DB and live session", async () => {
+    const harness = createHarness();
+    await harness.controller.createSession("/repo");
+
+    const updated = await harness.controller.updateConfig("session-1", {
+      effort: "fast",
+    });
+
+    expect(updated.effort).toBe("fast");
+    expect(harness.effortCalls).toEqual(["fast"]);
+  });
+
+  describe("getDiff", () => {
+    it("runs git diff <from> --unified=3 when only from is provided", async () => {
+      const execCalls: string[] = [];
+      const harness = createHarness({
+        exec(_, command) {
+          execCalls.push(command);
+          return fakeExecResult("diff output", "", 0);
+        },
+      });
+      await harness.controller.createSession("/repo");
+
+      const result = await harness.controller.getDiff("session-1", "abc1234");
+
+      expect(execCalls).toEqual(["git diff abc1234 --unified=3"]);
+      expect(result).toBe("diff output");
+    });
+
+    it("runs git diff <from> <to> --unified=3 when both refs are provided", async () => {
+      const execCalls: string[] = [];
+      const harness = createHarness({
+        exec(_, command) {
+          execCalls.push(command);
+          return fakeExecResult("range diff", "", 0);
+        },
+      });
+      await harness.controller.createSession("/repo");
+
+      const result = await harness.controller.getDiff(
+        "session-1",
+        "abc1234",
+        "def5678",
+      );
+
+      expect(execCalls).toEqual(["git diff abc1234 def5678 --unified=3"]);
+      expect(result).toBe("range diff");
+    });
+
+    it("runs git diff HEAD --unified=3 when no refs are provided", async () => {
+      const execCalls: string[] = [];
+      const harness = createHarness({
+        exec(_, command) {
+          execCalls.push(command);
+          return fakeExecResult("head diff", "", 0);
+        },
+      });
+      await harness.controller.createSession("/repo");
+
+      const result = await harness.controller.getDiff("session-1");
+
+      expect(execCalls).toEqual(["git diff HEAD --unified=3"]);
+      expect(result).toBe("head diff");
+    });
+
+    it("throws when git diff exits non-zero and stdout is empty", async () => {
+      const harness = createHarness({
+        exec() {
+          return fakeExecResult("", "fatal: not a git repo", 128);
+        },
+      });
+      await harness.controller.createSession("/repo");
+
+      await expect(
+        harness.controller.getDiff("session-1", "abc1234"),
+      ).rejects.toThrow("git diff failed (exit 128)");
+    });
+
+    it("returns stdout even when exit code is non-zero (partial diff)", async () => {
+      const harness = createHarness({
+        exec() {
+          return fakeExecResult("partial diff output", "some warning", 1);
+        },
+      });
+      await harness.controller.createSession("/repo");
+
+      const result = await harness.controller.getDiff("session-1", "abc1234");
+
+      expect(result).toBe("partial diff output");
+    });
+
+    it("throws for an invalid from ref before touching the sandbox", async () => {
+      let execCalled = false;
+      const harness = createHarness({
+        exec() {
+          execCalled = true;
+          return fakeExecResult("", "", 0);
+        },
+      });
+      await harness.controller.createSession("/repo");
+
+      await expect(
+        harness.controller.getDiff("session-1", "HEAD; rm -rf /"),
+      ).rejects.toThrow("Invalid git ref");
+      expect(execCalled).toBe(false);
+    });
+
+    it("throws for an invalid to ref before touching the sandbox", async () => {
+      let execCalled = false;
+      const harness = createHarness({
+        exec() {
+          execCalled = true;
+          return fakeExecResult("", "", 0);
+        },
+      });
+      await harness.controller.createSession("/repo");
+
+      await expect(
+        harness.controller.getDiff("session-1", "abc1234", "$(evil)"),
+      ).rejects.toThrow("Invalid git ref");
+      expect(execCalled).toBe(false);
+    });
+  });
 });
+
+function fakeExecResult(
+  stdout: string,
+  stderr: string,
+  exitCode: number,
+): {
+  output: AsyncIterable<{ stream: "stdout" | "stderr"; data: string }>;
+  exitCode: Promise<number>;
+} {
+  return {
+    output: (async function* () {
+      if (stdout) yield { stream: "stdout" as const, data: stdout };
+      if (stderr) yield { stream: "stderr" as const, data: stderr };
+    })(),
+    exitCode: Promise.resolve(exitCode),
+  };
+}
 
 function createHarness(
   options: {
@@ -164,12 +305,17 @@ function createHarness(
     memoryManager?: ConstructorParameters<
       typeof SessionController
     >[0]["memoryManager"];
+    exec?: (
+      sessionId: string,
+      command: string,
+    ) => ReturnType<typeof fakeExecResult>;
   } = {},
 ) {
   const sessions = new Map<string, Session>();
   const plans = new Map<string, Plan>();
   const createdSandboxes: string[][] = [];
   const engineCalls: unknown[][] = [];
+  const effortCalls: string[] = [];
   let engineOptions: PIVEngineOptions | undefined;
   const plan = fakePlan();
   plans.set(plan.id, plan);
@@ -180,6 +326,12 @@ function createHarness(
     },
     async get(sessionId) {
       return sessions.get(sessionId) ?? null;
+    },
+    async update(sessionId, updates) {
+      const session = sessions.get(sessionId);
+      if (!session) throw new Error(`Unknown session ${sessionId}`);
+      Object.assign(session, updates);
+      return session;
     },
     async delete(sessionId) {
       sessions.delete(sessionId);
@@ -237,6 +389,9 @@ function createHarness(
     async restore() {
       return undefined;
     },
+    async currentHead() {
+      return "abc123";
+    },
   };
 
   const controller = new SessionController({
@@ -263,7 +418,8 @@ function createHarness(
       async destroySandbox() {
         return undefined;
       },
-      async exec() {
+      async exec(sessionId, command) {
+        if (options.exec) return options.exec(sessionId, command);
         throw new Error("not used");
       },
       async syncToHost() {
@@ -277,7 +433,7 @@ function createHarness(
     }),
     createEngine(options) {
       engineOptions = options;
-      return fakeEngine(engineCalls);
+      return fakeEngine(engineCalls, effortCalls);
     },
     createGitManager: () => gitManager,
     ...(options.fileToolMaxBytes === undefined
@@ -300,13 +456,14 @@ function createHarness(
     controller,
     createdSandboxes,
     engineCalls,
+    effortCalls,
     get engineOptions() {
       return engineOptions;
     },
   };
 }
 
-function fakeEngine(calls: unknown[][]): SessionEngine {
+function fakeEngine(calls: unknown[][], effortCalls: string[]): SessionEngine {
   return {
     status: "idle",
     currentPlan: fakePlan(),
@@ -321,6 +478,9 @@ function fakeEngine(calls: unknown[][]): SessionEngine {
     async reject(planId, feedback) {
       calls.push(["reject", planId, feedback]);
       return fakePlan();
+    },
+    setEffort(effort) {
+      effortCalls.push(effort);
     },
   };
 }

@@ -1,9 +1,11 @@
+import type { EffortLevel } from "@iquantum/types";
 import type { DaemonClient } from "../client";
 import { isDaemonNotRunning } from "../client";
 
 export interface TaskOptions {
   repo?: string;
   extraRepo?: string[];
+  effort?: string;
 }
 
 export type PromptFn = (question: string) => Promise<string>;
@@ -21,6 +23,10 @@ export async function runTask(
   writer: Writer,
 ): Promise<void> {
   const repoPath = options.repo ?? process.cwd();
+  const VALID_EFFORTS: EffortLevel[] = ["fast", "normal", "thorough"];
+  const effort = VALID_EFFORTS.includes(options.effort as EffortLevel)
+    ? (options.effort as EffortLevel)
+    : undefined;
 
   let session: import("@iquantum/types").Session | undefined;
 
@@ -31,6 +37,7 @@ export async function runTask(
       ...(options.extraRepo?.length
         ? { extraRepoPaths: options.extraRepo }
         : {}),
+      ...(effort !== undefined ? { effort } : {}),
     });
   } catch (error) {
     if (isDaemonNotRunning(error)) {

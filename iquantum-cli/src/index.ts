@@ -11,6 +11,7 @@ import { HttpDaemonClient } from "./client";
 import { runChat } from "./commands/chat";
 import { configGet, configList, configSet } from "./commands/config";
 import { daemonStatus, startDaemon, stopDaemon } from "./commands/daemon";
+import { runDoctor } from "./commands/doctor";
 import { InitWizard } from "./commands/init";
 import { runTask } from "./commands/task";
 import { runUpdate } from "./commands/update";
@@ -82,8 +83,15 @@ program
     (val: string, prev: string[]) => [...prev, val],
     [] as string[],
   )
+  .option(
+    "--effort <level>",
+    "Effort level: fast | normal | thorough (default: normal)",
+  )
   .action(
-    async (prompt: string, opts: { repo?: string; extraRepo?: string[] }) => {
+    async (
+      prompt: string,
+      opts: { repo?: string; extraRepo?: string[]; effort?: string },
+    ) => {
       try {
         await runTask(
           prompt,
@@ -177,6 +185,25 @@ program
     try {
       await runUpdate(stdoutWriter);
     } catch (error) {
+      process.stderr.write(
+        `${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command("doctor")
+  .description("Run system diagnostics and check configuration")
+  .action(async () => {
+    try {
+      const config = loadConfig();
+      await runDoctor(config);
+    } catch (error) {
+      if (error instanceof MissingApiKeyError) {
+        process.stderr.write(`${error.message}\n`);
+        process.exit(1);
+      }
       process.stderr.write(
         `${error instanceof Error ? error.message : String(error)}\n`,
       );

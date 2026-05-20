@@ -1,5 +1,17 @@
 export type EffortLevel = "fast" | "normal" | "thorough";
 
+export const CONTEXT_TOKEN_BUDGET = 200_000;
+
+export interface ContextStats {
+  systemPrompt: number;
+  memory: number;
+  repoMap: number;
+  messages: number;
+  lastTurnTokens: number;
+  budget: number;
+  available: number;
+}
+
 export type MemoryType = "user" | "feedback" | "project" | "reference";
 
 export interface Memory {

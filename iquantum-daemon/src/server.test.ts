@@ -1075,6 +1075,211 @@ describe("daemon request handler", () => {
     expect(response.status).toBe(404);
     expect(calls).toEqual([]);
   });
+
+  describe("PATCH /sessions/:id/config", () => {
+    it("updates effort level and returns the session", async () => {
+      const { sessions } = fakeSessions();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/config`,
+        { method: "PATCH", body: { effort: "fast" } },
+      );
+
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as { effort: string }).effort).toBe(
+        "fast",
+      );
+    });
+
+    it("returns 501 when updateConfig is not implemented", async () => {
+      const { sessions } = fakeSessions();
+      const { updateConfig: _removed, ...sessionsWithout } = sessions;
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions: sessionsWithout as DaemonSessions,
+        streams: fakeStreams(),
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/config`,
+        { method: "PATCH", body: { effort: "fast" } },
+      );
+
+      expect(response.status).toBe(501);
+    });
+
+    it("returns 400 for an unknown effort value", async () => {
+      const { sessions } = fakeSessions();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/config`,
+        { method: "PATCH", body: { effort: "turbo" } },
+      );
+
+      expect(response.status).toBe(400);
+    });
+  });
+
+  describe("GET /sessions/:id/context-stats", () => {
+    it("returns context stats from the session store", async () => {
+      const { sessions } = fakeSessions();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/context-stats`,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        budget: number;
+        available: number;
+        messages: number;
+      };
+      expect(body.budget).toBeGreaterThan(0);
+      expect(body.messages).toBe(100);
+      expect(body.available).toBeLessThanOrEqual(body.budget);
+    });
+
+    it("returns zero-filled fallback when getContextStats is absent", async () => {
+      const { sessions } = fakeSessions();
+      const { getContextStats: _removed, ...sessionsWithout } = sessions;
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions: sessionsWithout as DaemonSessions,
+        streams: fakeStreams(),
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/context-stats`,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        budget: number;
+        available: number;
+        messages: number;
+      };
+      expect(body.messages).toBe(0);
+      expect(body.available).toBe(body.budget);
+    });
+  });
+
+  describe("GET /sessions/:id/diff", () => {
+    it("returns plain-text diff when a valid from ref is provided", async () => {
+      const { sessions } = fakeSessions();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/diff?from=abc1234`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/plain");
+    });
+
+    it("returns 400 for an invalid git ref", async () => {
+      const { sessions } = fakeSessions();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/diff?from=HEAD!bad`,
+      );
+
+      expect(response.status).toBe(400);
+    });
+
+    it("returns 501 when getDiff is not implemented", async () => {
+      const { sessions } = fakeSessions();
+      const { getDiff: _removed, ...sessionsWithout } = sessions;
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions: sessionsWithout as DaemonSessions,
+        streams: fakeStreams(),
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/diff?from=abc1234`,
+      );
+
+      expect(response.status).toBe(501);
+    });
+  });
+
+  describe("GET /sessions/:id/export", () => {
+    it("returns markdown export by default", async () => {
+      const { sessions } = fakeSessions();
+      const { conversations } = fakeConversations();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+        conversations,
+      });
+
+      const response = await request(handler, `/sessions/${SESSION_ID}/export`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/plain");
+      const text = await response.text();
+      expect(text).toContain("# iquantum Session Export");
+    });
+
+    it("returns JSON export when format=json", async () => {
+      const { sessions } = fakeSessions();
+      const { conversations } = fakeConversations();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+        conversations,
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/export?format=json`,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        session: unknown;
+        messages: unknown[];
+        truncated: boolean;
+      };
+      expect(body).toHaveProperty("session");
+      expect(body).toHaveProperty("messages");
+      expect(body.truncated).toBe(false);
+    });
+  });
 });
 
 function fakeSessions(
@@ -1148,6 +1353,41 @@ function fakeSessions(
       },
       async restore(sessionId, hash) {
         calls.push(["restore", sessionId, hash]);
+      },
+      async updateConfig(sessionId, config) {
+        calls.push(["updateConfig", sessionId, config]);
+        return {
+          id: sessionId,
+          status: "idle" as const,
+          repoPath: "/repo",
+          containerId: "container",
+          volumeId: "volume",
+          config: {},
+          mode,
+          effort: config.effort ?? ("normal" as const),
+          worktreePath: null,
+          startCheckpointHash: null,
+          userId: null,
+          orgId: sessionOrgId,
+          createdAt: "2026-05-15T00:00:00.000Z",
+          updatedAt: "2026-05-15T00:00:00.000Z",
+        };
+      },
+      async getContextStats(sessionId) {
+        calls.push(["getContextStats", sessionId]);
+        return {
+          systemPrompt: 0,
+          memory: 0,
+          repoMap: 0,
+          messages: 100,
+          lastTurnTokens: 50,
+          budget: 200_000,
+          available: 199_900,
+        };
+      },
+      async getDiff(sessionId, from, to) {
+        calls.push(["getDiff", sessionId, from, to]);
+        return "diff --git a/file.ts b/file.ts\n";
       },
     },
   };

@@ -249,6 +249,26 @@ function createHarness(options: HarnessOptions) {
     async getMessages() {
       return { messages: [], nextCursor: null };
     },
+    async patchSessionConfig() {
+      return fakeSession();
+    },
+    async getDiff() {
+      return "";
+    },
+    async getContextStats() {
+      return {
+        systemPrompt: 0,
+        memory: 0,
+        repoMap: 0,
+        messages: 0,
+        lastTurnTokens: 0,
+        budget: 200_000,
+        available: 200_000,
+      };
+    },
+    async exportSession() {
+      return "";
+    },
     openStream(sessionId) {
       calls.push(["openStream", sessionId]);
       const frames = options.frames;

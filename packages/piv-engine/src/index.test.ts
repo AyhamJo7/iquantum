@@ -348,6 +348,116 @@ describe("PIVEngine", () => {
     );
     expect(harness.engine.status).toBe("error");
   });
+
+  it("uses completeWithEffort when available and passes current effort", async () => {
+    const effortCalls: Array<{ effort: string; messages: LLMMessage[] }> = [];
+    const store = new InMemoryPIVStore();
+    let nextId = 1;
+
+    const engine = new PIVEngine({
+      sessionId: "session-1",
+      repoPath: "/repo",
+      testCommand: "true",
+      effort: "fast",
+      store,
+      llmRouter: {
+        async *complete(phase, _messages) {
+          yield `fallback-${phase}`;
+        },
+        async *completeWithEffort(effort, messages) {
+          effortCalls.push({ effort, messages });
+          yield "effort-plan";
+        },
+      },
+      diffEngine: { async apply() {} },
+      sandbox: {
+        async exec() {
+          return execResult("ok", "", 0);
+        },
+        async syncToHost() {},
+      },
+      gitManager: {
+        async checkpoint(sessionId, message, validateRunId) {
+          return {
+            id: "cp-1",
+            sessionId,
+            validateRunId,
+            commitHash: "abc",
+            commitMessage: message,
+            createdAt: fixedNow,
+          };
+        },
+      },
+      repoMapBuilder: async () => ({
+        map: "map",
+        tokenCount: 1,
+        fromCache: false,
+      }),
+      now: () => fixedNow,
+      createId: () => `id-${nextId++}`,
+    });
+
+    const plan = await engine.startTask("do something");
+
+    expect(plan.content).toBe("effort-plan");
+    expect(effortCalls[0]?.effort).toBe("fast");
+  });
+
+  it("setEffort changes the effort level used on the next task", async () => {
+    const effortCalls: string[] = [];
+    const store = new InMemoryPIVStore();
+    let nextId = 1;
+
+    const engine = new PIVEngine({
+      sessionId: "session-1",
+      repoPath: "/repo",
+      testCommand: "true",
+      effort: "normal",
+      store,
+      llmRouter: {
+        async *complete(_phase, _messages) {
+          yield "plan";
+        },
+        async *completeWithEffort(effort) {
+          effortCalls.push(effort);
+          yield "effort-output";
+        },
+      },
+      diffEngine: { async apply() {} },
+      sandbox: {
+        async exec() {
+          return execResult("ok", "", 0);
+        },
+        async syncToHost() {},
+      },
+      gitManager: {
+        async checkpoint(sessionId, message, validateRunId) {
+          return {
+            id: "cp-1",
+            sessionId,
+            validateRunId,
+            commitHash: "abc",
+            commitMessage: message,
+            createdAt: fixedNow,
+          };
+        },
+      },
+      repoMapBuilder: async () => ({
+        map: "map",
+        tokenCount: 1,
+        fromCache: false,
+      }),
+      now: () => fixedNow,
+      createId: () => `id-${nextId++}`,
+    });
+
+    const plan = await engine.startTask("task one");
+    expect(effortCalls[0]).toBe("normal");
+
+    engine.setEffort("thorough");
+    await engine.reject(plan.id, "please redo with thorough effort");
+    expect(effortCalls[1]).toBe("thorough");
+  });
 });
 
 interface HarnessOptions {
