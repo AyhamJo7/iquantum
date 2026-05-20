@@ -14,7 +14,14 @@ function makeContext(overrides?: Partial<CommandContext>): CommandContext {
     client: {
       health: vi.fn().mockResolvedValue({ ok: true }),
       createSession: vi.fn(),
-      getSession: vi.fn(),
+      getSession: vi.fn().mockResolvedValue({
+        id: "session-1",
+        config: {},
+        worktreePath: null,
+        worktreeBranch: null,
+        effort: "normal",
+        startCheckpointHash: null,
+      }),
       destroySession: vi.fn(),
       startTask: vi.fn(),
       currentPlan: vi.fn().mockResolvedValue(null),
@@ -67,6 +74,34 @@ describe("slash commands", () => {
     const text = (ctx.dispatched[0] as { text: string }).text;
     expect(text).toContain("session-1");
     expect(text).toContain("42");
+    expect(text).toContain("Worktree : (none)");
+    expect(text).toContain("Branch   : (none)");
+    expect(text).toContain("Effort   : normal");
+    expect(text).toContain("Start SHA: (n/a)");
+  });
+
+  it("/status includes worktree path, effort, and start SHA when present", async () => {
+    const ctx = makeContext({
+      client: {
+        ...makeContext().client,
+        getSession: vi.fn().mockResolvedValue({
+          id: "session-1",
+          config: {},
+          worktreePath: "/tmp/wt-session-1",
+          worktreeBranch: "iquantum/custom-session-1",
+          effort: "thorough",
+          startCheckpointHash: "abcdef1234567890",
+        }),
+      },
+    }) as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("status").run("", ctx);
+
+    const text = (ctx.dispatched[0] as { text: string }).text;
+    expect(text).toContain("Worktree : /tmp/wt-session-1");
+    expect(text).toContain("Branch   : iquantum/custom-session-1");
+    expect(text).toContain("Effort   : thorough");
+    expect(text).toContain("Start SHA: abcdef1");
   });
 
   it("/model reports the effective configured models", async () => {

@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  GitManager,
-  InMemoryGitCheckpointStore,
-  type WorktreeInfo,
-} from "./index";
+import { GitManager, InMemoryGitCheckpointStore } from "./index";
 
 const run = promisify(execFile);
 const tempDirs: string[] = [];
@@ -85,16 +81,103 @@ describe("GitManager worktree methods", () => {
     await manager.createWorktree(worktreePath, "iquantum/session-test");
 
     const worktrees = await manager.listWorktrees();
-    const added = worktrees.find((w) => w.path === worktreePath);
+    const added = worktrees.find((w) => w.worktreePath === worktreePath);
 
     expect(added).toBeDefined();
-    expect((added as WorktreeInfo).branch).toBe("iquantum/session-test");
-    expect((added as WorktreeInfo).commitHash).toMatch(/^[0-9a-f]{40}$/);
+    expect(added?.branch).toBe("iquantum/session-test");
+    expect(added?.worktreePath).toBe(worktreePath);
+    expect(added?.commitHash).toMatch(/^[0-9a-f]{40}$/);
 
     await manager.removeWorktree(worktreePath);
 
     const afterRemove = await manager.listWorktrees();
-    expect(afterRemove.find((w) => w.path === worktreePath)).toBeUndefined();
+    expect(
+      afterRemove.find((w) => w.worktreePath === worktreePath),
+    ).toBeUndefined();
+    const branches = await run(
+      "git",
+      ["branch", "--list", "iquantum/session-test"],
+      {
+        cwd: repoPath,
+      },
+    );
+    expect(branches.stdout.trim()).toBe("");
+  });
+
+  it("creates and removes a session-scoped worktree", async () => {
+    const repoPath = await makeRepo();
+    const manager = new GitManager({
+      repoPath,
+      store: new InMemoryGitCheckpointStore(),
+    });
+
+    const worktree = await manager.createWorktree("session-1");
+    tempDirs.push(worktree.worktreePath);
+
+    expect(worktree.branch).toBe("iquantum/session-1");
+    expect(worktree.worktreePath).toContain("session-1");
+    await expect(
+      readFile(join(worktree.worktreePath, "README.md"), "utf8"),
+    ).resolves.toBe("initial\n");
+
+    await manager.removeWorktree("session-1");
+
+    const worktrees = await manager.listWorktrees();
+    expect(
+      worktrees.find((entry) => entry.worktreePath === worktree.worktreePath),
+    ).toBeUndefined();
+    const branches = await run(
+      "git",
+      ["branch", "--list", "iquantum/session-1"],
+      {
+        cwd: repoPath,
+      },
+    );
+    expect(branches.stdout.trim()).toBe("");
+  });
+
+  it("ignores branch deletion only when the branch is already missing", async () => {
+    const rawCalls: string[][] = [];
+    const manager = new GitManager({
+      repoPath: "/repo",
+      store: new InMemoryGitCheckpointStore(),
+      git: {
+        async raw(args: string[]) {
+          rawCalls.push(args);
+          if (args[0] === "branch") {
+            throw new Error("error: branch 'iquantum/session-1' not found.");
+          }
+          return "";
+        },
+      } as never,
+    });
+
+    await expect(
+      manager.removeWorktree("/tmp/wt-session-1", "iquantum/session-1"),
+    ).resolves.toBeUndefined();
+    expect(rawCalls).toEqual([
+      ["worktree", "remove", "--force", "/tmp/wt-session-1"],
+      ["branch", "-D", "iquantum/session-1"],
+    ]);
+  });
+
+  it("surfaces unexpected branch deletion errors", async () => {
+    const manager = new GitManager({
+      repoPath: "/repo",
+      store: new InMemoryGitCheckpointStore(),
+      git: {
+        async raw(args: string[]) {
+          if (args[0] === "branch") {
+            throw new Error("fatal: unable to write loose object");
+          }
+          return "";
+        },
+      } as never,
+    });
+
+    await expect(
+      manager.removeWorktree("/tmp/wt-session-1", "iquantum/session-1"),
+    ).rejects.toThrow("unable to write loose object");
   });
 });
 

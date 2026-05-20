@@ -89,9 +89,9 @@ export class SqliteSessionStore implements SessionStore {
       .query(
         `INSERT INTO sessions (
           id, status, repo_path, container_id, volume_id, config, mode,
-          effort, worktree_path, start_checkpoint_hash,
+          effort, worktree_path, worktree_branch, start_checkpoint_hash,
           user_id, org_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         session.id,
@@ -103,6 +103,7 @@ export class SqliteSessionStore implements SessionStore {
         session.mode,
         session.effort,
         session.worktreePath,
+        session.worktreeBranch,
         session.startCheckpointHash,
         session.userId,
         session.orgId,
@@ -124,6 +125,7 @@ export class SqliteSessionStore implements SessionStore {
           mode,
           effort,
           worktree_path AS "worktreePath",
+          worktree_branch AS "worktreeBranch",
           start_checkpoint_hash AS "startCheckpointHash",
           user_id AS "userId",
           org_id AS "orgId",
@@ -228,6 +230,7 @@ export class SqliteSessionStore implements SessionStore {
           mode,
           effort,
           worktree_path AS "worktreePath",
+          worktree_branch AS "worktreeBranch",
           start_checkpoint_hash AS "startCheckpointHash",
           user_id AS "userId",
           org_id AS "orgId",
@@ -1093,9 +1096,9 @@ export class AdapterSessionStore implements SessionStore {
     await this.db.execute(
       `INSERT INTO sessions (
         id, status, repo_path, container_id, volume_id, config, mode,
-        effort, worktree_path, start_checkpoint_hash,
+        effort, worktree_path, worktree_branch, start_checkpoint_hash,
         user_id, org_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         session.id,
         session.status,
@@ -1106,6 +1109,7 @@ export class AdapterSessionStore implements SessionStore {
         session.mode,
         session.effort,
         session.worktreePath,
+        session.worktreeBranch,
         session.startCheckpointHash,
         session.userId,
         session.orgId,
@@ -1119,7 +1123,8 @@ export class AdapterSessionStore implements SessionStore {
     const row = await this.db.first<SessionRow>(
       `SELECT id, status, repo_path AS "repoPath", container_id AS "containerId",
               volume_id AS "volumeId", config, mode, effort,
-              worktree_path AS "worktreePath", start_checkpoint_hash AS "startCheckpointHash",
+              worktree_path AS "worktreePath", worktree_branch AS "worktreeBranch",
+              start_checkpoint_hash AS "startCheckpointHash",
               user_id AS "userId", org_id AS "orgId",
               created_at AS "createdAt", updated_at AS "updatedAt"
        FROM sessions WHERE id = ? ${orgId ? "AND org_id = ?" : ""}`,
@@ -1193,7 +1198,8 @@ export class AdapterSessionStore implements SessionStore {
     const rows = await this.db.query<SessionRow>(
       `SELECT id, status, repo_path AS "repoPath", container_id AS "containerId",
               volume_id AS "volumeId", config, mode, effort,
-              worktree_path AS "worktreePath", start_checkpoint_hash AS "startCheckpointHash",
+              worktree_path AS "worktreePath", worktree_branch AS "worktreeBranch",
+              start_checkpoint_hash AS "startCheckpointHash",
               user_id AS "userId", org_id AS "orgId",
               created_at AS "createdAt", updated_at AS "updatedAt"
        FROM sessions WHERE org_id = ? ORDER BY created_at, id`,

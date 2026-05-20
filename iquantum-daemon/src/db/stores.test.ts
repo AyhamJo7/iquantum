@@ -21,6 +21,7 @@ describe("SqliteSessionStore.update", () => {
       mode: "piv",
       effort: "fast",
       worktreePath: null,
+      worktreeBranch: null,
       startCheckpointHash: null,
       userId: null,
       orgId: null,

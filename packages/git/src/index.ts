@@ -1,3 +1,5 @@
+import { mkdir } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { GitCheckpoint } from "@iquantum/types";
 import { type SimpleGit, simpleGit } from "simple-git";
 
@@ -15,7 +17,7 @@ export interface GitCheckpointPage {
 }
 
 export interface WorktreeInfo {
-  path: string;
+  worktreePath: string;
   branch: string;
   commitHash: string;
 }
@@ -29,12 +31,14 @@ export interface GitManagerOptions {
 }
 
 export class GitManager {
+  readonly #repoPath: string;
   readonly #git: SimpleGit;
   readonly #store: GitCheckpointStore;
   readonly #now: () => string;
   readonly #createId: () => string;
 
   constructor(options: GitManagerOptions) {
+    this.#repoPath = options.repoPath;
     this.#git = options.git ?? simpleGit(options.repoPath);
     this.#store = options.store;
     this.#now = options.now ?? (() => new Date().toISOString());
@@ -77,12 +81,75 @@ export class GitManager {
     return (await this.#git.revparse(["HEAD"])).trim();
   }
 
-  async createWorktree(worktreePath: string, branch: string): Promise<void> {
-    await this.#git.raw(["worktree", "add", "-b", branch, worktreePath]);
+  /**
+   * One argument is a session id and creates branch `iquantum/<sessionId>`.
+   * Use the two-argument overload when passing an explicit filesystem path.
+   */
+  async createWorktree(sessionId: string): Promise<WorktreeInfo>;
+  async createWorktree(
+    worktreePath: string,
+    branch: string,
+  ): Promise<WorktreeInfo>;
+  async createWorktree(
+    sessionIdOrPath: string,
+    branch?: string,
+  ): Promise<WorktreeInfo> {
+    const worktreeBranch = branch ?? `iquantum/${sessionIdOrPath}`;
+    const worktreePath =
+      branch === undefined
+        ? join(
+            dirname(this.#repoPath),
+            ".iquantum-worktrees",
+            basename(this.#repoPath),
+            sessionIdOrPath,
+          )
+        : sessionIdOrPath;
+    const commitHash = await this.currentHead();
+    await mkdir(dirname(worktreePath), { recursive: true });
+    await this.#git.raw([
+      "worktree",
+      "add",
+      "-b",
+      worktreeBranch,
+      worktreePath,
+    ]);
+    return {
+      worktreePath,
+      branch: worktreeBranch,
+      commitHash,
+    };
   }
 
-  async removeWorktree(worktreePath: string): Promise<void> {
+  async removeWorktree(
+    sessionIdOrPath: string,
+    branch?: string,
+  ): Promise<void> {
+    const worktreePath = isAbsolute(sessionIdOrPath)
+      ? sessionIdOrPath
+      : join(
+          dirname(this.#repoPath),
+          ".iquantum-worktrees",
+          basename(this.#repoPath),
+          sessionIdOrPath,
+        );
+    const worktreeBranch =
+      branch ??
+      (isAbsolute(sessionIdOrPath)
+        ? (await this.listWorktrees()).find(
+            (worktree) => worktree.worktreePath === worktreePath,
+          )?.branch
+        : `iquantum/${sessionIdOrPath}`);
+
     await this.#git.raw(["worktree", "remove", "--force", worktreePath]);
+    if (worktreeBranch) {
+      try {
+        await this.#git.raw(["branch", "-D", worktreeBranch]);
+      } catch (error) {
+        if (!isBranchNotFoundError(error)) {
+          throw error;
+        }
+      }
+    }
   }
 
   async listWorktrees(): Promise<WorktreeInfo[]> {
@@ -130,7 +197,7 @@ function parseWorktreeList(output: string): WorktreeInfo[] {
 
     for (const line of lines) {
       if (line.startsWith("worktree ")) {
-        worktree.path = line.slice("worktree ".length).trim();
+        worktree.worktreePath = line.slice("worktree ".length).trim();
       } else if (line.startsWith("HEAD ")) {
         worktree.commitHash = line.slice("HEAD ".length).trim();
       } else if (line.startsWith("branch ")) {
@@ -141,12 +208,17 @@ function parseWorktreeList(output: string): WorktreeInfo[] {
       }
     }
 
-    if (worktree.path && worktree.commitHash && worktree.branch) {
+    if (worktree.worktreePath && worktree.commitHash && worktree.branch) {
       worktrees.push(worktree as WorktreeInfo);
     }
   }
 
   return worktrees;
+}
+
+function isBranchNotFoundError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /branch .+ not found/i.test(message);
 }
 
 function compareCheckpoints(left: GitCheckpoint, right: GitCheckpoint): number {

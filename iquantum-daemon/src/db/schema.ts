@@ -261,6 +261,12 @@ const migrations: readonly Migration[] = [
       ALTER TABLE sessions ADD COLUMN start_checkpoint_hash TEXT;
     `,
   },
+  {
+    version: 15,
+    sql: `
+      ALTER TABLE sessions ADD COLUMN worktree_branch TEXT;
+    `,
+  },
 ];
 
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
@@ -341,6 +347,7 @@ const postgresBootstrapStatements = [
       CHECK (mode IN ('piv', 'chat')),
     effort TEXT NOT NULL DEFAULT 'normal',
     worktree_path TEXT,
+    worktree_branch TEXT,
     start_checkpoint_hash TEXT,
     user_id TEXT REFERENCES users(id),
     org_id TEXT REFERENCES organizations(id),

@@ -172,15 +172,27 @@ const commandDefs: LocalCommand[] = [
   {
     name: "status",
     description: "Show session ID, model, and token count",
-    run(_, ctx) {
-      sysInfo(
-        ctx,
-        [
-          `Session : ${ctx.sessionId}`,
-          `Model   : ${ctx.modelName}`,
-          `Tokens  : ${ctx.tokenCount}`,
-        ].join("\n"),
-      );
+    async run(_, ctx) {
+      try {
+        const session = await ctx.client.getSession(ctx.sessionId);
+        sysInfo(
+          ctx,
+          [
+            `Session : ${ctx.sessionId}`,
+            `Model   : ${ctx.modelName}`,
+            `Tokens  : ${ctx.tokenCount}`,
+            `Worktree : ${session.worktreePath ?? "(none)"}`,
+            `Branch   : ${session.worktreeBranch ?? "(none)"}`,
+            `Effort   : ${session.effort}`,
+            `Start SHA: ${session.startCheckpointHash?.slice(0, 7) ?? "(n/a)"}`,
+          ].join("\n"),
+        );
+      } catch (e) {
+        sysError(
+          ctx,
+          `Status failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     },
   },
   {

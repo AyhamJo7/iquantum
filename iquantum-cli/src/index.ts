@@ -88,10 +88,16 @@ program
     "--effort <level>",
     "Effort level: fast | normal | thorough (default: normal)",
   )
+  .option("--worktree", "Run the task on a dedicated git worktree branch")
   .action(
     async (
       prompt: string,
-      opts: { repo?: string; extraRepo?: string[]; effort?: string },
+      opts: {
+        repo?: string;
+        extraRepo?: string[];
+        effort?: string;
+        worktree?: boolean;
+      },
     ) => {
       try {
         await runTask(

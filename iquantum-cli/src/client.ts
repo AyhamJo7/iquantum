@@ -130,6 +130,7 @@ export interface CreateSessionOptions {
   mode?: "piv" | "chat";
   extraRepoPaths?: string[];
   effort?: EffortLevel;
+  worktree?: boolean;
 }
 
 export class HttpDaemonClient implements DaemonClient {

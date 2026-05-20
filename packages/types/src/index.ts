@@ -104,6 +104,7 @@ export interface Session {
   mode: "piv" | "chat";
   effort: EffortLevel;
   worktreePath: string | null;
+  worktreeBranch: string | null;
   startCheckpointHash: string | null;
   userId: string | null;
   orgId: string | null;
