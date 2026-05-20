@@ -169,7 +169,7 @@ PLAN ✓  ·  IMPLEMENT ✓  ·  VALIDATE ✓
 ╰────────────────────────────────────────────╯
 
 describe a task, or /help for commands
- iq v2.0.5  ·  claude-sonnet-4-6 ·  12k ▓▓▓░░░░░
+ iq v3.0.0  ·  claude-sonnet-4-6 ·  12k ▓▓▓░░░░░
 ```
 
 The agent waits for your approval before writing a single line of code. If you are not happy with the plan, type `no` and explain what to change — the agent will revise and show you a new plan.
@@ -191,6 +191,19 @@ Type any of these inside the `iq` REPL:
 | `/mcp` | List connected MCP tools and their current status |
 | `/restore [hash]` | Roll the sandbox back to a previous Git checkpoint |
 | `/task <prompt>` | Start a PIV task in task mode |
+| `/remember <fact>` | Save a project memory |
+| `/memory` | List, pin, or forget saved memories |
+| `/doctor` | Run local diagnostics |
+| `/context` | Show the current context budget |
+| `/diff` | Show the current sandbox diff |
+| `/export` | Export the current session |
+| `/fast` | Switch to fast effort |
+| `/normal` | Switch to normal effort |
+| `/thorough` | Switch to thorough effort |
+| `/hooks` | List loaded hooks |
+| `/skills` | List built-in and custom skills |
+| `/keybindings` | Show active keybindings |
+| `/review` | Review staged changes, a commit, path, or pull request |
 | `/quit` | Exit the REPL — the daemon and sandbox stay running for resume |
 
 ### Keyboard shortcuts
@@ -201,6 +214,25 @@ Type any of these inside the `iq` REPL:
 | `Ctrl-L` | Clear the screen |
 | `Escape` | Cancel the current in-flight request |
 | `Ctrl-C` twice | Exit `iq` immediately |
+
+---
+
+## CLI commands
+
+| Command | What it does |
+|---|---|
+| `iq` | Open the interactive PIV REPL |
+| `iq chat` | Open chat mode without the PIV loop |
+| `iq task <prompt>` | Run one PIV task from the terminal |
+| `iq review` | Review staged changes by default |
+| `iq review --commit <ref>` | Review one commit |
+| `iq review --path <path>` | Review a path against `HEAD` |
+| `iq review --pr <number-or-url>` | Review a GitHub pull request |
+| `iq doctor` | Check Docker, config, daemon reachability, and API key setup |
+| `iq config list|get|set` | Read and write local configuration |
+| `iq daemon start|stop|status` | Manage the background daemon |
+| `iq init` | Re-run setup and scaffold hooks, skills, and keybindings |
+| `iq update` | Update the installed CLI |
 
 ---
 
@@ -234,6 +266,12 @@ Use `--extra-repo` (repeatable) to pull in context from additional repositories 
 
 ```bash
 iq task --repo /path/to/server --extra-repo /path/to/shared-lib "update the API to match the types in shared-lib"
+```
+
+Use `--worktree` to run the task on a dedicated Git worktree branch named `iquantum/<session-id>`:
+
+```bash
+iq task --worktree "upgrade the auth flow without touching my current checkout"
 ```
 
 ---
@@ -281,6 +319,19 @@ Settings are saved in `~/.iquantum/config.json`. You can also set any of these a
 | `MAX_RETRIES` | — | `3` | How many times the agent retries before giving up |
 | `IQUANTUM_EXEC_TIMEOUT_MS` | — | `120000` | How long (ms) a sandbox command can run before being killed |
 | `IQUANTUM_MCP_SERVERS` | — | `[]` | External tools to expose to the agent via MCP (JSON array) |
+| `IQUANTUM_MEMORY_TOKENS` | — | `2000` | Token budget reserved for injected memories |
+| `IQUANTUM_AUTO_MEMORY` | — | `false` | Enable automatic memory extraction |
+| `IQUANTUM_FILE_TOOLS` | — | `true` | Enable built-in file read/write/edit/glob/grep tools |
+| `IQUANTUM_FILE_TOOL_MAX_BYTES` | — | `200000` | Maximum bytes returned by one file tool read |
+| `IQUANTUM_WEB_TOOLS` | — | `false` | Enable built-in web search and fetch tools |
+| `IQUANTUM_SEARCH_PROVIDER` | For web search | `brave` | Search provider: `brave` or `tavily` |
+| `BRAVE_API_KEY` | For Brave search | — | Brave Search API key |
+| `TAVILY_API_KEY` | For Tavily search | — | Tavily API key |
+| `IQUANTUM_HOOKS_DIR` | — | `~/.iquantum/hooks` | Directory for hot-loaded hooks |
+| `IQUANTUM_HOOK_TIMEOUT_MS` | — | `5000` | Maximum duration for one hook run |
+| `IQUANTUM_SKILLS_DIR` | — | `~/.iquantum/skills` | Directory for hot-loaded custom skills |
+| `IQUANTUM_KEYBINDINGS_FILE` | — | `~/.iquantum/keybindings.json` | REPL keybinding map |
+| `IQUANTUM_REVIEW_MODEL` | — | Architect model | Optional model override for `iq review` |
 | `SENTRY_DSN` | For production monitoring | — | Optional Sentry DSN used to capture daemon request and process errors |
 | `LOG_LEVEL` | — | `info` | Daemon log verbosity: `error` · `warn` · `info` · `debug` |
 
@@ -299,6 +350,171 @@ Run this any time you want to change your API key, swap models, or reset your co
 ```bash
 iq update
 ```
+
+---
+
+## Memory System
+
+Save durable project facts with `/remember`:
+
+```text
+/remember this repo uses Biome and Bun workspaces
+```
+
+Use `/memory` to list memories, `/memory pin <name>` to keep an item in the active context, and `/memory forget <name>` to remove it. Memories are persisted by the daemon and materialized into `~/.iquantum/MEMORY.md` so they survive daemon restarts and new sessions. `IQUANTUM_MEMORY_TOKENS` controls the memory context budget, and `IQUANTUM_AUTO_MEMORY=true` enables automatic memory extraction from conversations.
+
+---
+
+## File Tools
+
+When `IQUANTUM_FILE_TOOLS=true` (the default), the agent can use built-in repository tools without an external MCP server:
+
+| Tool | Purpose |
+|---|---|
+| `file_read` | Read text files inside the allowed repository roots |
+| `file_write` | Create or replace a file |
+| `file_edit` | Apply targeted edits using the diff engine |
+| `file_glob` | Find files by glob pattern |
+| `file_grep` | Search file contents |
+
+All file paths are sanitized and resolved under the session repositories. `IQUANTUM_FILE_TOOL_MAX_BYTES` limits the bytes returned by a single read.
+
+---
+
+## Web Tools
+
+Web tools are opt-in:
+
+```bash
+IQUANTUM_WEB_TOOLS=true
+IQUANTUM_SEARCH_PROVIDER=brave
+BRAVE_API_KEY=...
+```
+
+Set `IQUANTUM_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY` to use Tavily instead. `web_search` returns search results; `web_fetch` fetches and converts pages to readable text. Fetches are protected by SSRF checks that block localhost, private IP ranges, and redirect chains into private networks.
+
+---
+
+## Diagnostics
+
+Run:
+
+```bash
+iq doctor
+```
+
+Example output:
+
+```text
+ok    Docker daemon    running
+ok    Config file      loaded
+ok    API key          present
+ok    Daemon socket    reachable at ~/.iquantum/daemon.sock
+warn  Sandbox image    ghcr.io/ayhamjo7/iquantum-sandbox:latest not found locally
+```
+
+Inside the REPL, `/doctor` runs the same checks without leaving the session.
+
+---
+
+## Context Budget
+
+Use `/context` to inspect the active context window: message tokens, repo-map tokens, memory tokens, and remaining budget. Use `/compact` when the conversation is long; the daemon writes a summary and keeps the session moving with less prompt weight.
+
+`/diff` shows the current sandbox diff, and `/export` writes a session transcript in markdown or JSON.
+
+---
+
+## Code Review
+
+`iq review` runs the review engine without starting a full PIV implementation:
+
+```bash
+iq review                         # staged changes
+iq review --commit HEAD~1         # one commit
+iq review --path src/auth.ts      # path compared with HEAD
+iq review --pr 123                # GitHub PR number or URL
+```
+
+Inside the REPL, use `/review staged`, `/review commit <ref>`, `/review path <path>`, or `/review pr <number-or-url>`.
+
+---
+
+## Effort Levels
+
+Effort changes how the daemon routes model calls:
+
+| Level | Command | Route |
+|---|---|---|
+| Fast | `/fast` or `iq task --effort fast` | Editor model |
+| Normal | `/normal` or `iq task --effort normal` | Architect model |
+| Thorough | `/thorough` or `iq task --effort thorough` | Dedicated thorough route when configured, otherwise architect |
+
+The default is normal. Keep `IQUANTUM_ARCHITECT_MODEL` and `IQUANTUM_EDITOR_MODEL` separate; the planning/editing split is part of the runtime design.
+
+---
+
+## Hooks
+
+Hooks are loaded from `IQUANTUM_HOOKS_DIR` (default `~/.iquantum/hooks`) and reloaded while the CLI is running. Shell hooks use a first-line event subscription and receive the event JSON on stdin:
+
+```bash
+#!/usr/bin/env bash
+# events: pre_apply_diff,post_validate
+
+event="$(cat)"
+case "$event" in
+  *\"pre_apply_diff\"*) echo '{"block": false, "message": "diff accepted"}' ;;
+  *) echo '{"block": false}' ;;
+esac
+```
+
+JavaScript and TypeScript hooks export `{ name, events, run }`. Every hook is bounded by `IQUANTUM_HOOK_TIMEOUT_MS`; timeout failures are logged and do not block the session.
+
+Hook events: `pre_tool_call`, `post_tool_call`, `pre_apply_diff`, `post_validate`, `on_permission_request`, `session_created`, `session_destroyed`, `plan_generated`, `plan_approved`, `plan_rejected`, `checkpoint_created`, `task_started`, `task_completed`.
+
+---
+
+## Skills
+
+Skills are custom slash commands loaded from `IQUANTUM_SKILLS_DIR` (default `~/.iquantum/skills`) and hot-reloaded by the CLI. A JavaScript skill exports a default object:
+
+```js
+export default {
+  name: "ticket",
+  description: "Start work from an issue ID",
+  async run(args, ctx) {
+    await ctx.client.postMessage(ctx.sessionId, `Load issue ${args}`);
+    ctx.dispatch({ type: "system_message", text: `Loaded ${args}`, level: "info" });
+  },
+};
+```
+
+Built-in skills: `batch`, `debug`, `export`, and `doctor`. Use `/skills` to see the active set.
+
+---
+
+## Keybindings
+
+Custom keybindings are read from `IQUANTUM_KEYBINDINGS_FILE` (default `~/.iquantum/keybindings.json`). Chords map to built-in actions or `run:<slash-command>`:
+
+```json
+{
+  "ctrl+k ctrl+c": "compact",
+  "ctrl+k ctrl+s": "status",
+  "ctrl+k ctrl+d": "doctor",
+  "ctrl+e": "export",
+  "ctrl+r": "run:review"
+}
+```
+
+Default bindings created by `iq init`: `ctrl+k ctrl+c` for compact, `ctrl+k ctrl+s` for status, `ctrl+k ctrl+d` for doctor, and `ctrl+e` for export.
+
+---
+
+## Worktree Mode
+
+`iq task --worktree` creates a dedicated worktree and branch for the session using the `iquantum/<session-id>` naming convention. The daemon removes the worktree when the session is destroyed; commits created by successful validation remain on the session branch.
 
 ---
 
@@ -431,6 +647,11 @@ iquantum/
     ├── diff-engine/   Unified diff parser and fuzzy hunk applicator
     ├── git/           Git checkpoint commits and sandbox restore
     ├── piv-engine/    Plan → Implement → Validate state machine
+    ├── file-tools/    Built-in repository read/write/search tools
+    ├── web-tools/     Opt-in search and fetch tools with SSRF protection
+    ├── memory/        Durable project memory materialized into MEMORY.md
+    ├── hooks/         Event hooks with timeout-bounded execution
+    ├── skills/        Built-in and custom slash-command skills
     ├── protocol/      CLI ↔ daemon message types
     ├── ui-core/       Headless state hooks shared by CLI and VS Code webview
     └── context-window/  Token budget management
@@ -470,6 +691,16 @@ bun run typecheck        # TypeScript type check across all packages
 - [x] Multi-repo context spanning more than one repository
 - [x] VS Code extension — visual diff approval and side-by-side plan review
 - [x] Cloud sandbox tier — hosted execution, zero local Docker setup
+- [x] Memory system — `/remember`, `/memory`, `MEMORY.md`, and automatic memory
+- [x] File tools — built-in read, write, edit, glob, and grep
+- [x] Web tools — opt-in search and fetch with SSRF protection
+- [x] Diagnostics and context tools — `iq doctor`, `/doctor`, `/context`, `/diff`, `/export`
+- [x] Code review — `iq review` and `/review`
+- [x] Effort levels — `/fast`, `/normal`, `/thorough`, and `iq task --effort`
+- [x] Hooks — shell and JS hooks with event subscriptions
+- [x] Skills — built-in and hot-reloaded custom slash commands
+- [x] Keybindings — user-configurable REPL chords
+- [x] Worktree mode — `iq task --worktree` session branches
 
 ---
 
