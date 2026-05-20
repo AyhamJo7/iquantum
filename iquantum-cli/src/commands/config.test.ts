@@ -86,6 +86,21 @@ describe("config commands", () => {
       expect(lines.join("\n")).toContain("set MAX_RETRIES");
     });
 
+    it("writes v3 config keys", async () => {
+      const { writer, lines } = makeWriter();
+      await configSet("IQUANTUM_MEMORY_TOKENS", "3000", writer, tmpDir);
+      await configSet(
+        "IQUANTUM_HOOKS_DIR",
+        "~/.iquantum/hooks",
+        writer,
+        tmpDir,
+      );
+      await configSet("IQUANTUM_REVIEW_MODEL", "review-model", writer, tmpDir);
+      expect(lines.join("\n")).toContain("set IQUANTUM_MEMORY_TOKENS");
+      expect(lines.join("\n")).toContain("set IQUANTUM_HOOKS_DIR");
+      expect(lines.join("\n")).toContain("set IQUANTUM_REVIEW_MODEL");
+    });
+
     it("rejects an unknown key", async () => {
       const { writer, lines } = makeWriter();
       await configSet("UNKNOWN_KEY", "value", writer, tmpDir);
@@ -124,6 +139,19 @@ describe("config commands", () => {
       configGet("ANTHROPIC_API_KEY", writer, tmpDir);
       expect(lines.join("\n")).toContain("sk-...");
       expect(lines.join("\n")).not.toContain("secret");
+    });
+
+    it("redacts search provider API keys", async () => {
+      await configSet(
+        "BRAVE_API_KEY",
+        "brave-supersecret1234",
+        makeWriter().writer,
+        tmpDir,
+      );
+      const { writer, lines } = makeWriter();
+      configGet("BRAVE_API_KEY", writer, tmpDir);
+      expect(lines.join("\n")).toContain("bra...");
+      expect(lines.join("\n")).not.toContain("supersecret");
     });
   });
 });

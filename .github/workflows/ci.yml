@@ -9,11 +9,19 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: docker info
-      - run: bun run build
-      - run: bun run typecheck
-      - run: bun run lint
-      - run: bun run test
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify Docker
+        run: docker info
+      - name: Build all workspaces
+        run: bun run build
+      - name: Typecheck all workspaces, including v3 packages
+        run: bun run typecheck
+      - name: Biome lint all workspaces, including v3 packages
+        run: bun run lint
+      - name: Test all workspaces, including file/web/memory/hooks/skills packages
+        run: bun run test

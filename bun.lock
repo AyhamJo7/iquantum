@@ -14,7 +14,7 @@
     },
     "iquantum-cli": {
       "name": "@iquantum/cli",
-      "version": "2.0.5",
+      "version": "3.0.0",
       "bin": {
         "iq": "./dist/bin.js",
       },
@@ -33,7 +33,7 @@
     },
     "iquantum-daemon": {
       "name": "@iquantum/daemon",
-      "version": "0.0.0",
+      "version": "3.0.0",
       "dependencies": {
         "@aws-sdk/client-ecs": "^3.1048.0",
         "@aws-sdk/client-ssm": "^3.1048.0",
@@ -42,12 +42,14 @@
         "@iquantum/diff-engine": "workspace:*",
         "@iquantum/file-tools": "workspace:*",
         "@iquantum/git": "workspace:*",
+        "@iquantum/hooks": "workspace:*",
         "@iquantum/llm": "workspace:*",
         "@iquantum/memory": "workspace:*",
         "@iquantum/piv-engine": "workspace:*",
         "@iquantum/protocol": "workspace:*",
         "@iquantum/sandbox": "workspace:*",
         "@iquantum/types": "workspace:*",
+        "@iquantum/ui-core": "workspace:*",
         "@iquantum/web-tools": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@sentry/bun": "^10.53.1",
@@ -85,7 +87,7 @@
     },
     "packages/config": {
       "name": "@iquantum/config",
-      "version": "0.0.0",
+      "version": "3.0.0",
       "dependencies": {
         "zod": "^4.4.3",
       },
@@ -118,7 +120,7 @@
     },
     "packages/git": {
       "name": "@iquantum/git",
-      "version": "0.0.0",
+      "version": "3.0.0",
       "dependencies": {
         "@iquantum/types": "workspace:*",
         "simple-git": "^3.36.0",
@@ -133,7 +135,7 @@
     },
     "packages/llm": {
       "name": "@iquantum/llm",
-      "version": "0.0.0",
+      "version": "3.0.0",
       "dependencies": {
         "@anthropic-ai/sdk": "latest",
         "@iquantum/file-tools": "workspace:*",
@@ -153,11 +155,12 @@
     },
     "packages/piv-engine": {
       "name": "@iquantum/piv-engine",
-      "version": "0.0.0",
+      "version": "3.0.0",
       "dependencies": {
         "@iquantum/diff-engine": "workspace:*",
         "@iquantum/file-tools": "workspace:*",
         "@iquantum/git": "workspace:*",
+        "@iquantum/hooks": "workspace:*",
         "@iquantum/llm": "workspace:*",
         "@iquantum/repo-map": "workspace:*",
         "@iquantum/sandbox": "workspace:*",
@@ -195,16 +198,17 @@
       "name": "@iquantum/skills",
       "version": "1.0.0",
       "dependencies": {
+        "@iquantum/config": "workspace:*",
         "@iquantum/types": "workspace:*",
       },
     },
     "packages/types": {
       "name": "@iquantum/types",
-      "version": "0.0.0",
+      "version": "3.0.0",
     },
     "packages/ui-core": {
       "name": "@iquantum/ui-core",
-      "version": "1.0.0",
+      "version": "3.0.0",
       "dependencies": {
         "@iquantum/protocol": "workspace:*",
         "react": "^19.0.0",

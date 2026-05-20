@@ -16,6 +16,19 @@ export const KNOWN_CONFIG_KEYS = [
   "IQUANTUM_EXEC_TIMEOUT_MS",
   "IQUANTUM_MCP_SERVERS",
   "IQUANTUM_CORS_ORIGINS",
+  "IQUANTUM_MEMORY_TOKENS",
+  "IQUANTUM_AUTO_MEMORY",
+  "IQUANTUM_FILE_TOOLS",
+  "IQUANTUM_FILE_TOOL_MAX_BYTES",
+  "IQUANTUM_WEB_TOOLS",
+  "IQUANTUM_SEARCH_PROVIDER",
+  "BRAVE_API_KEY",
+  "TAVILY_API_KEY",
+  "IQUANTUM_HOOKS_DIR",
+  "IQUANTUM_HOOK_TIMEOUT_MS",
+  "IQUANTUM_SKILLS_DIR",
+  "IQUANTUM_KEYBINDINGS_FILE",
+  "IQUANTUM_REVIEW_MODEL",
   "SENTRY_DSN",
   "MAX_RETRIES",
 ] as const;
@@ -28,7 +41,10 @@ function isKnownKey(key: string): key is ConfigKey {
 
 function redact(key: string, value: string): string {
   if (
-    (key === "ANTHROPIC_API_KEY" || key === "IQUANTUM_API_KEY") &&
+    (key === "ANTHROPIC_API_KEY" ||
+      key === "IQUANTUM_API_KEY" ||
+      key === "BRAVE_API_KEY" ||
+      key === "TAVILY_API_KEY") &&
     value.length > 7
   ) {
     return `${value.slice(0, 3)}...${value.slice(-4)}`;
