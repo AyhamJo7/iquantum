@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { loadConfig } from "@iquantum/config";
 import { countTokens } from "@iquantum/context-window";
 import { SandboxFileTools } from "@iquantum/file-tools";
+import { HookLoader, HookRunner } from "@iquantum/hooks";
 import {
   AnthropicProvider,
   LLMRouter,
@@ -23,6 +24,7 @@ import { initializePostgresSchema, initializeSchema } from "./db/schema";
 import {
   AdapterConversationStore,
   AdapterGitCheckpointStore,
+  AdapterHookRunStore,
   AdapterMemoryStore,
   AdapterPIVStore,
   AdapterSessionStore,
@@ -46,6 +48,8 @@ const pidPath = join(stateDir, "daemon.pid");
 const dbPath = join(stateDir, "iquantum.sqlite");
 
 await mkdir(stateDir, { recursive: true });
+await mkdir(config.hooksDir, { recursive: true });
+await mkdir(config.skillsDir, { recursive: true });
 await rm(config.socketPath, { force: true });
 
 const dbAdapter = createDbAdapter(config.databaseUrl ?? `file:${dbPath}`);
@@ -60,7 +64,17 @@ const sessionStore = new AdapterSessionStore(dbAdapter);
 const pivStore = new AdapterPIVStore(dbAdapter);
 const conversationStore = new AdapterConversationStore(dbAdapter);
 const checkpointStore = new AdapterGitCheckpointStore(dbAdapter);
+const hookRunStore = new AdapterHookRunStore(dbAdapter);
 const memoryStore = new AdapterMemoryStore(dbAdapter);
+const hooks = await HookLoader.load(config.hooksDir, config.hookTimeoutMs);
+const hookRunner = new HookRunner(hooks, hookRunStore, () =>
+  new Date().toISOString(),
+);
+const stopHookWatcher = HookLoader.watch(
+  config.hooksDir,
+  config.hookTimeoutMs,
+  (newHooks) => hookRunner.updateHooks(newHooks),
+);
 const memoryManager = new MemoryManager(
   {
     store: memoryStore,
@@ -151,6 +165,7 @@ const sessions = new SessionController({
   maxRetries: config.maxRetries,
   llmRouterFactory: () => llmRouter,
   permissionGate: permissions,
+  hookRunner,
   ...(config.fileTools ? { fileToolMaxBytes: config.fileToolMaxBytes } : {}),
   ...(webTools ? { webTools } : {}),
   ...(webSearchRateLimiter ? { webSearchRateLimiter } : {}),
@@ -211,6 +226,7 @@ const conversations = new ConversationController({
   memoryManager,
   memoryUserId: "local",
   autoMemory: config.autoMemory,
+  hookRunner,
 });
 
 async function healthCheck(): Promise<{
@@ -260,6 +276,7 @@ const server = createDaemonServer({
   compaction,
   permissions,
   ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
+  hooks: hookRunner,
   memory: memoryManager,
   memoryUserId: "local",
   healthCheck,
@@ -284,6 +301,7 @@ const tcpServer = createTcpDaemonServer(
     compaction,
     permissions,
     ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
+    hooks: hookRunner,
     memory: memoryManager,
     memoryUserId: "local",
     healthCheck,
@@ -322,6 +340,7 @@ async function shutdown(reason: string, exitCode = 0): Promise<void> {
   logger.info({ msg: "shutdown", reason, exitCode });
   permissions.drainAll();
   streams.closeAll();
+  stopHookWatcher();
   await mcpRegistry?.closeAll();
   await errorReporter?.flush?.();
   await server.stop(true);

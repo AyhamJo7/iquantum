@@ -5,6 +5,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
+    "@iquantum/config": "workspace:*",
     "@iquantum/types": "workspace:*"
   },
   "scripts": {

@@ -44,4 +44,33 @@ describe("CommandRegistry", () => {
     const cmds = [makeCmd("a"), makeCmd("b"), makeCmd("c")];
     expect(new CommandRegistry(cmds).getAll()).toHaveLength(3);
   });
+
+  it("registerSkill exposes a skill as a command", () => {
+    const reg = new CommandRegistry([makeCmd("help")]);
+    reg.registerSkill({
+      name: "standup",
+      description: "daily notes",
+      async run() {},
+    });
+
+    expect(reg.get("standup")).toMatchObject({
+      name: "standup",
+      description: "daily notes",
+    });
+    expect(reg.getSkillCommands().map((cmd) => cmd.name)).toEqual(["standup"]);
+  });
+
+  it("clearSkills removes skill commands but keeps built-ins", () => {
+    const reg = new CommandRegistry([makeCmd("help")]);
+    reg.registerSkill({
+      name: "standup",
+      description: "daily notes",
+      async run() {},
+    });
+
+    reg.clearSkills();
+
+    expect(reg.get("standup")).toBeUndefined();
+    expect(reg.get("help")).toBeDefined();
+  });
 });

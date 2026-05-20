@@ -1,6 +1,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type IquantumConfig, loadConfig } from "@iquantum/config";
+import {
+  type IquantumConfig,
+  type KeybindingMap,
+  loadConfig,
+  loadKeybindings,
+} from "@iquantum/config";
+import { builtinSkills, SkillLoader } from "@iquantum/skills";
 import type { Session } from "@iquantum/types";
 import type { TranscriptItem } from "@iquantum/ui-core";
 import { Box, render, Text } from "ink";
@@ -37,6 +43,7 @@ export interface IQAppProps {
   readLastSession?: (dir: string) => Promise<string | null>;
   writeLastSession?: (dir: string, id: string) => Promise<void>;
   chatMode?: boolean;
+  config?: IquantumConfig;
 }
 
 export function IQApp({
@@ -54,7 +61,18 @@ export function IQApp({
   readLastSession = defaultReadLastSession,
   writeLastSession = defaultWriteLastSession,
   chatMode = false,
+  config,
 }: IQAppProps) {
+  const runtimeConfig =
+    config ??
+    ({
+      socketPath,
+      architectModel: modelName,
+      editorModel,
+      maxRetries,
+      skillsDir: "",
+      keybindingsFile: "",
+    } as IquantumConfig);
   const persistDir = iquantumDir ?? join(homedir(), ".iquantum");
   const updateStatus = useMemo(
     () => checkForUpdate(VERSION, persistDir),
@@ -64,6 +82,14 @@ export function IQApp({
   const [initialMessages, setInitialMessages] = useState<TranscriptItem[]>([]);
   const [showRepl, setShowRepl] = useState(skipSplash);
   const registryRef = useRef(makeCommandRegistry());
+  const [, setRegistryVersion] = useState(0);
+  const keybindings = useMemo<KeybindingMap>(
+    () =>
+      runtimeConfig.keybindingsFile
+        ? loadKeybindings(runtimeConfig.keybindingsFile)
+        : {},
+    [runtimeConfig.keybindingsFile],
+  );
   const [error, setError] = useState<string>();
   const completeSplash = useCallback(() => setShowRepl(true), []);
 
@@ -152,6 +178,43 @@ export function IQApp({
     chatMode,
   ]);
 
+  useEffect(() => {
+    let active = true;
+    const register = async () => {
+      if (!runtimeConfig.skillsDir) return;
+      const customSkills = await SkillLoader.load(runtimeConfig.skillsDir);
+      if (!active) return;
+      registryRef.current.clearSkills();
+      for (const skill of [...builtinSkills, ...customSkills]) {
+        registryRef.current.registerSkill(skill);
+      }
+      setRegistryVersion((version) => version + 1);
+    };
+
+    void register();
+    if (!runtimeConfig.skillsDir) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const stopWatching = SkillLoader.watch(
+      runtimeConfig.skillsDir,
+      (newSkills) => {
+        registryRef.current.clearSkills();
+        for (const skill of [...builtinSkills, ...newSkills]) {
+          registryRef.current.registerSkill(skill);
+        }
+        setRegistryVersion((version) => version + 1);
+      },
+    );
+
+    return () => {
+      active = false;
+      stopWatching();
+    };
+  }, [runtimeConfig.skillsDir]);
+
   if (error) {
     return <ErrorCard message={error} />;
   }
@@ -186,6 +249,8 @@ export function IQApp({
             registry={registryRef.current}
             initialMessages={initialMessages}
             chatMode={chatMode}
+            config={runtimeConfig}
+            keybindings={keybindings}
           />
         </>
       ) : null}
@@ -259,6 +324,7 @@ export function StartupApp({
       repoPath={repoPath}
       iquantumDir={persistDir}
       chatMode={chatMode}
+      config={config}
       {...(startDaemonFn
         ? { startDaemonFn: () => startDaemonFn(config.socketPath) }
         : {})}

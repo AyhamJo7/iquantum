@@ -11,6 +11,7 @@
     "@iquantum/diff-engine": "workspace:*",
     "@iquantum/file-tools": "workspace:*",
     "@iquantum/git": "workspace:*",
+    "@iquantum/hooks": "workspace:*",
     "@iquantum/llm": "workspace:*",
     "@iquantum/memory": "workspace:*",
     "@iquantum/piv-engine": "workspace:*",

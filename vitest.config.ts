@@ -14,6 +14,7 @@ export default defineConfig({
         "packages/diff-engine/src/index.ts",
       ),
       "@iquantum/git": resolve(__dirname, "packages/git/src/index.ts"),
+      "@iquantum/hooks": resolve(__dirname, "packages/hooks/src/index.ts"),
       "@iquantum/llm": resolve(__dirname, "packages/llm/src/index.ts"),
       "@iquantum/piv-engine": resolve(
         __dirname,
@@ -28,6 +29,7 @@ export default defineConfig({
         "packages/repo-map/src/index.ts",
       ),
       "@iquantum/sandbox": resolve(__dirname, "packages/sandbox/src/index.ts"),
+      "@iquantum/skills": resolve(__dirname, "packages/skills/src/index.ts"),
       "@iquantum/types": resolve(__dirname, "packages/types/src/index.ts"),
       "@iquantum/ui-core": resolve(__dirname, "packages/ui-core/src/index.ts"),
       "@iquantum/web-tools": resolve(

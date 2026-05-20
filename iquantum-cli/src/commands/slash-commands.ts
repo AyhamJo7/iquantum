@@ -104,6 +104,70 @@ const commandDefs: LocalCommand[] = [
     },
   },
   {
+    name: "skills",
+    description: "List loaded skills",
+    run(_, ctx) {
+      const skills = ctx.registry.getSkillCommands();
+      if (skills.length === 0) {
+        sysInfo(ctx, "No skills loaded.");
+        return;
+      }
+
+      sysInfo(
+        ctx,
+        `Skills:\n${skills
+          .map((skill) => `  /${skill.name.padEnd(12)} ${skill.description}`)
+          .join("\n")}`,
+      );
+    },
+  },
+  {
+    name: "hooks",
+    description: "List loaded hooks",
+    async run(_, ctx) {
+      try {
+        const hooks = (await ctx.client.listHooks?.()) ?? [];
+        if (!hooks.length) {
+          sysInfo(ctx, "No hooks loaded.");
+          return;
+        }
+
+        sysInfo(
+          ctx,
+          `Hooks:\n${hooks
+            .map(
+              (hook) =>
+                `  ${hook.name.padEnd(16)} ${hook.events.join(", ")}  ${hook.filePath}`,
+            )
+            .join("\n")}`,
+        );
+      } catch (e) {
+        sysError(
+          ctx,
+          `Hooks failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
+    name: "keybindings",
+    description: "Show active keybindings",
+    run(_, ctx) {
+      const rows = Object.entries(ctx.keybindings ?? {});
+      if (rows.length === 0) {
+        sysInfo(ctx, "No keybindings loaded.");
+        return;
+      }
+
+      sysInfo(
+        ctx,
+        `Keybindings:\n${rows
+          .map(([chord, action]) => `  ${chord.padEnd(16)} ${action}`)
+          .join("\n")}`,
+      );
+    },
+  },
+  {
     name: "status",
     description: "Show session ID, model, and token count",
     run(_, ctx) {

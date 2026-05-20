@@ -1,3 +1,8 @@
+import type {
+  IquantumConfig,
+  KeybindingAction,
+  KeybindingMap,
+} from "@iquantum/config";
 import type { Session } from "@iquantum/types";
 import {
   formatREPLError,
@@ -17,6 +22,7 @@ import { SpinnerWithPhase } from "../components/SpinnerWithPhase";
 import { StatusBar } from "../components/StatusBar";
 import { COPY } from "../components/theme";
 import { VirtualMessageList } from "../components/VirtualMessageList";
+import { useKeybindings } from "../hooks/use-keybindings";
 
 export interface REPLProps {
   client: DaemonClient;
@@ -28,6 +34,8 @@ export interface REPLProps {
   registry?: CommandRegistry;
   initialMessages?: TranscriptItem[];
   chatMode?: boolean;
+  config: IquantumConfig;
+  keybindings: KeybindingMap;
 }
 
 export function REPL({
@@ -40,10 +48,84 @@ export function REPL({
   registry,
   initialMessages = [],
   chatMode = false,
+  config,
+  keybindings,
 }: REPLProps) {
   const { state, dispatch } = useConversation(initialMessages);
   const submittingRef = useRef(false);
   const lastCtrlCRef = useRef(0);
+
+  const runCommand = useMemo(() => {
+    return async (name: string, args = "") => {
+      if (!registry) return;
+      const cmd = registry.get(name);
+      if (!cmd) {
+        dispatch({
+          type: "system_message",
+          text: `Unknown command: /${name}. Type /help for a list.`,
+          level: "error",
+        });
+        return;
+      }
+
+      if (chatMode && cmd.chatUnavailable) {
+        dispatch({
+          type: "system_message",
+          text: `/${cmd.name} is not available in chat mode`,
+          level: "error",
+        });
+        return;
+      }
+
+      if (chatMode && cmd.name === "task") {
+        dispatch({
+          type: "system_message",
+          text: "start a new session with iq to run a task",
+          level: "error",
+        });
+        return;
+      }
+
+      await cmd.run(args, {
+        client,
+        registry,
+        sessionId: session.id,
+        dispatch,
+        tokenCount: state.tokenCount,
+        modelName,
+        editorModel,
+        config,
+        keybindings,
+        repoPath: session.repoPath,
+        ...(state.error ? { lastError: state.error } : {}),
+      });
+    };
+  }, [
+    registry,
+    chatMode,
+    client,
+    session.id,
+    dispatch,
+    state.tokenCount,
+    modelName,
+    editorModel,
+    config,
+    keybindings,
+    state.error,
+    session.repoPath,
+  ]);
+
+  useKeybindings(keybindings, (action) => {
+    const command = (action as { command?: KeybindingAction }).command;
+    if (!command) return;
+    const commandName = command.startsWith("run:")
+      ? command.slice("run:".length)
+      : command;
+    if (commandName === "history-prev" || commandName === "history-next") {
+      return;
+    }
+    void runCommand(commandName);
+  });
 
   const pendingPermission = useMemo(() => {
     if (!state.pendingPermissionId) return null;
@@ -152,44 +234,7 @@ export function REPL({
           if (content.startsWith("/") && registry) {
             const [rawName, ...argParts] = content.slice(1).split(" ");
             const cmdName = rawName ?? "";
-            const cmd = registry.get(cmdName);
-
-            if (cmd) {
-              if (chatMode && cmd.chatUnavailable) {
-                dispatch({
-                  type: "system_message",
-                  text: `/${cmd.name} is not available in chat mode`,
-                  level: "error",
-                });
-                return;
-              }
-
-              if (chatMode && cmd.name === "task") {
-                dispatch({
-                  type: "system_message",
-                  text: "start a new session with iq to run a task",
-                  level: "error",
-                });
-                return;
-              }
-
-              await cmd.run(argParts.join(" "), {
-                client,
-                registry,
-                sessionId: session.id,
-                dispatch,
-                tokenCount: state.tokenCount,
-                modelName,
-                editorModel,
-              });
-              return;
-            }
-
-            dispatch({
-              type: "system_message",
-              text: `Unknown command: /${cmdName}. Type /help for a list.`,
-              level: "error",
-            });
+            await runCommand(cmdName, argParts.join(" "));
             return;
           }
 

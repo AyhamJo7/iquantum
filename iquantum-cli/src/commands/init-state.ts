@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { loadConfig } from "@iquantum/config";
 
@@ -39,6 +40,10 @@ export function validateApiKey(value: string): string | null {
     return "API key must start with sk-.";
   }
 
+  if (trimmed.length < 8) {
+    return "API key is too short.";
+  }
+
   return null;
 }
 
@@ -67,6 +72,7 @@ export async function runInit(
     IQUANTUM_EDITOR_MODEL: resolved.editorModel,
     IQUANTUM_SANDBOX_IMAGE: resolved.sandboxImage,
   });
+  await writeExtensibilityScaffold(configDir);
   onStatus(`✓ Config saved → ${join(configDir, "config.json")}`);
 
   onStatus(`Pulling sandbox image ${resolved.sandboxImage}…`);
@@ -84,6 +90,58 @@ export async function runInit(
   await services.startDaemon(config.socketPath);
   onStatus("✓ Daemon started");
   return resolved;
+}
+
+async function writeExtensibilityScaffold(configDir: string): Promise<void> {
+  const hooksDir = join(configDir, "hooks");
+  const skillsDir = join(configDir, "skills");
+  await mkdir(hooksDir, { recursive: true });
+  await mkdir(skillsDir, { recursive: true });
+  await writeFile(
+    join(hooksDir, "README.md"),
+    [
+      "# iquantum hooks",
+      "",
+      "Shell hooks default to post_validate.",
+      "",
+      "Shell hooks use a first-line event subscription:",
+      "# events: post_validate,pre_apply_diff",
+      "",
+      "Hooks receive the event JSON on stdin and may print JSON like:",
+      '{ "block": false, "message": "ok" }',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    join(skillsDir, "example.js"),
+    [
+      "export default {",
+      '  name: "example",',
+      '  description: "Example custom skill",',
+      "  async run(args, ctx) {",
+      '    ctx.dispatch({ type: "system_message", text: `example: $' +
+        '{args}`, level: "info" });',
+      "  },",
+      "};",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    join(configDir, "keybindings.json"),
+    JSON.stringify(
+      {
+        "ctrl+k ctrl+c": "compact",
+        "ctrl+k ctrl+s": "status",
+        "ctrl+k ctrl+d": "doctor",
+        "ctrl+e": "export",
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
 }
 
 export function ensureInteractiveTerminal(isTTY: boolean | undefined): void {

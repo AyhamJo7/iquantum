@@ -19,6 +19,9 @@
     },
     {
       "path": "../packages/ui-core"
+    },
+    {
+      "path": "../packages/skills"
     }
   ]
 }

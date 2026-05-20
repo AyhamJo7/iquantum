@@ -5,6 +5,8 @@ import { z } from "zod";
 import { readConfigFileSync } from "./file-loader";
 
 export { readConfigFileSync } from "./file-loader";
+export type { KeybindingAction, KeybindingMap } from "./keybindings";
+export { loadKeybindings } from "./keybindings";
 export { writeConfigFile } from "./writer";
 
 export class MissingApiKeyError extends Error {
