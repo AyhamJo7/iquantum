@@ -37,6 +37,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          npm whoami
           VERSION=$(node -p "require('./iquantum-cli/package.json').version")
           if npm view "@iquantum/cli@${VERSION}" version >/dev/null 2>&1; then
             echo "@iquantum/cli@${VERSION} already published — skipping"
