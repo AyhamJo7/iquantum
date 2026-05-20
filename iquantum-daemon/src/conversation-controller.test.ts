@@ -242,6 +242,87 @@ describe("ConversationController — tool loop", () => {
     expect(text).toContain("rejected");
   });
 
+  it("merges file tools into the tool loop and executes them without MCP", async () => {
+    const frames: unknown[] = [];
+    const store = new InMemoryConversationStore();
+    const seenToolNames: string[][] = [];
+    let nextId = 1;
+
+    const completeWithTools = async function* (
+      _messages: unknown,
+      tools: McpTool[],
+    ) {
+      seenToolNames.push(tools.map((tool) => tool.name));
+      if (seenToolNames.length === 1) {
+        yield {
+          type: "tool_use" as const,
+          id: "file-call-1",
+          name: "file_read",
+          input: { path: "src/index.ts" },
+        };
+      } else {
+        yield { type: "token" as const, delta: "done" };
+      }
+    };
+    const permissionChecker: PermissionChecker = {
+      requestPermission: vi.fn(),
+    };
+
+    const controller = new ConversationController({
+      store,
+      completer: {
+        async *complete() {
+          yield "";
+        },
+        completeWithTools,
+      },
+      streams: { publish: (_s, f) => frames.push(f) },
+      fileTools: {
+        tools: {
+          getAll: () => [
+            {
+              name: "file_read",
+              description: "read",
+              inputSchema: { type: "object" },
+              async execute(input: unknown) {
+                return `read ${JSON.stringify(input)}`;
+              },
+            },
+          ],
+        } as never,
+        sandbox: {
+          exec: vi.fn(),
+        },
+      },
+      permissionChecker,
+      now: () => fixedNow,
+      createId: () => `id-${nextId++}`,
+      tokenCounter: () => 0,
+    });
+
+    await controller.addMessage("session-1", "read file");
+
+    expect(seenToolNames[0]).toEqual(["file_read"]);
+    expect(permissionChecker.requestPermission).not.toHaveBeenCalled();
+    expect(frames).toContainEqual({
+      type: "mcp_tool_call",
+      server: "builtin",
+      tool: "file_read",
+      input: { path: "src/index.ts" },
+    });
+    expect(frames).toContainEqual({ type: "token", delta: "done" });
+    const toolResult = store.messages.find(
+      (message) => message.role === "tool_result",
+    );
+    expect(toolResult?.content).toMatchObject([
+      {
+        type: "tool_result",
+        tool_use_id: "file-call-1",
+        content: 'read {"path":"src/index.ts"}',
+      },
+    ]);
+  });
+
   it("falls back to text loop when completer has no completeWithTools", async () => {
     const frames: unknown[] = [];
     const store = new InMemoryConversationStore();

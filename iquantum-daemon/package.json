@@ -9,6 +9,7 @@
     "@iquantum/config": "workspace:*",
     "@iquantum/context-window": "workspace:*",
     "@iquantum/diff-engine": "workspace:*",
+    "@iquantum/file-tools": "workspace:*",
     "@iquantum/git": "workspace:*",
     "@iquantum/llm": "workspace:*",
     "@iquantum/piv-engine": "workspace:*",

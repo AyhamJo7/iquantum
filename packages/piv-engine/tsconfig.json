@@ -9,6 +9,7 @@
   "references": [
     { "path": "../types" },
     { "path": "../repo-map" },
+    { "path": "../file-tools" },
     { "path": "../sandbox" },
     { "path": "../llm" },
     { "path": "../diff-engine" },

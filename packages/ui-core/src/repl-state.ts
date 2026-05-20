@@ -284,6 +284,7 @@ function reduceFrame(
         nextTranscriptId: state.nextTranscriptId + 1,
       };
     case "mcp_tool_call":
+    case "tool_call":
     case "plan_ready":
       return state;
     case "validate_result":

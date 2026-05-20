@@ -23,6 +23,9 @@
       "path": "../packages/diff-engine"
     },
     {
+      "path": "../packages/file-tools"
+    },
+    {
       "path": "../packages/git"
     },
     {

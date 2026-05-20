@@ -1,6 +1,10 @@
 import { DiffApplyError } from "@iquantum/diff-engine";
 import type { ExecResult } from "@iquantum/sandbox";
-import type { GitCheckpoint, LLMMessage } from "@iquantum/types";
+import type {
+  CompletionEvent,
+  GitCheckpoint,
+  LLMMessage,
+} from "@iquantum/types";
 import { describe, expect, it } from "vitest";
 import {
   InMemoryPIVStore,
@@ -159,6 +163,52 @@ describe("PIVEngine", () => {
     expect(harness.diffCalls).toEqual([validDiff()]);
   });
 
+  it("uses file tools during implementation and then applies the final diff", async () => {
+    const harness = createHarness({
+      completions: ["plan"],
+      toolEvents: [
+        [
+          {
+            type: "tool_use",
+            id: "tool-1",
+            name: "file_read",
+            input: { path: "src/a.ts" },
+          },
+        ],
+        [{ type: "token", delta: validDiff() }],
+      ],
+      fileToolResult: "src/a.ts (lines 1-1):\n1\told",
+    });
+    const toolCalls: unknown[] = [];
+    harness.engine.events.on("tool_call", (event) => toolCalls.push(event));
+
+    const plan = await harness.engine.startTask("edit code");
+    await harness.engine.approve(plan.id);
+
+    expect(toolCalls).toEqual([
+      {
+        toolName: "file_read",
+        input: { path: "src/a.ts" },
+        result: "src/a.ts (lines 1-1):\n1\told",
+      },
+    ]);
+    expect(harness.diffCalls).toEqual([validDiff()]);
+    expect(harness.toolCompletionCalls).toHaveLength(2);
+  });
+
+  it("falls back to plain completion when no file tools are configured", async () => {
+    const harness = createHarness({ completions: ["plan", validDiff()] });
+    const toolCalls: unknown[] = [];
+    harness.engine.events.on("tool_call", (event) => toolCalls.push(event));
+
+    const plan = await harness.engine.startTask("edit code");
+    await harness.engine.approve(plan.id);
+
+    expect(toolCalls).toEqual([]);
+    expect(harness.toolCompletionCalls).toEqual([]);
+    expect(harness.diffCalls).toEqual([validDiff()]);
+  });
+
   it("retries implementation without writing when the user rejects a diff", async () => {
     const harness = createHarness({
       completions: ["plan", validDiff(), validDiff("next")],
@@ -192,11 +242,13 @@ describe("PIVEngine", () => {
 
 interface HarnessOptions {
   completions: string[];
+  fileToolResult?: string;
   diffFailures?: Error[];
   maxRetries?: number;
   permissionResults?: boolean[];
   requireApproval?: boolean;
   repoMapError?: Error;
+  toolEvents?: CompletionEvent[][];
   validationResults?: ExecResult[];
 }
 
@@ -204,6 +256,11 @@ function createHarness(options: HarnessOptions) {
   let nextId = 1;
   const store = new InMemoryPIVStore();
   const completionCalls: Array<{ phase: string; messages: LLMMessage[] }> = [];
+  const toolCompletionCalls: Array<{
+    phase: string;
+    messages: LLMMessage[];
+    tools: string[];
+  }> = [];
   const diffCalls: string[] = [];
   const syncedSessions: string[] = [];
   const checkpointCalls: string[][] = [];
@@ -214,6 +271,7 @@ function createHarness(options: HarnessOptions) {
   const validationResults = [
     ...(options.validationResults ?? [execResult("ok", "", 0)]),
   ];
+  const toolEvents = [...(options.toolEvents ?? [])];
   const permissionResults = [...(options.permissionResults ?? [true])];
 
   const engine = new PIVEngine({
@@ -225,6 +283,17 @@ function createHarness(options: HarnessOptions) {
       async *complete(phase, messages) {
         completionCalls.push({ phase, messages });
         yield completions.shift() ?? "";
+      },
+      async *completeWithTools(phase, messages, tools) {
+        toolCompletionCalls.push({
+          phase,
+          messages,
+          tools: tools.map((tool) => tool.name),
+        });
+
+        for (const event of toolEvents.shift() ?? []) {
+          yield event;
+        }
       },
     },
     diffEngine: {
@@ -277,6 +346,22 @@ function createHarness(options: HarnessOptions) {
     ...(options.requireApproval === undefined
       ? {}
       : { requireApproval: options.requireApproval }),
+    ...(options.toolEvents === undefined
+      ? {}
+      : {
+          fileTools: {
+            getAll: () => [
+              {
+                name: "file_read",
+                description: "read",
+                inputSchema: { type: "object" },
+                async execute() {
+                  return options.fileToolResult ?? "file result";
+                },
+              },
+            ],
+          } as never,
+        }),
     repoMapBuilder: async () => {
       if (options.repoMapError) {
         throw options.repoMapError;
@@ -306,6 +391,7 @@ function createHarness(options: HarnessOptions) {
     engine,
     store,
     syncedSessions,
+    toolCompletionCalls,
     transitions,
     permissionRequests,
   };

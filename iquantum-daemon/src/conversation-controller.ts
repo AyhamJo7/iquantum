@@ -1,4 +1,7 @@
 import { countTokens } from "@iquantum/context-window";
+import type { SandboxFileTools } from "@iquantum/file-tools";
+import { type BuiltinTool, createFileToolBuiltins } from "@iquantum/llm";
+import type { SandboxManager } from "@iquantum/sandbox";
 import type {
   CompletionEvent,
   IMcpClient,
@@ -57,6 +60,10 @@ export interface ConversationControllerOptions {
   streams: ConversationStreams;
   compactor?: ConversationCompactor;
   mcpClient?: IMcpClient;
+  fileTools?: {
+    tools: SandboxFileTools;
+    sandbox: Pick<SandboxManager, "exec">;
+  };
   permissionChecker?: PermissionChecker;
   maxResponseTokens?: number;
   maxToolTurns?: number;
@@ -73,6 +80,12 @@ export class ConversationController {
   readonly #streams: ConversationStreams;
   readonly #compactor: ConversationCompactor | undefined;
   readonly #mcpClient: IMcpClient | undefined;
+  readonly #fileTools:
+    | {
+        tools: SandboxFileTools;
+        sandbox: Pick<SandboxManager, "exec">;
+      }
+    | undefined;
   readonly #permissionChecker: PermissionChecker | undefined;
   readonly #maxResponseTokens: number;
   readonly #maxToolTurns: number;
@@ -87,6 +100,7 @@ export class ConversationController {
     this.#streams = options.streams;
     this.#compactor = options.compactor;
     this.#mcpClient = options.mcpClient;
+    this.#fileTools = options.fileTools;
     this.#permissionChecker = options.permissionChecker;
     this.#maxResponseTokens = options.maxResponseTokens ?? 2000;
     this.#maxToolTurns = options.maxToolTurns ?? MAX_TOOL_TURNS_DEFAULT;
@@ -118,7 +132,15 @@ export class ConversationController {
         phase: "thinking",
       });
 
-      const tools = this.#mcpClient ? await this.#mcpClient.listTools() : [];
+      const mcpTools = this.#mcpClient ? await this.#mcpClient.listTools() : [];
+      const builtinTools = this.#fileTools
+        ? createFileToolBuiltins(
+            this.#fileTools.tools,
+            this.#fileTools.sandbox,
+            sessionId,
+          )
+        : [];
+      const tools = [...mcpTools, ...builtinTools];
       const useTools = tools.length > 0 && !!this.#completer.completeWithTools;
 
       if (useTools) {
@@ -126,6 +148,7 @@ export class ConversationController {
           sessionId,
           abortController,
           tools as McpTool[],
+          builtinTools,
           orgId,
         );
       } else {
@@ -209,6 +232,7 @@ export class ConversationController {
     sessionId: string,
     abortController: AbortController,
     tools: McpTool[],
+    builtinTools: BuiltinTool[],
     orgId?: string,
   ): Promise<void> {
     const completeWithTools = this.#completer.completeWithTools?.bind(
@@ -274,7 +298,12 @@ export class ConversationController {
       // Execute each tool
       for (const toolUse of toolUses) {
         if (abortController.signal.aborted) break;
-        await this.#executeToolUse(sessionId, abortController, toolUse);
+        await this.#executeToolUse(
+          sessionId,
+          abortController,
+          toolUse,
+          builtinTools,
+        );
       }
     }
 
@@ -287,12 +316,19 @@ export class ConversationController {
     sessionId: string,
     abortController: AbortController,
     toolUse: ToolUseCall,
+    builtinTools: BuiltinTool[],
   ): Promise<void> {
     const requestId = this.#createId();
+    const builtinTool = builtinTools.find((tool) => tool.name === toolUse.name);
 
     // Emit informational frame — server name comes from the namespaced tool name
     const sepIdx = toolUse.name.indexOf("__");
-    const server = sepIdx !== -1 ? toolUse.name.slice(0, sepIdx) : "mcp";
+    const server =
+      builtinTool !== undefined
+        ? "builtin"
+        : sepIdx !== -1
+          ? toolUse.name.slice(0, sepIdx)
+          : "mcp";
     const tool = sepIdx !== -1 ? toolUse.name.slice(sepIdx + 2) : toolUse.name;
     this.#streams.publish(sessionId, {
       type: "mcp_tool_call",
@@ -303,21 +339,24 @@ export class ConversationController {
 
     // Gate on user permission
     const approved =
-      (await this.#permissionChecker?.requestPermission(
-        sessionId,
-        requestId,
-        `mcp:${tool}`,
-        toolUse.input,
-      )) ?? true;
+      builtinTool !== undefined
+        ? true
+        : ((await this.#permissionChecker?.requestPermission(
+            sessionId,
+            requestId,
+            `mcp:${tool}`,
+            toolUse.input,
+          )) ?? true);
 
     let resultText: string;
     if (!approved || abortController.signal.aborted) {
       resultText = "Tool call rejected by user.";
     } else {
       try {
-        resultText =
-          (await this.#mcpClient?.callTool(toolUse.name, toolUse.input)) ??
-          "Tool unavailable.";
+        resultText = builtinTool
+          ? await builtinTool.execute(toolUse.input)
+          : ((await this.#mcpClient?.callTool(toolUse.name, toolUse.input)) ??
+            "Tool unavailable.");
       } catch (e) {
         resultText = `Tool error: ${e instanceof Error ? e.message : String(e)}`;
       }

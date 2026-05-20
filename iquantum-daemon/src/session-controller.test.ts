@@ -71,6 +71,22 @@ describe("SessionController", () => {
     expect(session.mode).toBe("chat");
   });
 
+  it("passes file tools to the PIV engine when enabled", async () => {
+    const harness = createHarness({ fileToolMaxBytes: 4096 });
+
+    await harness.controller.createSession("/repo");
+
+    expect(
+      harness.engineOptions?.fileTools?.getAll().map((tool) => tool.name),
+    ).toEqual([
+      "file_read",
+      "file_edit",
+      "file_write",
+      "file_glob",
+      "file_grep",
+    ]);
+  });
+
   it("delegates plan actions to the live engine and reads the pending plan", async () => {
     const harness = createHarness();
     await harness.controller.createSession("/repo");
@@ -89,7 +105,7 @@ describe("SessionController", () => {
   });
 });
 
-function createHarness() {
+function createHarness(options: { fileToolMaxBytes?: number } = {}) {
   const sessions = new Map<string, Session>();
   const plans = new Map<string, Plan>();
   const createdSandboxes: string[][] = [];
@@ -204,6 +220,9 @@ function createHarness() {
       return fakeEngine(engineCalls);
     },
     createGitManager: () => gitManager,
+    ...(options.fileToolMaxBytes === undefined
+      ? {}
+      : { fileToolMaxBytes: options.fileToolMaxBytes }),
     maxRetries: 3,
     loadTestCommand: async () => "bun test",
     now: () => "2026-05-15T00:00:00.000Z",

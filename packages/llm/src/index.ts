@@ -1,4 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { FileTool, SandboxFileTools } from "@iquantum/file-tools";
+import type { SandboxManager } from "@iquantum/sandbox";
 import type {
   CompletionEvent,
   EffortLevel,
@@ -27,7 +29,34 @@ export interface OpenAICompatibleProviderOptions {
 }
 
 export interface BuiltinTool extends McpTool {
+  readonly mutates?: boolean;
   execute(args: Record<string, unknown>): Promise<string>;
+}
+
+export function fileToolToBuiltinTool(
+  fileTool: FileTool,
+  sandbox: Pick<SandboxManager, "exec">,
+  sessionId: string,
+): BuiltinTool {
+  return {
+    name: fileTool.name,
+    description: fileTool.description,
+    inputSchema: fileTool.inputSchema,
+    ...(fileTool.mutates === undefined ? {} : { mutates: fileTool.mutates }),
+    execute(args) {
+      return fileTool.execute(args, sandbox, sessionId);
+    },
+  };
+}
+
+export function createFileToolBuiltins(
+  fileTools: SandboxFileTools,
+  sandbox: Pick<SandboxManager, "exec">,
+  sessionId: string,
+): BuiltinTool[] {
+  return fileTools
+    .getAll()
+    .map((tool) => fileToolToBuiltinTool(tool, sandbox, sessionId));
 }
 
 export interface LLMRoute {
@@ -66,6 +95,13 @@ export class TokenBudgetExceededError extends Error {
   ) {
     super(`Token budget exceeded: ${tokenCount} > ${maxInputTokens}`);
     this.name = "TokenBudgetExceededError";
+  }
+}
+
+export class ToolLoopExceededError extends Error {
+  constructor(readonly rounds: number) {
+    super(`Tool loop exceeded ${rounds} rounds`);
+    this.name = "ToolLoopExceededError";
   }
 }
 
@@ -223,6 +259,73 @@ export class OpenAICompatibleProvider implements LLMProvider {
     }
   }
 
+  async *completeWithTools(
+    messages: LLMMessage[],
+    tools: readonly McpTool[],
+    options: LLMCompletionOptions,
+  ): AsyncIterable<CompletionEvent> {
+    const stream = await this.#withRetry(() =>
+      this.#client.chat.completions.create({
+        model: options.model,
+        max_tokens: options.maxTokens,
+        messages: messages.map(toOpenAIMessage),
+        stream: true,
+        stream_options: { include_usage: true },
+        ...(options.temperature === undefined
+          ? {}
+          : { temperature: options.temperature }),
+        tools: tools.map((tool) => ({
+          type: "function" as const,
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.inputSchema,
+          },
+        })),
+      }),
+    );
+    const pending = new Map<number, OpenAIToolCallBuilder>();
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta;
+      const content = delta?.content;
+
+      if (content) {
+        yield { type: "token", delta: content };
+      }
+
+      for (const toolCall of delta?.tool_calls ?? []) {
+        const index = toolCall.index;
+        const current =
+          pending.get(index) ??
+          ({
+            id: "",
+            name: "",
+            argumentsJson: "",
+          } satisfies OpenAIToolCallBuilder);
+
+        if (toolCall.id) current.id = toolCall.id;
+        if (toolCall.function?.name) current.name = toolCall.function.name;
+        if (toolCall.function?.arguments) {
+          current.argumentsJson += toolCall.function.arguments;
+        }
+
+        pending.set(index, current);
+      }
+    }
+
+    for (const [index, toolCall] of [...pending.entries()].sort(
+      ([a], [b]) => a - b,
+    )) {
+      yield {
+        type: "tool_use",
+        id: toolCall.id || `tool-${index}`,
+        name: toolCall.name,
+        input: parseToolArguments(toolCall.argumentsJson),
+      };
+    }
+  }
+
   async countTokens(messages: LLMMessage[], _model: string): Promise<number> {
     return roughTokenCount(
       messages
@@ -374,6 +477,12 @@ export class LLMRouter {
 type AnthropicClient = Pick<Anthropic, "messages">;
 type OpenAIClient = Pick<OpenAI, "chat">;
 
+interface OpenAIToolCallBuilder {
+  id: string;
+  name: string;
+  argumentsJson: string;
+}
+
 function contentToString(content: string | LLMContentBlock[]): string {
   if (typeof content === "string") return content;
   return content
@@ -432,6 +541,18 @@ function isRetryableOpenAIError(error: unknown): boolean {
 
 function roughTokenCount(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+function parseToolArguments(raw: string): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 async function sleep(delayMs: number): Promise<void> {
