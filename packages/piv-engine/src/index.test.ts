@@ -196,6 +196,99 @@ describe("PIVEngine", () => {
     expect(harness.toolCompletionCalls).toHaveLength(2);
   });
 
+  it("uses web tools during planning", async () => {
+    const harness = createHarness({
+      completions: [],
+      webToolResult: "1. Bun\n   https://bun.sh\n   release notes",
+      toolEvents: [
+        [
+          {
+            type: "tool_use",
+            id: "web-1",
+            name: "web_search",
+            input: { query: "latest bun" },
+          },
+        ],
+        [{ type: "token", delta: "plan with web context" }],
+      ],
+      webTools: true,
+    });
+    const toolCalls: unknown[] = [];
+    harness.engine.events.on("tool_call", (event) => toolCalls.push(event));
+
+    const plan = await harness.engine.startTask("research Bun");
+
+    expect(plan.content).toBe("plan with web context");
+    expect(toolCalls).toEqual([
+      {
+        toolName: "web_search",
+        input: { query: "latest bun" },
+        result: "1. Bun\n   https://bun.sh\n   release notes",
+      },
+    ]);
+    expect(harness.toolCompletionCalls.map((call) => call.phase)).toEqual([
+      "plan",
+      "plan",
+    ]);
+  });
+
+  it("does not expose web tools during implementation", async () => {
+    const harness = createHarness({
+      completions: [validDiff()],
+      toolEvents: [[{ type: "token", delta: "plan" }]],
+      webTools: true,
+    });
+
+    const plan = await harness.engine.startTask("edit code");
+    await harness.engine.approve(plan.id);
+
+    expect(harness.toolCompletionCalls).toEqual([
+      {
+        phase: "plan",
+        messages: expect.any(Array),
+        tools: ["web_fetch", "web_search"],
+      },
+    ]);
+    expect(harness.diffCalls).toEqual([validDiff()]);
+  });
+
+  it("rate-limits web_search during planning", async () => {
+    const rateLimiter = {
+      consume: async () => ({
+        allowed: false,
+        remaining: 0,
+        resetAt: Date.now() + 60_000,
+      }),
+    };
+    const harness = createHarness({
+      completions: [],
+      toolEvents: [
+        [
+          {
+            type: "tool_use",
+            id: "web-1",
+            name: "web_search",
+            input: { query: "latest bun" },
+          },
+        ],
+        [{ type: "token", delta: "plan" }],
+      ],
+      webTools: true,
+      webToolRateLimiter: rateLimiter,
+    });
+    const toolCalls: unknown[] = [];
+    harness.engine.events.on("tool_call", (event) => toolCalls.push(event));
+
+    await harness.engine.startTask("research Bun");
+
+    expect(toolCalls).toMatchObject([
+      {
+        toolName: "web_search",
+        result: "Error: web_search rate limit exceeded.",
+      },
+    ]);
+  });
+
   it("falls back to plain completion when no file tools are configured", async () => {
     const harness = createHarness({ completions: ["plan", validDiff()] });
     const toolCalls: unknown[] = [];
@@ -260,6 +353,7 @@ describe("PIVEngine", () => {
 interface HarnessOptions {
   completions: string[];
   fileToolResult?: string;
+  webToolResult?: string;
   diffFailures?: Error[];
   maxRetries?: number;
   permissionResults?: boolean[];
@@ -268,6 +362,10 @@ interface HarnessOptions {
   toolEvents?: CompletionEvent[][];
   validationResults?: ExecResult[];
   memoryBlock?: string;
+  webTools?: boolean;
+  webToolRateLimiter?: ConstructorParameters<
+    typeof PIVEngine
+  >[0]["webToolRateLimiter"];
 }
 
 function createHarness(options: HarnessOptions) {
@@ -364,7 +462,7 @@ function createHarness(options: HarnessOptions) {
     ...(options.requireApproval === undefined
       ? {}
       : { requireApproval: options.requireApproval }),
-    ...(options.toolEvents === undefined
+    ...(options.fileToolResult === undefined
       ? {}
       : {
           fileTools: {
@@ -380,6 +478,33 @@ function createHarness(options: HarnessOptions) {
             ],
           } as never,
         }),
+    ...(options.webTools === undefined
+      ? {}
+      : {
+          webTools: {
+            getAll: () => [
+              {
+                name: "web_fetch",
+                description: "fetch",
+                inputSchema: { type: "object" },
+                async execute() {
+                  return "fetched";
+                },
+              },
+              {
+                name: "web_search",
+                description: "search",
+                inputSchema: { type: "object" },
+                async execute() {
+                  return options.webToolResult ?? "search results";
+                },
+              },
+            ],
+          } as never,
+        }),
+    ...(options.webToolRateLimiter === undefined
+      ? {}
+      : { webToolRateLimiter: options.webToolRateLimiter }),
     ...(options.memoryBlock === undefined
       ? {}
       : { memoryBlock: options.memoryBlock }),

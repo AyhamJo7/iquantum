@@ -87,18 +87,51 @@ describe("SessionController", () => {
     ]);
   });
 
-  it("passes memory blocks to the PIV engine", async () => {
+  it("passes web tools and rate limiter to the PIV engine", async () => {
+    const webTools = { getAll: () => [] };
+    const webSearchRateLimiter = {
+      async consume() {
+        return { allowed: true, remaining: 9, resetAt: Date.now() + 60_000 };
+      },
+    };
+    const harness = createHarness({
+      webTools: webTools as never,
+      webSearchRateLimiter: webSearchRateLimiter as never,
+    });
+
+    await harness.controller.createSession("/repo");
+
+    expect(harness.engineOptions?.webTools).toBe(webTools);
+    expect(harness.engineOptions?.webToolRateLimiter).toBe(
+      webSearchRateLimiter,
+    );
+  });
+
+  it("fetches a fresh memory block on each startTask call", async () => {
+    let callCount = 0;
     const harness = createHarness({
       memoryManager: {
         async buildBlock() {
-          return { text: "this project uses Bun", tokenCount: 5 };
+          callCount += 1;
+          return { text: `memory snapshot ${callCount}`, tokenCount: 5 };
         },
       },
     });
 
     await harness.controller.createSession("/repo");
+    await harness.controller.startTask("session-1", "task one");
+    await harness.controller.startTask("session-1", "task two");
 
-    expect(harness.engineOptions?.memoryBlock).toBe("this project uses Bun");
+    expect(harness.engineCalls[0]).toEqual([
+      "startTask",
+      "task one",
+      { memoryBlock: "memory snapshot 1" },
+    ]);
+    expect(harness.engineCalls[1]).toEqual([
+      "startTask",
+      "task two",
+      { memoryBlock: "memory snapshot 2" },
+    ]);
   });
 
   it("delegates plan actions to the live engine and reads the pending plan", async () => {
@@ -111,17 +144,23 @@ describe("SessionController", () => {
     await harness.controller.reject("session-1", "split it", "plan-1");
 
     expect(plan?.id).toBe("plan-1");
-    expect(harness.engineCalls).toEqual([
-      ["startTask", "add auth"],
-      ["approve", "plan-1"],
-      ["reject", "plan-1", "split it"],
+    expect(harness.engineCalls[0]).toEqual([
+      "startTask",
+      "add auth",
+      { memoryBlock: undefined },
     ]);
+    expect(harness.engineCalls[1]).toEqual(["approve", "plan-1"]);
+    expect(harness.engineCalls[2]).toEqual(["reject", "plan-1", "split it"]);
   });
 });
 
 function createHarness(
   options: {
     fileToolMaxBytes?: number;
+    webTools?: ConstructorParameters<typeof SessionController>[0]["webTools"];
+    webSearchRateLimiter?: ConstructorParameters<
+      typeof SessionController
+    >[0]["webSearchRateLimiter"];
     memoryManager?: ConstructorParameters<
       typeof SessionController
     >[0]["memoryManager"];
@@ -244,6 +283,10 @@ function createHarness(
     ...(options.fileToolMaxBytes === undefined
       ? {}
       : { fileToolMaxBytes: options.fileToolMaxBytes }),
+    ...(options.webTools === undefined ? {} : { webTools: options.webTools }),
+    ...(options.webSearchRateLimiter === undefined
+      ? {}
+      : { webSearchRateLimiter: options.webSearchRateLimiter }),
     ...(options.memoryManager === undefined
       ? {}
       : { memoryManager: options.memoryManager }),
@@ -268,8 +311,8 @@ function fakeEngine(calls: unknown[][]): SessionEngine {
     status: "idle",
     currentPlan: fakePlan(),
     events: new EventEmitter<PIVEngineEventMap>(),
-    async startTask(prompt) {
-      calls.push(["startTask", prompt]);
+    async startTask(prompt, options) {
+      calls.push(["startTask", prompt, options]);
       return fakePlan();
     },
     async approve(planId) {

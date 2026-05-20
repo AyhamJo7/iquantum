@@ -30,6 +30,11 @@ import type {
   SessionStatus,
   ValidateRun,
 } from "@iquantum/types";
+import {
+  createWebToolBuiltins,
+  type WebToolExecutor,
+  type WebToolRateLimiter,
+} from "@iquantum/web-tools";
 
 export interface PIVStore {
   updateSessionStatus(sessionId: string, status: SessionStatus): Promise<void>;
@@ -60,6 +65,7 @@ export interface PIVLLMRouter {
 
 export interface PIVEngineOptions {
   sessionId: string;
+  userId?: string;
   repoPath: string;
   extraRepoPaths?: string[];
   testCommand: string;
@@ -69,6 +75,8 @@ export interface PIVEngineOptions {
   sandbox: Pick<SandboxManager, "exec" | "syncToHost">;
   gitManager: Pick<GitManager, "checkpoint">;
   fileTools?: SandboxFileTools;
+  webTools?: WebToolExecutor;
+  webToolRateLimiter?: WebToolRateLimiter;
   memoryBlock?: string;
   permissionGate?: PermissionRequester;
   requireApproval?: boolean;
@@ -150,6 +158,7 @@ export class RetryLimitExceededError extends Error {
 export class PIVEngine {
   readonly events = new EventEmitter<PIVEngineEventMap>();
   readonly #sessionId: string;
+  readonly #userId: string | undefined;
   readonly #repoPath: string;
   readonly #extraRepoPaths: string[];
   readonly #testCommand: string;
@@ -159,7 +168,9 @@ export class PIVEngine {
   readonly #sandbox: Pick<SandboxManager, "exec" | "syncToHost">;
   readonly #gitManager: Pick<GitManager, "checkpoint">;
   readonly #fileTools: SandboxFileTools | undefined;
-  readonly #memoryBlock: string | undefined;
+  readonly #webTools: WebToolExecutor | undefined;
+  readonly #webToolRateLimiter: WebToolRateLimiter | undefined;
+  #memoryBlock: string | undefined;
   readonly #permissionGate: PermissionRequester | undefined;
   readonly #requireApproval: boolean;
   readonly #autoApprove: boolean;
@@ -180,6 +191,7 @@ export class PIVEngine {
 
   constructor(options: PIVEngineOptions) {
     this.#sessionId = options.sessionId;
+    this.#userId = options.userId;
     this.#repoPath = options.repoPath;
     this.#extraRepoPaths = options.extraRepoPaths ?? [];
     this.#testCommand = options.testCommand;
@@ -189,6 +201,8 @@ export class PIVEngine {
     this.#sandbox = options.sandbox;
     this.#gitManager = options.gitManager;
     this.#fileTools = options.fileTools;
+    this.#webTools = options.webTools;
+    this.#webToolRateLimiter = options.webToolRateLimiter;
     this.#memoryBlock = options.memoryBlock;
     this.#permissionGate = options.permissionGate;
     this.#requireApproval = options.requireApproval ?? false;
@@ -214,11 +228,17 @@ export class PIVEngine {
     return this.#currentPlan;
   }
 
-  async startTask(prompt: string): Promise<Plan> {
+  async startTask(
+    prompt: string,
+    options?: { memoryBlock?: string },
+  ): Promise<Plan> {
     if (this.#status !== "idle") {
       throw new InvalidTransitionError(this.#status, "start a task");
     }
 
+    if (options !== undefined) {
+      this.#memoryBlock = options.memoryBlock;
+    }
     this.#taskPrompt = prompt;
     return this.#guard(() => this.#plan());
   }
@@ -266,7 +286,7 @@ export class PIVEngine {
       )
     ).map;
 
-    const content = await this.#complete("plan", this.#planMessages(feedback), {
+    const content = await this.#completePlan(this.#planMessages(feedback), {
       maxTokens: this.#maxPlanTokens,
     });
     await this.#writeWorkspaceFile("PLAN.md", content);
@@ -450,6 +470,87 @@ export class PIVEngine {
     }
 
     return content;
+  }
+
+  async #completePlan(
+    messages: LLMMessage[],
+    options: { maxTokens: number },
+  ): Promise<string> {
+    const completeWithTools = this.#llmRouter.completeWithTools?.bind(
+      this.#llmRouter,
+    );
+
+    if (!this.#webTools || !completeWithTools) {
+      return this.#complete("plan", messages, options);
+    }
+
+    const tools = createWebToolBuiltins(
+      this.#webTools,
+      this.#userId ?? this.#sessionId,
+      this.#webToolRateLimiter,
+    );
+
+    if (tools.length === 0) {
+      return this.#complete("plan", messages, options);
+    }
+
+    const toolMessages = [...messages];
+
+    for (let turn = 0; turn < 10; turn++) {
+      const toolUses: ToolUseCall[] = [];
+      let content = "";
+
+      for await (const event of completeWithTools(
+        "plan",
+        toolMessages,
+        tools,
+        options,
+      )) {
+        if (event.type === "token") {
+          content += event.delta;
+          this.events.emit("token", { phase: "plan", token: event.delta });
+        } else if (event.type === "tool_use") {
+          toolUses.push(event);
+        }
+      }
+
+      if (toolUses.length === 0) {
+        return content;
+      }
+
+      const assistantContent: LLMContentBlock[] = [];
+      if (content) {
+        assistantContent.push({ type: "text", text: content });
+      }
+      for (const toolUse of toolUses) {
+        assistantContent.push({
+          type: "tool_use",
+          id: toolUse.id,
+          name: toolUse.name,
+          input: toolUse.input,
+        });
+      }
+      toolMessages.push({
+        role: "assistant",
+        content: assistantContent,
+      });
+
+      for (const toolUse of toolUses) {
+        const result = await this.#executeBuiltinTool(tools, toolUse);
+        toolMessages.push({
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: toolUse.id,
+              content: result,
+            },
+          ],
+        });
+      }
+    }
+
+    throw await this.#fail(new ToolLoopExceededError(10));
   }
 
   async #completeImplement(
