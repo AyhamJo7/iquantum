@@ -1,9 +1,11 @@
 import { loadConfig, MissingApiKeyError } from "@iquantum/config";
 import { formatContextStats } from "../components/context-bar-format";
+import { formatReviewSummary } from "../components/review-card-format";
 import { ClipboardUnavailableError, copyToClipboard } from "../utils/clipboard";
 import { formatDoctorResults, runAllChecks } from "./doctor";
 import type { CommandContext, LocalCommand } from "./registry";
 import { CommandRegistry } from "./registry";
+import { parseReviewArgs, reviewTargetLabel } from "./review";
 
 const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
 
@@ -461,6 +463,55 @@ const commandDefs: LocalCommand[] = [
         sysError(
           ctx,
           `Diff failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
+    name: "review",
+    description:
+      "Review changes (/review [staged|commit <ref>|path <path>|pr <ref>])",
+    async run(args, ctx) {
+      if (!ctx.client.reviewSession) {
+        sysError(ctx, "Review is not supported by this daemon client.");
+        return;
+      }
+
+      let target: ReturnType<typeof parseReviewArgs>;
+      try {
+        target = parseReviewArgs(args);
+      } catch (e) {
+        sysError(ctx, e instanceof Error ? e.message : String(e));
+        return;
+      }
+
+      sysInfo(ctx, `Reviewing ${reviewTargetLabel(target)}...`);
+      let findingCount = 0;
+
+      try {
+        for await (const event of ctx.client.reviewSession(
+          ctx.sessionId,
+          target,
+        )) {
+          if (!("severity" in event)) {
+            sysInfo(
+              ctx,
+              formatReviewSummary(
+                findingCount,
+                event.summary,
+                event.durationMs,
+              ),
+            );
+            return;
+          }
+
+          findingCount += 1;
+          ctx.dispatch({ type: "review_finding", finding: event });
+        }
+      } catch (e) {
+        sysError(
+          ctx,
+          `Review failed: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     },

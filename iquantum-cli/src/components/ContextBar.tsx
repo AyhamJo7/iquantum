@@ -12,6 +12,7 @@ export function ContextBar({ stats }: ContextBarProps) {
   const used = stats.budget - stats.available;
   const pct = stats.budget > 0 ? used / stats.budget : 0;
   const filled = Math.max(0, Math.min(8, Math.round(pct * 8)));
+  const percent = `${Math.round(pct * 100)}%`;
   const barColor = filled >= 7 ? "red" : filled >= 5 ? "yellow" : undefined;
 
   const rows: Array<{ label: string; value: string }> = [
@@ -35,7 +36,7 @@ export function ContextBar({ stats }: ContextBarProps) {
         </Text>
         <Text dimColor>
           {" "}
-          {formatK(used)} / {formatK(stats.budget)}
+          {percent} {formatK(used)} / {formatK(stats.budget)}
         </Text>
       </Box>
       {rows.map(({ label, value }) => (

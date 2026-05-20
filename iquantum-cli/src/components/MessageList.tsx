@@ -4,6 +4,7 @@ import { memo } from "react";
 import { CommitCard } from "./CommitCard";
 import { ErrorCard } from "./ErrorCard";
 import { renderMarkdownToAnsi } from "./markdown";
+import { ReviewCard } from "./ReviewCard";
 import { StructuredDiff } from "./StructuredDiff";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { COPY } from "./theme";
@@ -87,6 +88,10 @@ const TranscriptRow = memo(function TranscriptRow({
         {item.text}
       </Text>
     );
+  }
+
+  if (item.type === "review_finding") {
+    return <ReviewCard finding={item} />;
   }
 
   if (item.type === "permission_request") {

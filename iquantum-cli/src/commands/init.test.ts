@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ensureInteractiveTerminal,
@@ -134,6 +136,15 @@ describe("runInit", () => {
     ]);
     expect(statuses).toContain("pull progress");
     expect(statuses.at(-1)).toBe("✓ Daemon started");
+
+    const exampleSkill = await readFile(
+      join("/tmp/iq", "skills", "example.js"),
+      "utf8",
+    );
+    expect(exampleSkill).toMatch(/text: `example: \$\{args\}`/);
+    expect(
+      () => new Function(exampleSkill.replace("export default", "return")),
+    ).not.toThrow();
   });
 });
 

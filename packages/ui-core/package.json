@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./export-markdown": "./src/export-markdown.ts"
+  },
   "dependencies": {
     "@iquantum/protocol": "workspace:*",
     "react": "^19.0.0"

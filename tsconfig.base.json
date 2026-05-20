@@ -30,6 +30,9 @@
       "@iquantum/protocol": ["packages/protocol/src/index.ts"],
       "@iquantum/context-window": ["packages/context-window/src/index.ts"],
       "@iquantum/ui-core": ["packages/ui-core/src/index.ts"],
+      "@iquantum/ui-core/export-markdown": [
+        "packages/ui-core/src/export-markdown.ts"
+      ],
       "@iquantum/file-tools": ["packages/file-tools/src/index.ts"],
       "@iquantum/web-tools": ["packages/web-tools/src/index.ts"],
       "@iquantum/memory": ["packages/memory/src/index.ts"],

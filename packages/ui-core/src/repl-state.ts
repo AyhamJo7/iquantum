@@ -1,5 +1,7 @@
 import type { Phase, ServerStreamFrame } from "@iquantum/protocol";
 
+export type ReviewSeverity = "critical" | "high" | "medium" | "low";
+
 export type TranscriptItem =
   | {
       id: string;
@@ -42,6 +44,16 @@ export type TranscriptItem =
       text: string;
       level: "info" | "error";
     }
+  | {
+      id: string;
+      type: "review_finding";
+      severity: ReviewSeverity;
+      title: string;
+      file: string;
+      line: number | null;
+      description: string;
+      suggestion: string;
+    }
   | { id: string; type: "session_separator" };
 
 export interface REPLViewState {
@@ -66,6 +78,17 @@ export type REPLAction =
   | { type: "toggle_thinking" }
   | { type: "permission_resolved"; requestId: string; approved: boolean }
   | { type: "system_message"; text: string; level?: "info" | "error" }
+  | {
+      type: "review_finding";
+      finding: {
+        severity: ReviewSeverity;
+        title: string;
+        file: string;
+        line: number | null;
+        description: string;
+        suggestion: string;
+      };
+    }
   | { type: "clear_transcript" }
   | { type: "hydrate_history"; items: TranscriptItem[] }
   | { type: "frame"; frame: ServerStreamFrame };
@@ -150,6 +173,19 @@ export function reduceREPLViewState(
             type: "system_message",
             text: action.text,
             level: action.level ?? "info",
+          },
+        ],
+        nextTranscriptId: state.nextTranscriptId + 1,
+      };
+    case "review_finding":
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          {
+            id: transcriptId(state.nextTranscriptId),
+            type: "review_finding",
+            ...action.finding,
           },
         ],
         nextTranscriptId: state.nextTranscriptId + 1,

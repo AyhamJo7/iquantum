@@ -41,6 +41,9 @@
       "path": "../packages/protocol"
     },
     {
+      "path": "../packages/ui-core"
+    },
+    {
       "path": "../packages/context-window"
     },
     {

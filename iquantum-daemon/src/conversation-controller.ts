@@ -125,6 +125,7 @@ export class ConversationController {
   readonly #createId: () => string;
   readonly #tokenCounter: typeof countTokens;
   readonly #memoryTokenCounts = new Map<string, number>();
+  readonly #systemPromptTokenCounts = new Map<string, number>();
   #abortController: AbortController | null = null;
   #currentMemoryBlock: { text: string; tokenCount: number } | null | undefined;
 
@@ -257,8 +258,14 @@ export class ConversationController {
     return this.#memoryTokenCounts.get(sessionId) ?? 0;
   }
 
+  getSystemPromptTokenCount(sessionId: string): number {
+    return this.#systemPromptTokenCounts.get(sessionId) ?? 0;
+  }
+
   async clear(sessionId: string, orgId?: string): Promise<void> {
     await this.#store.deleteAll(sessionId, orgId);
+    this.#memoryTokenCounts.delete(sessionId);
+    this.#systemPromptTokenCounts.delete(sessionId);
   }
 
   async #runTextLoop(
@@ -469,14 +476,23 @@ export class ConversationController {
 
     if (!memory?.text) {
       this.#memoryTokenCounts.set(sessionId, 0);
+      this.#systemPromptTokenCounts.set(sessionId, 0);
       return messages;
     }
 
+    const systemContent = `## Your Memory\n\n${memory.text}\n\n---\n\n`;
     this.#memoryTokenCounts.set(sessionId, memory.tokenCount);
+    this.#systemPromptTokenCounts.set(
+      sessionId,
+      Math.max(
+        0,
+        this.#tokenCounter([{ content: systemContent }]) - memory.tokenCount,
+      ),
+    );
     return [
       {
         role: "system",
-        content: `## Your Memory\n\n${memory.text}\n\n---\n\n`,
+        content: systemContent,
       },
       ...messages,
     ];
