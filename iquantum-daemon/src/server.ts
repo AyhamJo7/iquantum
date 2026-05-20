@@ -2,7 +2,13 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { InvalidTransitionError } from "@iquantum/piv-engine";
-import type { Memory, Session } from "@iquantum/types";
+import type {
+  ContextStats,
+  EffortLevel,
+  Memory,
+  Session,
+} from "@iquantum/types";
+import { CONTEXT_TOKEN_BUDGET } from "@iquantum/types";
 import { ZodError, z } from "zod";
 import { type AuthContext, authMiddleware } from "./auth/auth-middleware";
 import {
@@ -93,6 +99,7 @@ export interface DaemonSessions {
       requireApproval?: boolean;
       autoApprove?: boolean;
       mode?: "piv" | "chat";
+      effort?: import("@iquantum/types").EffortLevel;
     },
     context?: AuthContext,
   ): Promise<unknown>;
@@ -111,6 +118,12 @@ export interface DaemonSessions {
     options?: { before?: string; limit: number },
   ): Promise<unknown>;
   restore(sessionId: string, hash: string): Promise<void>;
+  updateConfig?(
+    sessionId: string,
+    config: { effort?: import("@iquantum/types").EffortLevel },
+  ): Promise<Session>;
+  getContextStats?(sessionId: string, orgId?: string): Promise<ContextStats>;
+  getDiff?(sessionId: string, from?: string, to?: string): Promise<string>;
 }
 
 export interface DaemonStreams {
@@ -137,6 +150,12 @@ export interface DaemonCompaction {
   compact(sessionId: string): Promise<unknown | null>;
 }
 
+interface ExportMessage {
+  role: string;
+  content: unknown;
+  createdAt: string;
+}
+
 export interface DaemonPermissions {
   resolvePermission(
     sessionId: string,
@@ -145,6 +164,7 @@ export interface DaemonPermissions {
   ): void;
 }
 
+const effortSchema = z.enum(["fast", "normal", "thorough"]);
 const createSessionSchema = z.object({
   repoPath: z.string().min(1).refine(isAbsolute, {
     message: "repoPath must be an absolute path",
@@ -159,7 +179,15 @@ const createSessionSchema = z.object({
   requireApproval: z.boolean().optional(),
   autoApprove: z.boolean().optional(),
   mode: z.enum(["piv", "chat"]).default("piv"),
+  effort: effortSchema.optional(),
 });
+const patchConfigSchema = z
+  .object({
+    effort: effortSchema.optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, {
+    message: "At least one config field is required",
+  });
 const taskSchema = z.object({ prompt: z.string().min(1) });
 const rejectSchema = z.object({ feedback: z.string().min(1) });
 const messageSchema = z.object({
@@ -220,6 +248,9 @@ const SESSION_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PLAN_ID_RE = SESSION_ID_RE;
 const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
+// Allows hex SHAs, HEAD, HEAD~N, branch/tag names. Blocks shell metacharacters.
+const GIT_REF_RE = /^[a-zA-Z0-9._/~^:-]{1,200}$/;
+const EXPORT_MESSAGE_LIMIT = 500;
 
 function isValidSessionId(id: string): boolean {
   return SESSION_ID_RE.test(id);
@@ -570,6 +601,7 @@ async function handleRequest(
           ...(body.extraRepoPaths?.length
             ? { extraRepoPaths: body.extraRepoPaths }
             : {}),
+          ...(body.effort !== undefined ? { effort: body.effort } : {}),
         },
         context ?? undefined,
       )) as Session;
@@ -888,6 +920,116 @@ async function handleRequest(
 
       await options.sessions.restore(sessionId, hash);
       return Response.json({ ok: true });
+    }
+
+    if (
+      request.method === "PATCH" &&
+      parts.length === 3 &&
+      parts[2] === "config"
+    ) {
+      if (!options.sessions.updateConfig) {
+        return Response.json({ error: "not_supported" }, { status: 501 });
+      }
+      const body = patchConfigSchema.parse(await request.json());
+      const configUpdate: { effort?: EffortLevel } = {};
+      if (body.effort !== undefined) configUpdate.effort = body.effort;
+      const updated = await options.sessions.updateConfig(
+        sessionId,
+        configUpdate,
+      );
+      return Response.json(updated);
+    }
+
+    if (
+      request.method === "GET" &&
+      parts.length === 3 &&
+      parts[2] === "context-stats"
+    ) {
+      if (!options.sessions.getContextStats) {
+        return Response.json({
+          systemPrompt: 0,
+          memory: 0,
+          repoMap: 0,
+          messages: 0,
+          lastTurnTokens: 0,
+          budget: CONTEXT_TOKEN_BUDGET,
+          available: CONTEXT_TOKEN_BUDGET,
+        });
+      }
+      const stats = await options.sessions.getContextStats(
+        sessionId,
+        context?.orgId,
+      );
+      return Response.json(stats);
+    }
+
+    if (request.method === "GET" && parts.length === 3 && parts[2] === "diff") {
+      if (!options.sessions.getDiff) {
+        return Response.json({ error: "not_supported" }, { status: 501 });
+      }
+      const rawFrom = url.searchParams.get("from");
+      const rawTo = url.searchParams.get("to");
+      if (rawFrom && !GIT_REF_RE.test(rawFrom)) {
+        return Response.json({ error: "invalid from ref" }, { status: 400 });
+      }
+      if (rawTo && !GIT_REF_RE.test(rawTo)) {
+        return Response.json({ error: "invalid to ref" }, { status: 400 });
+      }
+      const from = rawFrom ?? undefined;
+      const to = rawTo ?? undefined;
+      const session = await options.sessions.getSession(
+        sessionId,
+        context?.orgId,
+      );
+      if (!session.startCheckpointHash && !from) {
+        return Response.json(
+          { error: "Session was created before diff tracking" },
+          { status: 400 },
+        );
+      }
+      const diff = await options.sessions.getDiff(
+        sessionId,
+        from ?? session.startCheckpointHash ?? undefined,
+        to,
+      );
+      return new Response(diff, {
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    if (
+      request.method === "GET" &&
+      parts.length === 3 &&
+      parts[2] === "export"
+    ) {
+      const session = await options.sessions.getSession(
+        sessionId,
+        context?.orgId,
+      );
+      const fmt = url.searchParams.get("format");
+      const format = fmt === "json" ? "json" : "markdown";
+      const conversations = options.conversations;
+      const msgPage: { messages: ExportMessage[] } = conversations
+        ? ((await conversations.getMessages(
+            sessionId,
+            { limit: EXPORT_MESSAGE_LIMIT },
+            context?.orgId,
+          )) as { messages: ExportMessage[] })
+        : { messages: [] };
+      const truncated = msgPage.messages.length >= EXPORT_MESSAGE_LIMIT;
+      const exported =
+        format === "json"
+          ? JSON.stringify(
+              { session, messages: msgPage.messages, truncated },
+              null,
+              2,
+            )
+          : formatSessionMarkdown(session, msgPage.messages, truncated);
+      const headers: Record<string, string> = {
+        "Content-Type": "text/plain; charset=utf-8",
+      };
+      if (truncated) headers["X-Truncated"] = "true";
+      return new Response(exported, { headers });
     }
 
     return notFound();
@@ -1394,6 +1536,50 @@ function toErrorResponse(
     stack: error instanceof Error ? error.stack : undefined,
   });
   return Response.json({ error: "internal_error" }, { status: 500 });
+}
+
+function formatSessionMarkdown(
+  session: Session,
+  messages: ExportMessage[],
+  truncated = false,
+): string {
+  const lines: string[] = [
+    "# iquantum Session Export",
+    "",
+    `**Session ID**: ${session.id}`,
+    `**Date**: ${session.createdAt}`,
+    `**Repo**: ${session.repoPath}`,
+    "",
+    "---",
+    "",
+  ];
+
+  for (const msg of messages) {
+    lines.push(`### [${msg.role}] ${msg.createdAt}`, "");
+    const content = msg.content;
+    if (typeof content === "string") {
+      lines.push(content, "");
+    } else if (Array.isArray(content)) {
+      for (const block of content as Array<{ type?: string; text?: string }>) {
+        if (block.type === "text" && typeof block.text === "string") {
+          lines.push(block.text, "");
+        } else if (block.type === "tool_use" || block.type === "tool_result") {
+          lines.push("```json", JSON.stringify(block, null, 2), "```", "");
+        }
+      }
+    }
+  }
+
+  if (truncated) {
+    lines.push(
+      "---",
+      "",
+      `> ⚠ Export truncated — showing first ${EXPORT_MESSAGE_LIMIT} messages only.`,
+      "",
+    );
+  }
+
+  return lines.join("\n");
 }
 
 function toErrorFrame(error: unknown): { type: "error"; message: string } {

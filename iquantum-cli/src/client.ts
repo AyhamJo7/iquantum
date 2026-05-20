@@ -1,6 +1,13 @@
 import { request as nodeRequest } from "node:http";
 import type { ServerStreamFrame } from "@iquantum/protocol";
-import type { GitCheckpoint, Memory, Plan, Session } from "@iquantum/types";
+import type {
+  ContextStats,
+  EffortLevel,
+  GitCheckpoint,
+  Memory,
+  Plan,
+  Session,
+} from "@iquantum/types";
 
 export type { ServerStreamFrame } from "@iquantum/protocol";
 
@@ -50,7 +57,22 @@ export interface DaemonClient {
   deleteMemory(id: string): Promise<void>;
   syncMemoryFromFile(): Promise<{ upserted: number }>;
   openStream(sessionId: string): AsyncIterable<ServerStreamFrame>;
+  patchSessionConfig(
+    sessionId: string,
+    config: { effort?: EffortLevel },
+  ): Promise<Session>;
+  getDiff(
+    sessionId: string,
+    options?: { from?: string; to?: string },
+  ): Promise<string>;
+  getContextStats(sessionId: string): Promise<ContextStats>;
+  exportSession(
+    sessionId: string,
+    options?: { format?: "markdown" | "json" },
+  ): Promise<string>;
 }
+
+export type { ContextStats };
 
 export interface McpToolEntry {
   serverName: string;
@@ -75,6 +97,7 @@ export interface CreateSessionOptions {
   autoApprove?: boolean;
   mode?: "piv" | "chat";
   extraRepoPaths?: string[];
+  effort?: EffortLevel;
 }
 
 export class HttpDaemonClient implements DaemonClient {
@@ -222,6 +245,38 @@ export class HttpDaemonClient implements DaemonClient {
     return this.#post("/memory/sync-from-file");
   }
 
+  patchSessionConfig(
+    sessionId: string,
+    config: { effort?: EffortLevel },
+  ): Promise<Session> {
+    return this.#patch(`/sessions/${sessionId}/config`, config);
+  }
+
+  async getDiff(
+    sessionId: string,
+    options: { from?: string; to?: string } = {},
+  ): Promise<string> {
+    const params = new URLSearchParams();
+    if (options.from) params.set("from", options.from);
+    if (options.to) params.set("to", options.to);
+    const qs = params.toString();
+    return this.#getText(`/sessions/${sessionId}/diff${qs ? `?${qs}` : ""}`);
+  }
+
+  getContextStats(sessionId: string): Promise<ContextStats> {
+    return this.#get(`/sessions/${sessionId}/context-stats`);
+  }
+
+  async exportSession(
+    sessionId: string,
+    options: { format?: "markdown" | "json" } = {},
+  ): Promise<string> {
+    const params = new URLSearchParams();
+    if (options.format) params.set("format", options.format);
+    const qs = params.toString();
+    return this.#getText(`/sessions/${sessionId}/export${qs ? `?${qs}` : ""}`);
+  }
+
   async *openStream(sessionId: string): AsyncGenerator<ServerStreamFrame> {
     const res = await this.#sseRequest(`/sessions/${sessionId}/stream`);
     const decoder = new TextDecoder();
@@ -275,6 +330,10 @@ export class HttpDaemonClient implements DaemonClient {
     return this.#request("GET", path);
   }
 
+  #getText(path: string): Promise<string> {
+    return this.#requestText("GET", path);
+  }
+
   #post<T = unknown>(path: string, body?: unknown): Promise<T> {
     return this.#request("POST", path, body);
   }
@@ -285,6 +344,40 @@ export class HttpDaemonClient implements DaemonClient {
 
   #delete<T = unknown>(path: string): Promise<T> {
     return this.#request("DELETE", path);
+  }
+
+  #requestText(method: string, path: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const req = nodeRequest(
+        {
+          socketPath: this.#socketPath,
+          method,
+          path,
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.on("end", () => {
+            const text = Buffer.concat(chunks).toString("utf8");
+            if (res.statusCode && res.statusCode >= 400) {
+              let message = `HTTP ${res.statusCode}`;
+              try {
+                const parsed = JSON.parse(text) as { error?: string };
+                if (parsed.error) message = parsed.error;
+              } catch {}
+              reject(new HttpError(message, res.statusCode));
+              return;
+            }
+            resolve(text);
+          });
+        },
+      );
+      req.setTimeout(30_000, () => {
+        req.destroy(new Error("daemon request timed out"));
+      });
+      req.on("error", reject);
+      req.end();
+    });
   }
 
   #request<T>(method: string, path: string, body?: unknown): Promise<T> {

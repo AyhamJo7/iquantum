@@ -10,10 +10,13 @@ import type {
 import { PIVEngine } from "@iquantum/piv-engine";
 import type { SandboxManager } from "@iquantum/sandbox";
 import { loadTestCommand } from "@iquantum/sandbox";
-import type { Plan, Session } from "@iquantum/types";
+import type { EffortLevel, Plan, Session } from "@iquantum/types";
+import { CONTEXT_TOKEN_BUDGET } from "@iquantum/types";
 import type { WebToolExecutor } from "@iquantum/web-tools";
-import type { SessionStore } from "./db/stores";
+import type { ContextStats, SessionStore } from "./db/stores";
 import type { RateLimiter } from "./rate-limit";
+
+const GIT_REF_RE = /^[a-zA-Z0-9._/~^:-]{1,200}$/;
 
 export interface SessionEngine {
   readonly status: PIVEngine["status"];
@@ -22,12 +25,14 @@ export interface SessionEngine {
   startTask(prompt: string, options?: { memoryBlock?: string }): Promise<Plan>;
   approve(planId: string): Promise<void>;
   reject(planId: string, feedback: string): Promise<Plan>;
+  setEffort(effort: EffortLevel): void;
 }
 
 export interface SessionGitManager {
   checkpoint: GitManager["checkpoint"];
   listCheckpoints: GitManager["listCheckpoints"];
   restore: GitManager["restore"];
+  currentHead?(): Promise<string | null>;
 }
 
 export interface SessionControllerOptions {
@@ -143,6 +148,8 @@ export class SessionController {
     const testCommand = (await this.#loadTestCommand(repoPath)) ?? "true";
 
     const sessionId = this.#createId();
+    const gitManager = this.#createGitManager(repoPath);
+    const startCheckpointHash = (await gitManager.currentHead?.()) ?? null;
     const sandboxInfo = await this.#sandbox.createSandbox(sessionId, repoPath);
     const createdAt = this.#now();
     const session: Session = {
@@ -159,7 +166,7 @@ export class SessionController {
       mode: options.mode ?? "piv",
       effort: options.effort ?? "normal",
       worktreePath: null,
-      startCheckpointHash: null,
+      startCheckpointHash,
       userId: context?.userId ?? null,
       orgId: context?.orgId ?? null,
       createdAt,
@@ -173,7 +180,6 @@ export class SessionController {
       throw error;
     }
 
-    const gitManager = this.#createGitManager(repoPath);
     const engine = this.#createEngine({
       sessionId,
       ...(context?.userId ? { userId: context.userId } : {}),
@@ -182,6 +188,7 @@ export class SessionController {
         ? { extraRepoPaths: options.extraRepoPaths }
         : {}),
       testCommand,
+      effort: session.effort,
       store: this.#pivStore,
       llmRouter: this.#llmRouterFactory(),
       diffEngine: new DiffEngine(this.#sandbox),
@@ -286,6 +293,76 @@ export class SessionController {
   async restore(sessionId: string, hash: string): Promise<void> {
     await this.getSession(sessionId);
     await this.#requireLiveSession(sessionId).gitManager.restore(hash);
+  }
+
+  async updateConfig(
+    sessionId: string,
+    config: { effort?: EffortLevel },
+  ): Promise<Session> {
+    const liveSession = this.#requireLiveSession(sessionId);
+    const updated = await this.#sessionStore.update(sessionId, {
+      ...(config.effort !== undefined ? { effort: config.effort } : {}),
+    });
+    if (config.effort !== undefined) {
+      liveSession.session.effort = config.effort;
+      liveSession.engine.setEffort(config.effort);
+    }
+    return updated;
+  }
+
+  async getContextStats(sessionId: string): Promise<ContextStats> {
+    await this.getSession(sessionId);
+    if (this.#sessionStore.getContextStats) {
+      return this.#sessionStore.getContextStats(sessionId);
+    }
+    return {
+      systemPrompt: 0,
+      memory: 0,
+      repoMap: 0,
+      messages: 0,
+      lastTurnTokens: 0,
+      budget: CONTEXT_TOKEN_BUDGET,
+      available: CONTEXT_TOKEN_BUDGET,
+    };
+  }
+
+  async getDiff(
+    sessionId: string,
+    from?: string,
+    to?: string,
+  ): Promise<string> {
+    if (from !== undefined && !GIT_REF_RE.test(from)) {
+      throw new Error(`Invalid git ref: ${from}`);
+    }
+    if (to !== undefined && !GIT_REF_RE.test(to)) {
+      throw new Error(`Invalid git ref: ${to}`);
+    }
+    await this.getSession(sessionId);
+    const command =
+      from && to
+        ? `git diff ${from} ${to} --unified=3`
+        : from
+          ? `git diff ${from} --unified=3`
+          : "git diff HEAD --unified=3";
+
+    const result = await this.#sandbox.exec(sessionId, command);
+    let stdout = "";
+    let stderr = "";
+    for await (const chunk of result.output) {
+      if (chunk.stream === "stdout") {
+        stdout += chunk.data;
+      } else {
+        stderr += chunk.data;
+      }
+    }
+    const exitCode = await result.exitCode;
+    if (exitCode !== 0 && !stdout) {
+      throw new Error(
+        `git diff failed (exit ${exitCode}): ${stderr.trim() || "no output"}`,
+      );
+    }
+
+    return stdout;
   }
 
   getEngine(sessionId: string): SessionEngine {

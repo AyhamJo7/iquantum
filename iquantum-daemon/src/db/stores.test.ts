@@ -8,6 +8,112 @@ import {
   SqliteSessionStore,
 } from "./stores";
 
+describe("SqliteSessionStore.update", () => {
+  it("runs UPDATE with correct params then re-fetches the session", async () => {
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const fakeRow = {
+      id: "session-1",
+      status: "idle",
+      repoPath: "/repo",
+      containerId: "c-1",
+      volumeId: "v-1",
+      config: "{}",
+      mode: "piv",
+      effort: "fast",
+      worktreePath: null,
+      startCheckpointHash: null,
+      userId: null,
+      orgId: null,
+      createdAt: "2026-05-20T00:00:00.000Z",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+    };
+    const store = new SqliteSessionStore({
+      query(sql: string) {
+        return {
+          run(...params: unknown[]) {
+            statements.push({ sql, params });
+          },
+          get() {
+            return fakeRow;
+          },
+        };
+      },
+    } as never);
+
+    const updated = await store.update("session-1", { effort: "fast" });
+
+    const updateStmt = statements.find((s) =>
+      s.sql.includes("UPDATE sessions"),
+    );
+    expect(updateStmt?.sql).toContain("effort = ?");
+    expect(updateStmt?.params).toContain("fast");
+    expect(updateStmt?.params).toContain("session-1");
+    expect(updated.effort).toBe("fast");
+  });
+
+  it("throws when the session row is not found after update", async () => {
+    const store = new SqliteSessionStore({
+      query() {
+        return {
+          run() {},
+          get() {
+            return null;
+          },
+        };
+      },
+    } as never);
+
+    await expect(store.update("missing", { effort: "fast" })).rejects.toThrow(
+      "Unknown session",
+    );
+  });
+});
+
+describe("SqliteSessionStore.getContextStats", () => {
+  it("sums token_count and identifies last-turn tokens via the subquery", async () => {
+    let capturedSql = "";
+    let capturedParams: unknown[] = [];
+    const store = new SqliteSessionStore({
+      query(sql: string) {
+        return {
+          get(...params: unknown[]) {
+            capturedSql = sql;
+            capturedParams = params;
+            return { total: 350, lastTurn: 250 };
+          },
+        };
+      },
+    } as never);
+
+    const stats = await store.getContextStats("session-1");
+
+    expect(capturedSql).toContain("SUM(token_count)");
+    expect(capturedSql).toContain("MAX(rowid)");
+    expect(capturedParams).toEqual(["session-1", "session-1"]);
+    expect(stats.messages).toBe(350);
+    expect(stats.lastTurnTokens).toBe(250);
+    expect(stats.available).toBe(stats.budget - 350);
+  });
+
+  it("returns zeroes when the query result is null (no messages)", async () => {
+    const store = new SqliteSessionStore({
+      query() {
+        return {
+          get() {
+            return null;
+          },
+        };
+      },
+    } as never);
+
+    const stats = await store.getContextStats("session-1");
+
+    expect(stats.messages).toBe(0);
+    expect(stats.lastTurnTokens).toBe(0);
+    expect(stats.available).toBe(stats.budget);
+  });
+});
+
 describe("SqliteSessionStore", () => {
   it("deletes session children before removing the session row", async () => {
     const statements: Array<{ sql: string; params: unknown[] }> = [];

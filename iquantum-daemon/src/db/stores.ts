@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { GitCheckpointPage, GitCheckpointStore } from "@iquantum/git";
 import type { PIVStore } from "@iquantum/piv-engine";
 import type {
+  ContextStats,
   GitCheckpoint,
   HookRun,
   Memory,
@@ -11,12 +12,20 @@ import type {
   SessionStatus,
   ValidateRun,
 } from "@iquantum/types";
+import { CONTEXT_TOKEN_BUDGET } from "@iquantum/types";
+
+export type { ContextStats };
 
 export interface SessionStore {
   insert(session: Session): Promise<void>;
   get(sessionId: string, orgId?: string): Promise<Session | null>;
+  update(
+    sessionId: string,
+    updates: Partial<Pick<Session, "effort">>,
+  ): Promise<Session>;
   delete(sessionId: string): Promise<void>;
   listByOrg(orgId: string): Promise<Session[]>;
+  getContextStats?(sessionId: string): Promise<ContextStats>;
 }
 
 export type ConversationRole = "user" | "assistant" | "tool_result";
@@ -132,6 +141,47 @@ export class SqliteSessionStore implements SessionStore {
     return {
       ...row,
       config: JSON.parse(row.config) as Record<string, unknown>,
+    };
+  }
+
+  async update(
+    sessionId: string,
+    updates: Partial<Pick<Session, "effort">>,
+  ): Promise<Session> {
+    const now = new Date().toISOString();
+    if (updates.effort !== undefined) {
+      this.#db
+        .query("UPDATE sessions SET effort = ?, updated_at = ? WHERE id = ?")
+        .run(updates.effort, now, sessionId);
+    }
+    const session = await this.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown session ${sessionId}`);
+    }
+    return session;
+  }
+
+  async getContextStats(sessionId: string): Promise<ContextStats> {
+    const row = this.#db
+      .query(
+        `SELECT
+          COALESCE(SUM(token_count), 0) AS total,
+          COALESCE(MAX(CASE WHEN rowid = (SELECT MAX(rowid) FROM messages WHERE session_id = ?) THEN token_count ELSE 0 END), 0) AS lastTurn
+        FROM messages
+        WHERE session_id = ?`,
+      )
+      .get(sessionId, sessionId) as { total: number; lastTurn: number } | null;
+
+    const total = row?.total ?? 0;
+    const lastTurnTokens = row?.lastTurn ?? 0;
+    return {
+      systemPrompt: 0,
+      memory: 0,
+      repoMap: 0,
+      messages: total,
+      lastTurnTokens,
+      budget: CONTEXT_TOKEN_BUDGET,
+      available: Math.max(0, CONTEXT_TOKEN_BUDGET - total),
     };
   }
 
@@ -1078,6 +1128,45 @@ export class AdapterSessionStore implements SessionStore {
     return row
       ? { ...row, config: JSON.parse(row.config) as Record<string, unknown> }
       : null;
+  }
+
+  async update(
+    sessionId: string,
+    updates: Partial<Pick<Session, "effort">>,
+  ): Promise<Session> {
+    const now = new Date().toISOString();
+    if (updates.effort !== undefined) {
+      await this.db.execute(
+        "UPDATE sessions SET effort = ?, updated_at = ? WHERE id = ?",
+        [updates.effort, now, sessionId],
+      );
+    }
+    const session = await this.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown session ${sessionId}`);
+    }
+    return session;
+  }
+
+  async getContextStats(sessionId: string): Promise<ContextStats> {
+    const row = await this.db.first<{ total: number; lastTurn: number }>(
+      `SELECT
+        COALESCE(SUM(token_count), 0) AS total,
+        (SELECT COALESCE(token_count, 0) FROM messages WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT 1) AS lastTurn
+       FROM messages WHERE session_id = ?`,
+      [sessionId, sessionId],
+    );
+    const total = row?.total ?? 0;
+    const lastTurnTokens = row?.lastTurn ?? 0;
+    return {
+      systemPrompt: 0,
+      memory: 0,
+      repoMap: 0,
+      messages: total,
+      lastTurnTokens,
+      budget: CONTEXT_TOKEN_BUDGET,
+      available: Math.max(0, CONTEXT_TOKEN_BUDGET - total),
+    };
   }
 
   async delete(sessionId: string): Promise<void> {
