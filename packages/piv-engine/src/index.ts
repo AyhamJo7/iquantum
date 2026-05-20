@@ -69,6 +69,7 @@ export interface PIVEngineOptions {
   sandbox: Pick<SandboxManager, "exec" | "syncToHost">;
   gitManager: Pick<GitManager, "checkpoint">;
   fileTools?: SandboxFileTools;
+  memoryBlock?: string;
   permissionGate?: PermissionRequester;
   requireApproval?: boolean;
   autoApprove?: boolean;
@@ -158,6 +159,7 @@ export class PIVEngine {
   readonly #sandbox: Pick<SandboxManager, "exec" | "syncToHost">;
   readonly #gitManager: Pick<GitManager, "checkpoint">;
   readonly #fileTools: SandboxFileTools | undefined;
+  readonly #memoryBlock: string | undefined;
   readonly #permissionGate: PermissionRequester | undefined;
   readonly #requireApproval: boolean;
   readonly #autoApprove: boolean;
@@ -187,6 +189,7 @@ export class PIVEngine {
     this.#sandbox = options.sandbox;
     this.#gitManager = options.gitManager;
     this.#fileTools = options.fileTools;
+    this.#memoryBlock = options.memoryBlock;
     this.#permissionGate = options.permissionGate;
     this.#requireApproval = options.requireApproval ?? false;
     this.#autoApprove = options.autoApprove ?? false;
@@ -576,11 +579,16 @@ export class PIVEngine {
     return [
       {
         role: "system",
-        content:
-          "Write a concise implementation plan. Do not emit code or diffs yet. If the task produces an analysis or text output (e.g. summarize, explain, list), plan to write that output to a new file so it can be delivered as a file change.",
+        content: `${this.#memoryPrefix()}Write a concise implementation plan. Do not emit code or diffs yet. If the task produces an analysis or text output (e.g. summarize, explain, list), plan to write that output to a new file so it can be delivered as a file change.`,
       },
       { role: "user", content: userContent },
     ];
+  }
+
+  #memoryPrefix(): string {
+    return this.#memoryBlock
+      ? `## Your Memory\n\n${this.#memoryBlock}\n\n---\n\n`
+      : "";
   }
 
   async #implementMessages(): Promise<LLMMessage[]> {

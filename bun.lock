@@ -43,6 +43,7 @@
         "@iquantum/file-tools": "workspace:*",
         "@iquantum/git": "workspace:*",
         "@iquantum/llm": "workspace:*",
+        "@iquantum/memory": "workspace:*",
         "@iquantum/piv-engine": "workspace:*",
         "@iquantum/protocol": "workspace:*",
         "@iquantum/sandbox": "workspace:*",
@@ -225,7 +226,7 @@
   "packages": {
     "@alcalzone/ansi-tokenize": ["@alcalzone/ansi-tokenize@0.3.0", "", { "dependencies": { "ansi-styles": "^6.2.1", "is-fullwidth-code-point": "^5.0.0" } }, "sha512-p+CMKJ93HFmLkjXKlXiVGlMQEuRb6H0MokBSwUsX+S6BRX8eV5naFZpQJFfJHjRZY0Hmnqy1/r6UWl3x+19zYA=="],
 
-    "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.97.0", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-124Ebx14aEFlyr2/wRtQjcQ3IRbuON6GgoRKEPGffVV0Nu5DCXs7nlkocVQ4NLI8MxDT+7ezXCwRWXoBpWEuVw=="],
+    "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.97.1", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-wOf7AUeJPitcVpvKO4UMu63mWH5SaVipkGd7OOQJt/G6VYGlV8D2Gp9dLxOrttDJh/9gqPqdaBwDGcBevumeAg=="],
 
     "@anthropic-ai/tokenizer": ["@anthropic-ai/tokenizer@0.0.4", "", { "dependencies": { "@types/node": "^18.11.18", "tiktoken": "^1.0.10" } }, "sha512-EHRKbxlxlc8W4KCBEseByJ7YwyYCmgu9OyN59H9+IYIGPoKv8tXyQXinkeGDI+cI8Tiuz9wk2jZb/kK7AyvL7g=="],
 

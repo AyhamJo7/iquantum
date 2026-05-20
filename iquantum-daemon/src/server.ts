@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { InvalidTransitionError } from "@iquantum/piv-engine";
-import type { Session } from "@iquantum/types";
+import type { Memory, Session } from "@iquantum/types";
 import { ZodError, z } from "zod";
 import { type AuthContext, authMiddleware } from "./auth/auth-middleware";
 import {
@@ -45,6 +46,8 @@ export interface DaemonServerOptions {
   compaction?: DaemonCompaction;
   permissions?: DaemonPermissions;
   mcpRegistry?: DaemonMcpRegistry;
+  memory?: DaemonMemory;
+  memoryUserId?: string;
   healthCheck?: () => Promise<{
     db: boolean;
     docker: boolean;
@@ -59,6 +62,28 @@ export interface DaemonServerOptions {
   rateLimiter?: RateLimiter;
   corsOrigins?: string[];
   errorReporter?: ErrorReporter;
+}
+
+export interface DaemonMemory {
+  store: {
+    upsertByName(memory: Memory): Promise<Memory>;
+    get(id: string, userId: string): Promise<Memory | null>;
+    listByUser(userId: string, orgId?: string | null): Promise<Memory[]>;
+    update(
+      id: string,
+      userId: string,
+      updates: Partial<
+        Pick<Memory, "type" | "name" | "description" | "body" | "pinned">
+      >,
+    ): Promise<Memory | null>;
+    delete(id: string, userId: string): Promise<void>;
+  };
+  materialize(userId: string, orgId: string | null): Promise<void>;
+  syncFromFile(
+    filePath: string,
+    userId: string,
+    orgId: string | null,
+  ): Promise<number>;
 }
 
 export interface DaemonSessions {
@@ -93,7 +118,12 @@ export interface DaemonStreams {
 }
 
 export interface DaemonConversations {
-  addMessage(sessionId: string, content: string, orgId?: string): Promise<void>;
+  addMessage(
+    sessionId: string,
+    content: string,
+    userId?: string,
+    orgId?: string,
+  ): Promise<void>;
   getMessages(
     sessionId: string,
     options?: { before?: string; limit?: number },
@@ -141,6 +171,27 @@ const permissionSchema = z.object({
   requestId: z.string().min(1),
   approved: z.boolean(),
 });
+const memoryTypeSchema = z.enum(["user", "feedback", "project", "reference"]);
+const memoryNameSchema = z
+  .string()
+  .min(1)
+  .regex(/^[a-z0-9-]+$/);
+const memoryCreateSchema = z.object({
+  type: memoryTypeSchema,
+  name: memoryNameSchema,
+  description: z.string().min(1).max(200),
+  body: z.string().min(1).max(50_000),
+  pinned: z.boolean().optional().default(false),
+});
+const memoryUpdateSchema = memoryCreateSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one memory field is required",
+  });
+const memoryPinnedSchema = z
+  .enum(["true", "false"])
+  .transform((value) => value === "true");
+const memoryPageSchema = z.coerce.number().int().min(1).default(1);
 const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
@@ -493,6 +544,10 @@ async function handleRequest(
       return Response.json(tools);
     }
 
+    if (parts[0] === "memory") {
+      return await handleMemoryRequest(options, request, url, parts, context);
+    }
+
     if (parts[0] !== "sessions") {
       return notFound();
     }
@@ -635,7 +690,7 @@ async function handleRequest(
       );
       if (session.mode === "chat") {
         void conversations
-          .addMessage(sessionId, body.content, context?.orgId)
+          .addMessage(sessionId, body.content, context?.userId, context?.orgId)
           .catch((error: unknown) => {
             logger.error({
               msg: "conversation response failed",
@@ -961,6 +1016,14 @@ function requirePermissions(options: DaemonServerOptions): DaemonPermissions {
   return options.permissions;
 }
 
+function requireMemory(options: DaemonServerOptions): DaemonMemory {
+  if (!options.memory) {
+    throw new Error("MemoryManager is not configured");
+  }
+
+  return options.memory;
+}
+
 function requireAuthStore(options: DaemonServerOptions): AuthStore {
   if (!options.authStore) {
     throw new Error("AuthStore is not configured");
@@ -991,6 +1054,136 @@ function isAuthExempt(method: string, pathname: string): boolean {
         pathname === "/webhooks/stripe")) ||
     (method === "GET" && pathname === "/health")
   );
+}
+
+async function handleMemoryRequest(
+  options: DaemonServerOptions,
+  request: Request,
+  url: URL,
+  parts: string[],
+  context: AuthContext | null,
+): Promise<Response> {
+  const memory = requireMemory(options);
+  const identity = memoryIdentity(options, context);
+
+  if (request.method === "GET" && parts.length === 1) {
+    const filters = readMemoryFilters(url.searchParams);
+    const all = await memory.store.listByUser(identity.userId, identity.orgId);
+    const filtered = all.filter(
+      (entry) =>
+        (filters.type === undefined || entry.type === filters.type) &&
+        (filters.pinned === undefined || entry.pinned === filters.pinned),
+    );
+    const offset = (filters.page - 1) * filters.limit;
+    return Response.json(filtered.slice(offset, offset + filters.limit));
+  }
+
+  if (request.method === "POST" && parts.length === 1) {
+    const body = memoryCreateSchema.parse(await request.json());
+    const now = new Date().toISOString();
+    const candidate: Memory = {
+      id: crypto.randomUUID(),
+      userId: identity.userId,
+      orgId: identity.orgId,
+      type: body.type,
+      name: body.name,
+      description: body.description,
+      body: body.body,
+      pinned: body.pinned,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const saved = await memory.store.upsertByName(candidate);
+    await memory.materialize(identity.userId, identity.orgId);
+    return Response.json(saved, { status: 201 });
+  }
+
+  if (
+    request.method === "POST" &&
+    parts.length === 2 &&
+    parts[1] === "sync-from-file"
+  ) {
+    if (options.cloud) {
+      return Response.json(
+        { error: "sync-from-file is not available in cloud mode" },
+        { status: 400 },
+      );
+    }
+    const upserted = await memory.syncFromFile(
+      join(homedir(), ".iquantum", "MEMORY.md"),
+      identity.userId,
+      identity.orgId,
+    );
+    return Response.json({ upserted });
+  }
+
+  if (parts.length === 2 && parts[1]) {
+    const id = parts[1];
+
+    if (request.method === "PATCH") {
+      const updates = compactMemoryUpdates(
+        memoryUpdateSchema.parse(await request.json()),
+      );
+      const updated = await memory.store.update(id, identity.userId, updates);
+      if (!updated) return notFound();
+      await memory.materialize(identity.userId, identity.orgId);
+      return Response.json(updated);
+    }
+
+    if (request.method === "DELETE") {
+      const existing = await memory.store.get(id, identity.userId);
+      if (!existing) return notFound();
+      await memory.store.delete(id, identity.userId);
+      await memory.materialize(identity.userId, identity.orgId);
+      return new Response(null, { status: 204 });
+    }
+  }
+
+  return notFound();
+}
+
+function memoryIdentity(
+  options: DaemonServerOptions,
+  context: AuthContext | null,
+): { userId: string; orgId: string | null } {
+  return {
+    userId: context?.userId ?? options.memoryUserId ?? "local",
+    orgId: context?.orgId ?? null,
+  };
+}
+
+function readMemoryFilters(params: { get(name: string): string | null }): {
+  type?: Memory["type"];
+  pinned?: boolean;
+  page: number;
+  limit: number;
+} {
+  const typeParam = params.get("type");
+  const pinnedParam = params.get("pinned");
+  const type =
+    typeParam === null ? undefined : memoryTypeSchema.parse(typeParam);
+  const pinned =
+    pinnedParam === null ? undefined : memoryPinnedSchema.parse(pinnedParam);
+  return {
+    ...(type === undefined ? {} : { type }),
+    ...(pinned === undefined ? {} : { pinned }),
+    page: memoryPageSchema.parse(params.get("page") ?? undefined),
+    limit:
+      params.get("limit") === null
+        ? 50
+        : pageLimitSchema.parse(params.get("limit")),
+  };
+}
+
+function compactMemoryUpdates(
+  updates: z.infer<typeof memoryUpdateSchema>,
+): Partial<Pick<Memory, "type" | "name" | "description" | "body" | "pinned">> {
+  return Object.fromEntries(
+    Object.entries(updates).filter(([, value]) => value !== undefined),
+  ) as Partial<
+    Pick<Memory, "type" | "name" | "description" | "body" | "pinned">
+  >;
 }
 
 function readMessageLimit(value: string | null): number {
@@ -1049,7 +1242,7 @@ function corsHeadersFor(
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Request-ID",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
     Vary: "Origin",
   };
 }

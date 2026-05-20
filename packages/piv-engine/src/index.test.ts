@@ -209,6 +209,23 @@ describe("PIVEngine", () => {
     expect(harness.diffCalls).toEqual([validDiff()]);
   });
 
+  it("injects memory into architect planning prompts", async () => {
+    const harness = createHarness({
+      completions: ["plan"],
+      memoryBlock: "this project uses Bun",
+    });
+
+    await harness.engine.startTask("edit code");
+
+    expect(harness.completionCalls[0]?.messages[0]).toMatchObject({
+      role: "system",
+      content: expect.stringContaining("## Your Memory"),
+    });
+    expect(String(harness.completionCalls[0]?.messages[0]?.content)).toContain(
+      "this project uses Bun",
+    );
+  });
+
   it("retries implementation without writing when the user rejects a diff", async () => {
     const harness = createHarness({
       completions: ["plan", validDiff(), validDiff("next")],
@@ -250,6 +267,7 @@ interface HarnessOptions {
   repoMapError?: Error;
   toolEvents?: CompletionEvent[][];
   validationResults?: ExecResult[];
+  memoryBlock?: string;
 }
 
 function createHarness(options: HarnessOptions) {
@@ -362,6 +380,9 @@ function createHarness(options: HarnessOptions) {
             ],
           } as never,
         }),
+    ...(options.memoryBlock === undefined
+      ? {}
+      : { memoryBlock: options.memoryBlock }),
     repoMapBuilder: async () => {
       if (options.repoMapError) {
         throw options.repoMapError;

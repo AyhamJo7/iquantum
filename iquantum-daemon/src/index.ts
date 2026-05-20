@@ -1,12 +1,14 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { loadConfig } from "@iquantum/config";
+import { countTokens } from "@iquantum/context-window";
 import { SandboxFileTools } from "@iquantum/file-tools";
 import {
   AnthropicProvider,
   LLMRouter,
   OpenAICompatibleProvider,
 } from "@iquantum/llm";
+import { MemoryManager } from "@iquantum/memory";
 import { SandboxManager as LocalSandboxManager } from "@iquantum/sandbox";
 import type { LLMProvider, McpTool } from "@iquantum/types";
 import Redis from "ioredis";
@@ -20,6 +22,7 @@ import { initializePostgresSchema, initializeSchema } from "./db/schema";
 import {
   AdapterConversationStore,
   AdapterGitCheckpointStore,
+  AdapterMemoryStore,
   AdapterPIVStore,
   AdapterSessionStore,
 } from "./db/stores";
@@ -56,6 +59,17 @@ const sessionStore = new AdapterSessionStore(dbAdapter);
 const pivStore = new AdapterPIVStore(dbAdapter);
 const conversationStore = new AdapterConversationStore(dbAdapter);
 const checkpointStore = new AdapterGitCheckpointStore(dbAdapter);
+const memoryStore = new AdapterMemoryStore(dbAdapter);
+const memoryManager = new MemoryManager(
+  {
+    store: memoryStore,
+    countTokens: (text) => countTokens([{ content: text }]),
+  },
+  {
+    budgetTokens: config.memoryTokens,
+    memoriesDir: stateDir,
+  },
+);
 const authStore = config.cloud ? new AuthStore(dbAdapter) : undefined;
 const jwtService =
   config.cloud && config.jwtSecret
@@ -126,6 +140,8 @@ const sessions = new SessionController({
   llmRouterFactory: () => llmRouter,
   permissionGate: permissions,
   ...(config.fileTools ? { fileToolMaxBytes: config.fileToolMaxBytes } : {}),
+  memoryManager,
+  memoryUserId: "local",
 });
 streams = new StreamController(sessions);
 const conversationCompleter = {
@@ -176,6 +192,9 @@ const conversations = new ConversationController({
   ...(mcpRegistry ? { mcpClient: mcpRegistry } : {}),
   ...(fileTools ? { fileTools: { tools: fileTools, sandbox } } : {}),
   permissionChecker: permissions,
+  memoryManager,
+  memoryUserId: "local",
+  autoMemory: config.autoMemory,
 });
 
 async function healthCheck(): Promise<{
@@ -225,6 +244,8 @@ const server = createDaemonServer({
   compaction,
   permissions,
   ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
+  memory: memoryManager,
+  memoryUserId: "local",
   healthCheck,
   cloud: config.cloud,
   ...(authStore ? { authStore } : {}),
@@ -247,6 +268,8 @@ const tcpServer = createTcpDaemonServer(
     compaction,
     permissions,
     ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
+    memory: memoryManager,
+    memoryUserId: "local",
     healthCheck,
     cloud: config.cloud,
     ...(authStore ? { authStore } : {}),

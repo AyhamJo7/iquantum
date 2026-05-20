@@ -8,6 +8,7 @@ import type {
   LLMContentBlock,
   LLMMessage,
   McpTool,
+  Memory,
 } from "@iquantum/types";
 import { messagesSinceLastBoundary } from "./conversation-history";
 import type {
@@ -54,6 +55,17 @@ export interface PermissionChecker {
   ): Promise<boolean>;
 }
 
+export interface ConversationMemoryManager {
+  store: {
+    upsertByName(memory: Memory): Promise<Memory>;
+  };
+  buildBlock(
+    userId: string,
+    orgId: string | null,
+  ): Promise<{ text: string; tokenCount: number }>;
+  materialize(userId: string, orgId: string | null): Promise<void>;
+}
+
 export interface ConversationControllerOptions {
   store: ConversationStore;
   completer: ConversationCompleter;
@@ -65,6 +77,10 @@ export interface ConversationControllerOptions {
     sandbox: Pick<SandboxManager, "exec">;
   };
   permissionChecker?: PermissionChecker;
+  memoryManager?: ConversationMemoryManager;
+  memoryUserId?: string;
+  memoryOrgId?: string | null;
+  autoMemory?: boolean;
   maxResponseTokens?: number;
   maxToolTurns?: number;
   now?: () => string;
@@ -87,12 +103,18 @@ export class ConversationController {
       }
     | undefined;
   readonly #permissionChecker: PermissionChecker | undefined;
+  readonly #memoryManager: ConversationMemoryManager | undefined;
+  readonly #memoryUserId: string;
+  readonly #memoryOrgId: string | null;
+  readonly #autoMemory: boolean;
   readonly #maxResponseTokens: number;
   readonly #maxToolTurns: number;
   readonly #now: () => string;
   readonly #createId: () => string;
   readonly #tokenCounter: typeof countTokens;
+  readonly #memoryTokenCounts = new Map<string, number>();
   #abortController: AbortController | null = null;
+  #currentMemoryBlock: { text: string; tokenCount: number } | null | undefined;
 
   constructor(options: ConversationControllerOptions) {
     this.#store = options.store;
@@ -102,6 +124,10 @@ export class ConversationController {
     this.#mcpClient = options.mcpClient;
     this.#fileTools = options.fileTools;
     this.#permissionChecker = options.permissionChecker;
+    this.#memoryManager = options.memoryManager;
+    this.#memoryUserId = options.memoryUserId ?? "local";
+    this.#memoryOrgId = options.memoryOrgId ?? null;
+    this.#autoMemory = options.autoMemory ?? false;
     this.#maxResponseTokens = options.maxResponseTokens ?? 2000;
     this.#maxToolTurns = options.maxToolTurns ?? MAX_TOOL_TURNS_DEFAULT;
     this.#now = options.now ?? (() => new Date().toISOString());
@@ -112,11 +138,13 @@ export class ConversationController {
   async addMessage(
     sessionId: string,
     content: string,
+    userId?: string,
     orgId?: string,
   ): Promise<void> {
     this.#abortController?.abort();
     const abortController = new AbortController();
     this.#abortController = abortController;
+    this.#currentMemoryBlock = undefined;
 
     await this.#compactor?.maybeCompact(sessionId);
     await this.#store.insert(this.#newMessage(sessionId, "user", content));
@@ -149,10 +177,11 @@ export class ConversationController {
           abortController,
           tools as McpTool[],
           builtinTools,
+          userId,
           orgId,
         );
       } else {
-        await this.#runTextLoop(sessionId, abortController, orgId);
+        await this.#runTextLoop(sessionId, abortController, userId, orgId);
       }
     } catch (error) {
       if (abortController.signal.aborted) return;
@@ -195,7 +224,14 @@ export class ConversationController {
   }
 
   async getTokenCount(sessionId: string, orgId?: string): Promise<number> {
-    return this.#tokenCounter(await this.getMessagesForApi(sessionId, orgId));
+    return (
+      this.#tokenCounter(await this.getMessagesForApi(sessionId, orgId)) +
+      (this.#memoryTokenCounts.get(sessionId) ?? 0)
+    );
+  }
+
+  getMemoryTokenCount(sessionId: string): number {
+    return this.#memoryTokenCounts.get(sessionId) ?? 0;
   }
 
   async clear(sessionId: string, orgId?: string): Promise<void> {
@@ -205,11 +241,10 @@ export class ConversationController {
   async #runTextLoop(
     sessionId: string,
     abortController: AbortController,
+    userId?: string,
     orgId?: string,
   ): Promise<void> {
-    const llmMessages = (await this.getMessagesForApi(sessionId, orgId)).map(
-      toLLMMessage,
-    );
+    const llmMessages = await this.#llmMessages(sessionId, userId, orgId);
     let response = "";
 
     for await (const delta of this.#completer.complete(llmMessages, {
@@ -224,6 +259,9 @@ export class ConversationController {
       await this.#store.insert(
         this.#newMessage(sessionId, "assistant", response),
       );
+      await this.#maybeAutoRemember(sessionId, userId, orgId).catch(
+        () => undefined,
+      );
       this.#streams.publish(sessionId, { type: "done" });
     }
   }
@@ -233,6 +271,7 @@ export class ConversationController {
     abortController: AbortController,
     tools: McpTool[],
     builtinTools: BuiltinTool[],
+    userId?: string,
     orgId?: string,
   ): Promise<void> {
     const completeWithTools = this.#completer.completeWithTools?.bind(
@@ -246,9 +285,7 @@ export class ConversationController {
     for (let turn = 0; turn < this.#maxToolTurns; turn++) {
       if (abortController.signal.aborted) break;
 
-      const llmMessages = (await this.getMessagesForApi(sessionId, orgId)).map(
-        toLLMMessage,
-      );
+      const llmMessages = await this.#llmMessages(sessionId, userId, orgId);
       const toolUses: ToolUseCall[] = [];
       let textResponse = "";
 
@@ -273,6 +310,9 @@ export class ConversationController {
         // No tool calls — final text response
         await this.#store.insert(
           this.#newMessage(sessionId, "assistant", textResponse),
+        );
+        await this.#maybeAutoRemember(sessionId, userId, orgId).catch(
+          () => undefined,
         );
         this.#streams.publish(sessionId, { type: "done" });
         return;
@@ -372,6 +412,94 @@ export class ConversationController {
     await this.#store.insert(
       this.#newMessageWithContent(sessionId, "tool_result", resultContent),
     );
+  }
+
+  async #llmMessages(
+    sessionId: string,
+    userId?: string,
+    orgId?: string,
+  ): Promise<LLMMessage[]> {
+    const messages = (await this.getMessagesForApi(sessionId, orgId)).map(
+      toLLMMessage,
+    );
+
+    if (this.#currentMemoryBlock === undefined) {
+      const block = await this.#memoryManager?.buildBlock(
+        userId ?? this.#memoryUserId,
+        orgId ?? this.#memoryOrgId,
+      );
+      this.#currentMemoryBlock = block ?? null;
+    }
+
+    const memory = this.#currentMemoryBlock;
+
+    if (!memory?.text) {
+      this.#memoryTokenCounts.set(sessionId, 0);
+      return messages;
+    }
+
+    this.#memoryTokenCounts.set(sessionId, memory.tokenCount);
+    return [
+      {
+        role: "system",
+        content: `## Your Memory\n\n${memory.text}\n\n---\n\n`,
+      },
+      ...messages,
+    ];
+  }
+
+  async #maybeAutoRemember(
+    sessionId: string,
+    userId?: string,
+    orgId?: string,
+  ): Promise<void> {
+    if (!this.#autoMemory || !this.#memoryManager) return;
+
+    const messages = await this.getMessagesForApi(sessionId, orgId);
+    const userTurns = messages.filter(
+      (message) => message.role === "user",
+    ).length;
+    if (userTurns === 0 || userTurns % 20 !== 0) return;
+
+    let summary = "";
+    for await (const delta of this.#completer.complete(
+      [
+        {
+          role: "system",
+          content:
+            "Summarize stable user or project preferences worth remembering. Return only the memory text. Return nothing if there is no durable memory.",
+        },
+        {
+          role: "user",
+          content: messages.map(contentToText).join("\n\n"),
+        },
+      ],
+      { maxTokens: 300 },
+    )) {
+      summary += delta;
+    }
+
+    const body = summary.trim();
+    if (!body) return;
+
+    const identity = {
+      userId: userId ?? this.#memoryUserId,
+      orgId: orgId ?? this.#memoryOrgId,
+    };
+    const now = this.#now();
+    await this.#memoryManager.store.upsertByName({
+      id: this.#createId(),
+      userId: identity.userId,
+      orgId: identity.orgId,
+      type: "project",
+      name: `auto-${sessionId.slice(0, 8)}-${Math.floor(userTurns / 20)}`,
+      description: "Auto-generated conversation memory",
+      body,
+      pinned: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await this.#memoryManager.materialize(identity.userId, identity.orgId);
   }
 
   #newMessage(

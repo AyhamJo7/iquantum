@@ -12,6 +12,7 @@
     "@iquantum/file-tools": "workspace:*",
     "@iquantum/git": "workspace:*",
     "@iquantum/llm": "workspace:*",
+    "@iquantum/memory": "workspace:*",
     "@iquantum/piv-engine": "workspace:*",
     "@iquantum/protocol": "workspace:*",
     "@iquantum/sandbox": "workspace:*",

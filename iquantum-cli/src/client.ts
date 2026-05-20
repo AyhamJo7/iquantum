@@ -1,6 +1,6 @@
 import { request as nodeRequest } from "node:http";
 import type { ServerStreamFrame } from "@iquantum/protocol";
-import type { GitCheckpoint, Plan, Session } from "@iquantum/types";
+import type { GitCheckpoint, Memory, Plan, Session } from "@iquantum/types";
 
 export type { ServerStreamFrame } from "@iquantum/protocol";
 
@@ -34,6 +34,21 @@ export interface DaemonClient {
   ): Promise<ConversationPage>;
   cancelStream(sessionId: string): Promise<void>;
   listMcpTools(): Promise<McpToolEntry[]>;
+  listMemories(options?: {
+    type?: Memory["type"];
+    pinned?: boolean;
+  }): Promise<Memory[]>;
+  createMemory(
+    memory: Pick<Memory, "type" | "name" | "description" | "body" | "pinned">,
+  ): Promise<Memory>;
+  updateMemory(
+    id: string,
+    updates: Partial<
+      Pick<Memory, "type" | "name" | "description" | "body" | "pinned">
+    >,
+  ): Promise<Memory>;
+  deleteMemory(id: string): Promise<void>;
+  syncMemoryFromFile(): Promise<{ upserted: number }>;
   openStream(sessionId: string): AsyncIterable<ServerStreamFrame>;
 }
 
@@ -172,6 +187,41 @@ export class HttpDaemonClient implements DaemonClient {
     return this.#get("/mcp/tools");
   }
 
+  listMemories(
+    options: { type?: Memory["type"]; pinned?: boolean } = {},
+  ): Promise<Memory[]> {
+    const params = new URLSearchParams();
+    if (options.type) params.set("type", options.type);
+    if (options.pinned !== undefined) {
+      params.set("pinned", String(options.pinned));
+    }
+    const qs = params.toString();
+    return this.#get(`/memory${qs ? `?${qs}` : ""}`);
+  }
+
+  createMemory(
+    memory: Pick<Memory, "type" | "name" | "description" | "body" | "pinned">,
+  ): Promise<Memory> {
+    return this.#post("/memory", memory);
+  }
+
+  updateMemory(
+    id: string,
+    updates: Partial<
+      Pick<Memory, "type" | "name" | "description" | "body" | "pinned">
+    >,
+  ): Promise<Memory> {
+    return this.#patch(`/memory/${encodeURIComponent(id)}`, updates);
+  }
+
+  async deleteMemory(id: string): Promise<void> {
+    await this.#delete(`/memory/${encodeURIComponent(id)}`);
+  }
+
+  syncMemoryFromFile(): Promise<{ upserted: number }> {
+    return this.#post("/memory/sync-from-file");
+  }
+
   async *openStream(sessionId: string): AsyncGenerator<ServerStreamFrame> {
     const res = await this.#sseRequest(`/sessions/${sessionId}/stream`);
     const decoder = new TextDecoder();
@@ -227,6 +277,10 @@ export class HttpDaemonClient implements DaemonClient {
 
   #post<T = unknown>(path: string, body?: unknown): Promise<T> {
     return this.#request("POST", path, body);
+  }
+
+  #patch<T = unknown>(path: string, body?: unknown): Promise<T> {
+    return this.#request("PATCH", path, body);
   }
 
   #delete<T = unknown>(path: string): Promise<T> {

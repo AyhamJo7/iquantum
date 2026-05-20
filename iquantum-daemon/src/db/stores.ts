@@ -578,7 +578,7 @@ export interface MemoryStore {
   insert(memory: Memory): Promise<void>;
   get(id: string, userId: string): Promise<Memory | null>;
   getByName(userId: string, name: string): Promise<Memory | null>;
-  listByUser(userId: string, orgId?: string): Promise<Memory[]>;
+  listByUser(userId: string, orgId?: string | null): Promise<Memory[]>;
   update(
     id: string,
     userId: string,
@@ -645,7 +645,7 @@ export class SqliteMemoryStore implements MemoryStore {
     return row ? toMemory(row) : null;
   }
 
-  async listByUser(userId: string, orgId?: string): Promise<Memory[]> {
+  async listByUser(userId: string, orgId?: string | null): Promise<Memory[]> {
     const rows = this.#db
       .query(
         `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
@@ -823,7 +823,7 @@ export class AdapterMemoryStore implements MemoryStore {
     return row ? toMemory(row) : null;
   }
 
-  async listByUser(userId: string, orgId?: string): Promise<Memory[]> {
+  async listByUser(userId: string, orgId?: string | null): Promise<Memory[]> {
     const rows = await this.db.query<MemoryRow>(
       `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
               body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
