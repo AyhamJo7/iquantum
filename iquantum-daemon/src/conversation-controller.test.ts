@@ -1,4 +1,5 @@
 import type { CompletionEvent, McpTool } from "@iquantum/types";
+import { WebToolExecutor } from "@iquantum/web-tools";
 import { describe, expect, it, vi } from "vitest";
 import type { PermissionChecker } from "./conversation-controller";
 import { ConversationController } from "./conversation-controller";
@@ -361,6 +362,174 @@ describe("ConversationController — tool loop", () => {
         content: 'read {"path":"src/index.ts"}',
       },
     ]);
+  });
+
+  it("merges web tools into the tool loop and rate-limits web_search per session", async () => {
+    const store = new InMemoryConversationStore();
+    const seenToolNames: string[][] = [];
+    let nextId = 1;
+
+    const completeWithTools = async function* (
+      _messages: unknown,
+      tools: McpTool[],
+    ) {
+      seenToolNames.push(tools.map((tool) => tool.name));
+      if (seenToolNames.length === 1) {
+        yield {
+          type: "tool_use" as const,
+          id: "web-call-1",
+          name: "web_search",
+          input: { query: "latest bun" },
+        };
+      } else {
+        yield { type: "token" as const, delta: "done" };
+      }
+    };
+    const rateLimiter = {
+      consume: vi.fn().mockResolvedValue({
+        allowed: true,
+        remaining: 9,
+        resetAt: Date.now() + 60_000,
+      }),
+    };
+
+    const controller = new ConversationController({
+      store,
+      completer: {
+        async *complete() {
+          yield "";
+        },
+        completeWithTools,
+      },
+      streams: { publish: () => {} },
+      webTools: {
+        getAll: () => [
+          {
+            name: "web_search",
+            description: "search",
+            inputSchema: { type: "object" },
+            async execute(input: unknown) {
+              return `searched ${JSON.stringify(input)}`;
+            },
+          },
+        ],
+      } as never,
+      webSearchRateLimiter: rateLimiter,
+      now: () => fixedNow,
+      createId: () => `id-${nextId++}`,
+      tokenCounter: () => 0,
+    });
+
+    await controller.addMessage("session-1", "search");
+
+    expect(seenToolNames[0]).toEqual(["web_search"]);
+    expect(rateLimiter.consume).toHaveBeenCalledWith("web_search:session-1", {
+      limit: 10,
+      windowMs: 60_000,
+    });
+    const toolResult = store.messages.find(
+      (message) => message.role === "tool_result",
+    );
+    expect(toolResult?.content).toMatchObject([
+      {
+        type: "tool_result",
+        tool_use_id: "web-call-1",
+        content: 'searched {"query":"latest bun"}',
+      },
+    ]);
+  });
+
+  it("answers chat with Brave-backed web_search results through the real web tool executor", async () => {
+    const store = new InMemoryConversationStore();
+    const seenToolNames: string[][] = [];
+    let nextId = 1;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          web: {
+            results: [
+              {
+                title: "Bun v1.2.3",
+                url: "https://bun.sh/blog/bun-v1.2.3",
+                description: "Bun v1.2.3 release notes",
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    try {
+      const completeWithTools = async function* (
+        _messages: unknown,
+        tools: McpTool[],
+      ) {
+        seenToolNames.push(tools.map((tool) => tool.name));
+        if (seenToolNames.length === 1) {
+          yield {
+            type: "tool_use" as const,
+            id: "web-call-1",
+            name: "web_search",
+            input: { query: "what is the latest version of bun?" },
+          };
+        } else {
+          yield { type: "token" as const, delta: "Bun v1.2.3 is latest." };
+        }
+      };
+
+      const controller = new ConversationController({
+        store,
+        completer: {
+          async *complete() {
+            yield "";
+          },
+          completeWithTools,
+        },
+        streams: { publish: () => {} },
+        webTools: new WebToolExecutor({
+          enabled: true,
+          provider: "brave",
+          braveApiKey: "brave-key",
+        }),
+        now: () => fixedNow,
+        createId: () => `id-${nextId++}`,
+        tokenCounter: () => 0,
+      });
+
+      await controller.addMessage(
+        "session-1",
+        "what is the latest version of bun?",
+      );
+
+      expect(seenToolNames[0]).toEqual(["web_fetch", "web_search"]);
+      expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).toContain(
+        "q=what+is+the+latest+version+of+bun%3F",
+      );
+      expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+        headers: {
+          Accept: "application/json",
+          "X-Subscription-Token": "brave-key",
+        },
+      });
+      const toolResult = store.messages.find(
+        (message) => message.role === "tool_result",
+      );
+      expect(toolResult?.content).toMatchObject([
+        {
+          type: "tool_result",
+          tool_use_id: "web-call-1",
+          content:
+            "1. Bun v1.2.3\n   https://bun.sh/blog/bun-v1.2.3\n   Bun v1.2.3 release notes",
+        },
+      ]);
+      expect(store.messages.at(-1)?.content).toMatchObject([
+        { type: "text", text: "Bun v1.2.3 is latest." },
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("falls back to text loop when completer has no completeWithTools", async () => {
