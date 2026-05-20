@@ -107,6 +107,37 @@ describe("daemon request handler", () => {
     expect(calls).toEqual([]);
   });
 
+  it("passes worktree session options through to the session controller", async () => {
+    const { sessions, calls } = fakeSessions();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+    });
+
+    const response = await request(handler, "/sessions", {
+      method: "POST",
+      body: {
+        repoPath: "/repo",
+        extraRepoPaths: ["/other-repo"],
+        worktree: true,
+      },
+    });
+
+    expect(response.status).toBe(201);
+    expect(calls).toEqual([
+      [
+        "createSession",
+        "/repo",
+        {
+          mode: "piv",
+          extraRepoPaths: ["/other-repo"],
+          worktree: true,
+        },
+      ],
+    ]);
+  });
+
   it("rejects malformed plan IDs and commit hashes before dispatch", async () => {
     const { sessions, calls } = fakeSessions();
     const handler = createRequestHandler({
@@ -1507,6 +1538,7 @@ function fakeSessions(
           mode,
           effort: "normal" as const,
           worktreePath: null,
+          worktreeBranch: null,
           startCheckpointHash: null,
           userId: null,
           orgId: sessionOrgId,
@@ -1551,6 +1583,7 @@ function fakeSessions(
           mode,
           effort: config.effort ?? ("normal" as const),
           worktreePath: null,
+          worktreeBranch: null,
           startCheckpointHash: null,
           userId: null,
           orgId: sessionOrgId,

@@ -112,6 +112,8 @@ export interface DaemonSessions {
       autoApprove?: boolean;
       mode?: "piv" | "chat";
       effort?: import("@iquantum/types").EffortLevel;
+      extraRepoPaths?: string[];
+      worktree?: boolean;
     },
     context?: AuthContext,
   ): Promise<unknown>;
@@ -194,6 +196,7 @@ const createSessionSchema = z.object({
   autoApprove: z.boolean().optional(),
   mode: z.enum(["piv", "chat"]).default("piv"),
   effort: effortSchema.optional(),
+  worktree: z.boolean().optional().default(false),
 });
 const patchConfigSchema = z
   .object({
@@ -628,6 +631,7 @@ async function handleRequest(
             ? { extraRepoPaths: body.extraRepoPaths }
             : {}),
           ...(body.effort !== undefined ? { effort: body.effort } : {}),
+          ...(body.worktree ? { worktree: true } : {}),
         },
         context ?? undefined,
       )) as Session;

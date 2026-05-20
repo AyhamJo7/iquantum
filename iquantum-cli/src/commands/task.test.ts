@@ -141,6 +141,31 @@ describe("runTask", () => {
       { requireApproval: true, autoApprove: true },
     ]);
   });
+
+  it("passes worktree mode through to session creation", async () => {
+    const harness = createHarness({
+      frames: [
+        { type: "plan_ready", planId: "plan-1" },
+        { type: "checkpoint", hash: "abc", message: "done" },
+      ],
+      plans: [fakePlan()],
+      promptAnswers: ["y"],
+    });
+
+    await runTask(
+      "task",
+      { repo: "/repo", worktree: true },
+      harness.client,
+      harness.prompt,
+      harness.writer,
+    );
+
+    expect(harness.calls[0]).toEqual([
+      "createSession",
+      "/repo",
+      { requireApproval: true, autoApprove: true, worktree: true },
+    ]);
+  });
 });
 
 interface HarnessOptions {
@@ -309,6 +334,7 @@ function fakeSession(sessionId = "session-1"): Session {
     mode: "piv",
     effort: "normal",
     worktreePath: null,
+    worktreeBranch: null,
     startCheckpointHash: null,
     userId: null,
     orgId: null,

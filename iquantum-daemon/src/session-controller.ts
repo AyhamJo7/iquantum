@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { DiffEngine } from "@iquantum/diff-engine";
 import { SandboxFileTools } from "@iquantum/file-tools";
 import type { GitCheckpointPage, GitCheckpointStore } from "@iquantum/git";
@@ -34,6 +35,10 @@ export interface SessionGitManager {
   listCheckpoints: GitManager["listCheckpoints"];
   restore: GitManager["restore"];
   currentHead?(): Promise<string | null>;
+  createWorktree?(
+    sessionId: string,
+  ): Promise<{ worktreePath: string; branch: string }>;
+  removeWorktree?(worktreePath: string, branch?: string): Promise<void>;
 }
 
 export interface SessionControllerOptions {
@@ -71,6 +76,7 @@ export interface CreateSessionOptions {
   mode?: "piv" | "chat";
   effort?: import("@iquantum/types").EffortLevel;
   extraRepoPaths?: string[];
+  worktree?: boolean;
 }
 
 export interface SessionContext {
@@ -93,6 +99,15 @@ export class SessionNotLiveError extends Error {
   constructor(readonly sessionId: string) {
     super(`Session ${sessionId} is not live in this daemon process`);
     this.name = "SessionNotLiveError";
+  }
+}
+
+export class OverlappingRepoError extends Error {
+  constructor(readonly repoPath: string) {
+    super(
+      `Worktree mode cannot include the primary repo as an extra repo: ${repoPath}`,
+    );
+    this.name = "OverlappingRepoError";
   }
 }
 
@@ -152,9 +167,42 @@ export class SessionController {
     const testCommand = (await this.#loadTestCommand(repoPath)) ?? "true";
 
     const sessionId = this.#createId();
-    const gitManager = this.#createGitManager(repoPath);
-    const startCheckpointHash = (await gitManager.currentHead?.()) ?? null;
-    const sandboxInfo = await this.#sandbox.createSandbox(sessionId, repoPath);
+    this.#assertValidWorktreeRequest(repoPath, options);
+    const repoGitManager = this.#createGitManager(repoPath);
+    const startCheckpointHash = (await repoGitManager.currentHead?.()) ?? null;
+    let worktreePath: string | null = null;
+    let worktreeBranch: string | null = null;
+    let engineRepoPath = repoPath;
+    let gitManager = repoGitManager;
+
+    if (options.worktree === true) {
+      if (!repoGitManager.createWorktree) {
+        throw new Error("Git manager does not support worktrees");
+      }
+      const worktree = await repoGitManager.createWorktree(sessionId);
+      worktreePath = worktree.worktreePath;
+      worktreeBranch = worktree.branch;
+      engineRepoPath = worktreePath;
+      gitManager = this.#createGitManager(worktreePath);
+    }
+
+    let sandboxInfo: {
+      containerName: string;
+      volumeName: string;
+    };
+    try {
+      sandboxInfo = await this.#sandbox.createSandbox(
+        sessionId,
+        engineRepoPath,
+      );
+    } catch (error) {
+      await this.#removeWorktreeQuietly(
+        repoGitManager,
+        worktreePath,
+        worktreeBranch,
+      );
+      throw error;
+    }
     const createdAt = this.#now();
     const session: Session = {
       id: sessionId,
@@ -169,7 +217,8 @@ export class SessionController {
       },
       mode: options.mode ?? "piv",
       effort: options.effort ?? "normal",
-      worktreePath: null,
+      worktreePath,
+      worktreeBranch,
       startCheckpointHash,
       userId: context?.userId ?? null,
       orgId: context?.orgId ?? null,
@@ -180,6 +229,11 @@ export class SessionController {
     try {
       await this.#sessionStore.insert(session);
     } catch (error) {
+      await this.#removeWorktreeQuietly(
+        repoGitManager,
+        worktreePath,
+        worktreeBranch,
+      );
       await this.#sandbox.destroySandbox(sessionId);
       throw error;
     }
@@ -187,7 +241,7 @@ export class SessionController {
     const engine = this.#createEngine({
       sessionId,
       ...(context?.userId ? { userId: context.userId } : {}),
-      repoPath,
+      repoPath: engineRepoPath,
       ...(options.extraRepoPaths?.length
         ? { extraRepoPaths: options.extraRepoPaths }
         : {}),
@@ -242,11 +296,30 @@ export class SessionController {
   }
 
   async destroySession(sessionId: string): Promise<void> {
-    await this.getSession(sessionId);
+    const session = await this.getSession(sessionId);
     await this.#hookRunner?.fire({ type: "session_destroyed", sessionId });
+    await this.#removeWorktreeQuietly(
+      this.#createGitManager(session.repoPath),
+      session.worktreePath,
+      session.worktreeBranch,
+    );
     await this.#sandbox.destroySandbox(sessionId);
     await this.#sessionStore.delete(sessionId);
     this.#liveSessions.delete(sessionId);
+  }
+
+  async #removeWorktreeQuietly(
+    gitManager: SessionGitManager,
+    worktreePath: string | null,
+    branch: string | null,
+  ): Promise<void> {
+    if (worktreePath === null || !gitManager.removeWorktree) {
+      return;
+    }
+
+    await gitManager
+      .removeWorktree(worktreePath, branch ?? undefined)
+      .catch(() => undefined);
   }
 
   async startTask(sessionId: string, prompt: string): Promise<Plan> {
@@ -259,6 +332,24 @@ export class SessionController {
     return liveSession.engine.startTask(prompt, {
       ...(memory?.text ? { memoryBlock: memory.text } : {}),
     });
+  }
+
+  #assertValidWorktreeRequest(
+    repoPath: string,
+    options: CreateSessionOptions,
+  ): void {
+    if (options.worktree !== true) {
+      return;
+    }
+
+    const normalizedRepoPath = resolve(repoPath);
+    if (
+      options.extraRepoPaths?.some(
+        (extraRepoPath) => resolve(extraRepoPath) === normalizedRepoPath,
+      )
+    ) {
+      throw new OverlappingRepoError(repoPath);
+    }
   }
 
   async approve(sessionId: string, planId?: string): Promise<void> {

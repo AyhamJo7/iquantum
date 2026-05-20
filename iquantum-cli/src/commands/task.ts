@@ -6,6 +6,7 @@ export interface TaskOptions {
   repo?: string;
   extraRepo?: string[];
   effort?: string;
+  worktree?: boolean;
 }
 
 export type PromptFn = (question: string) => Promise<string>;
@@ -38,6 +39,7 @@ export async function runTask(
         ? { extraRepoPaths: options.extraRepo }
         : {}),
       ...(effort !== undefined ? { effort } : {}),
+      ...(options.worktree ? { worktree: true } : {}),
     });
   } catch (error) {
     if (isDaemonNotRunning(error)) {

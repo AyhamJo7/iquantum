@@ -1,18 +1,36 @@
+import { execFile } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { GitManager, InMemoryGitCheckpointStore } from "@iquantum/git";
 import type {
   PIVEngineEventMap,
   PIVEngineOptions,
   PIVStore,
 } from "@iquantum/piv-engine";
 import type { Plan, Session, SessionStatus } from "@iquantum/types";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { SessionStore } from "./db/stores";
 import {
   type CurrentPlanStore,
+  OverlappingRepoError,
   SessionController,
   type SessionEngine,
   type SessionGitManager,
 } from "./session-controller";
+
+const run = promisify(execFile);
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { force: true, recursive: true })),
+  );
+});
 
 describe("SessionController", () => {
   it("creates a persisted live session and wires a PIV engine", async () => {
@@ -69,6 +87,178 @@ describe("SessionController", () => {
     });
 
     expect(session.mode).toBe("chat");
+  });
+
+  it("creates worktree sessions from a dedicated worktree path", async () => {
+    const harness = createHarness();
+
+    const session = await harness.controller.createSession("/repo", {
+      worktree: true,
+    });
+
+    expect(session.worktreePath).toBe("/tmp/wt-session-1");
+    expect(session.worktreeBranch).toBe("iquantum/session-1");
+    expect(session.startCheckpointHash).toBe("abc123");
+    expect(harness.worktreeCalls).toEqual([["createWorktree", "session-1"]]);
+    expect(harness.createdSandboxes).toEqual([
+      ["session-1", "/tmp/wt-session-1"],
+    ]);
+    expect(harness.gitManagerPaths).toEqual(["/repo", "/tmp/wt-session-1"]);
+    expect(harness.engineOptions).toMatchObject({
+      repoPath: "/tmp/wt-session-1",
+    });
+  });
+
+  it("removes a worktree before destroying the sandbox", async () => {
+    const harness = createHarness();
+    await harness.controller.createSession("/repo", { worktree: true });
+
+    await harness.controller.destroySession("session-1");
+
+    expect(harness.lifecycleCalls).toEqual([
+      "removeWorktree:/tmp/wt-session-1:iquantum/session-1",
+      "destroySandbox:session-1",
+    ]);
+  });
+
+  it("continues destroying a session when worktree removal fails", async () => {
+    const harness = createHarness({
+      removeWorktreeError: new Error("worktree already gone"),
+    });
+    await harness.controller.createSession("/repo", { worktree: true });
+
+    await harness.controller.destroySession("session-1");
+
+    expect(harness.lifecycleCalls).toEqual([
+      "removeWorktree:/tmp/wt-session-1:iquantum/session-1",
+      "destroySandbox:session-1",
+    ]);
+    await expect(harness.controller.getSession("session-1")).rejects.toThrow(
+      "Unknown session session-1",
+    );
+  });
+
+  it("rolls back a created worktree when sandbox creation fails", async () => {
+    const sandboxError = new Error("sandbox failed");
+    const harness = createHarness({ createSandboxError: sandboxError });
+
+    await expect(
+      harness.controller.createSession("/repo", { worktree: true }),
+    ).rejects.toBe(sandboxError);
+
+    expect(harness.worktreeCalls).toEqual([
+      ["createWorktree", "session-1"],
+      ["removeWorktree", "/tmp/wt-session-1", "iquantum/session-1"],
+    ]);
+  });
+
+  it("preserves the sandbox error when rollback worktree removal also fails", async () => {
+    const sandboxError = new Error("sandbox failed");
+    const harness = createHarness({
+      createSandboxError: sandboxError,
+      removeWorktreeError: new Error("rollback failed"),
+    });
+
+    await expect(
+      harness.controller.createSession("/repo", { worktree: true }),
+    ).rejects.toBe(sandboxError);
+  });
+
+  it("rolls back sandbox and worktree when session persistence fails", async () => {
+    const persistenceError = new Error("insert failed");
+    const harness = createHarness({
+      createSessionStoreError: persistenceError,
+    });
+
+    await expect(
+      harness.controller.createSession("/repo", { worktree: true }),
+    ).rejects.toBe(persistenceError);
+
+    expect(harness.lifecycleCalls).toEqual([
+      "removeWorktree:/tmp/wt-session-1:iquantum/session-1",
+      "destroySandbox:session-1",
+    ]);
+  });
+
+  it("does not remove a worktree for a regular session", async () => {
+    const harness = createHarness();
+    await harness.controller.createSession("/repo");
+
+    await harness.controller.destroySession("session-1");
+
+    expect(harness.lifecycleCalls).toEqual(["destroySandbox:session-1"]);
+    expect(harness.worktreeCalls).toEqual([]);
+  });
+
+  it("rejects worktree sessions that include the primary repo as an extra repo", async () => {
+    const harness = createHarness();
+
+    await expect(
+      harness.controller.createSession("/repo", {
+        worktree: true,
+        extraRepoPaths: ["/repo"],
+      }),
+    ).rejects.toBeInstanceOf(OverlappingRepoError);
+    expect(harness.createdSandboxes).toEqual([]);
+  });
+
+  it("creates two worktree sessions on the same repo with independent commits", async () => {
+    const repoPath = await makeRepo();
+    const ids = ["session-1", "session-2"];
+    const harness = createHarness({
+      createId: () => ids.shift() ?? crypto.randomUUID(),
+      createGitManager: (managerRepoPath, gitCheckpointStore) =>
+        new GitManager({
+          repoPath: managerRepoPath,
+          store: gitCheckpointStore,
+        }),
+    });
+
+    const first = await harness.controller.createSession(repoPath, {
+      worktree: true,
+    });
+    const second = await harness.controller.createSession(repoPath, {
+      worktree: true,
+    });
+
+    expect(first.worktreePath).toBeTruthy();
+    expect(second.worktreePath).toBeTruthy();
+    expect(first.worktreePath).not.toBe(second.worktreePath);
+
+    await commitReadme(
+      first.worktreePath as string,
+      "first session\n",
+      "first",
+    );
+    await commitReadme(
+      second.worktreePath as string,
+      "second session\n",
+      "second",
+    );
+
+    const firstHead = (
+      await run("git", ["rev-parse", "iquantum/session-1"], { cwd: repoPath })
+    ).stdout.trim();
+    const secondHead = (
+      await run("git", ["rev-parse", "iquantum/session-2"], { cwd: repoPath })
+    ).stdout.trim();
+
+    expect(firstHead).toMatch(/^[0-9a-f]{40}$/);
+    expect(secondHead).toMatch(/^[0-9a-f]{40}$/);
+    expect(firstHead).not.toBe(secondHead);
+    await expect(readFile(join(repoPath, "README.md"), "utf8")).resolves.toBe(
+      "initial\n",
+    );
+
+    await harness.controller.destroySession("session-1");
+    await harness.controller.destroySession("session-2");
+
+    const branches = (
+      await run("git", ["branch", "--list", "iquantum/session-*"], {
+        cwd: repoPath,
+      })
+    ).stdout.trim();
+    expect(branches).toBe("");
   });
 
   it("passes file tools to the PIV engine when enabled", async () => {
@@ -309,11 +499,22 @@ function createHarness(
       sessionId: string,
       command: string,
     ) => ReturnType<typeof fakeExecResult>;
+    createSandboxError?: Error;
+    createSessionStoreError?: Error;
+    removeWorktreeError?: Error;
+    createId?: () => string;
+    createGitManager?: (
+      repoPath: string,
+      gitCheckpointStore: InMemoryGitCheckpointStore,
+    ) => SessionGitManager;
   } = {},
 ) {
   const sessions = new Map<string, Session>();
   const plans = new Map<string, Plan>();
   const createdSandboxes: string[][] = [];
+  const gitManagerPaths: string[] = [];
+  const lifecycleCalls: string[] = [];
+  const worktreeCalls: unknown[][] = [];
   const engineCalls: unknown[][] = [];
   const effortCalls: string[] = [];
   let engineOptions: PIVEngineOptions | undefined;
@@ -322,6 +523,9 @@ function createHarness(
 
   const sessionStore: SessionStore = {
     async insert(session) {
+      if (options.createSessionStoreError) {
+        throw options.createSessionStoreError;
+      }
       sessions.set(session.id, session);
     },
     async get(sessionId) {
@@ -392,22 +596,33 @@ function createHarness(
     async currentHead() {
       return "abc123";
     },
+    async createWorktree(sessionId) {
+      worktreeCalls.push(["createWorktree", sessionId]);
+      return {
+        worktreePath: `/tmp/wt-${sessionId}`,
+        branch: `iquantum/${sessionId}`,
+      };
+    },
+    async removeWorktree(worktreePath, branch) {
+      worktreeCalls.push(["removeWorktree", worktreePath, branch]);
+      lifecycleCalls.push(`removeWorktree:${worktreePath}:${branch}`);
+      if (options.removeWorktreeError) {
+        throw options.removeWorktreeError;
+      }
+    },
   };
 
+  const gitCheckpointStore = new InMemoryGitCheckpointStore();
   const controller = new SessionController({
     sessionStore,
     pivStore,
-    gitCheckpointStore: {
-      async insert() {
-        return undefined;
-      },
-      async listBySession() {
-        return { checkpoints: [], nextCursor: null };
-      },
-    },
+    gitCheckpointStore,
     sandbox: {
       async createSandbox(sessionId, repoPath) {
         createdSandboxes.push([sessionId, repoPath]);
+        if (options.createSandboxError) {
+          throw options.createSandboxError;
+        }
         return {
           sessionId,
           repoPath,
@@ -415,7 +630,8 @@ function createHarness(
           volumeName: `volume-${sessionId}`,
         };
       },
-      async destroySandbox() {
+      async destroySandbox(sessionId) {
+        lifecycleCalls.push(`destroySandbox:${sessionId}`);
         return undefined;
       },
       async exec(sessionId, command) {
@@ -435,7 +651,13 @@ function createHarness(
       engineOptions = options;
       return fakeEngine(engineCalls, effortCalls);
     },
-    createGitManager: () => gitManager,
+    createGitManager: (repoPath) => {
+      gitManagerPaths.push(repoPath);
+      if (options.createGitManager) {
+        return options.createGitManager(repoPath, gitCheckpointStore);
+      }
+      return gitManager;
+    },
     ...(options.fileToolMaxBytes === undefined
       ? {}
       : { fileToolMaxBytes: options.fileToolMaxBytes }),
@@ -449,18 +671,54 @@ function createHarness(
     maxRetries: 3,
     loadTestCommand: async () => "bun test",
     now: () => "2026-05-15T00:00:00.000Z",
-    createId: () => "session-1",
+    createId: options.createId ?? (() => "session-1"),
   });
 
   return {
     controller,
     createdSandboxes,
+    gitManagerPaths,
+    lifecycleCalls,
+    worktreeCalls,
     engineCalls,
     effortCalls,
     get engineOptions() {
       return engineOptions;
     },
   };
+}
+
+async function makeRepo(): Promise<string> {
+  const basePath = await mkdtempInTmp("iquantum-session-controller-");
+  const repoPath = join(basePath, "repo");
+  await mkdir(repoPath);
+  await run("git", ["init"], { cwd: repoPath });
+  await run("git", ["config", "user.name", "Iquantum Test"], {
+    cwd: repoPath,
+  });
+  await run("git", ["config", "user.email", "test@iquantum.local"], {
+    cwd: repoPath,
+  });
+  await writeFile(join(repoPath, "README.md"), "initial\n", "utf8");
+  await run("git", ["add", "-A"], { cwd: repoPath });
+  await run("git", ["commit", "-m", "initial"], { cwd: repoPath });
+  return repoPath;
+}
+
+async function mkdtempInTmp(prefix: string): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), prefix));
+  tempDirs.push(directory);
+  return directory;
+}
+
+async function commitReadme(
+  repoPath: string,
+  content: string,
+  message: string,
+): Promise<void> {
+  await writeFile(join(repoPath, "README.md"), content, "utf8");
+  await run("git", ["add", "-A"], { cwd: repoPath });
+  await run("git", ["commit", "-m", message], { cwd: repoPath });
 }
 
 function fakeEngine(calls: unknown[][], effortCalls: string[]): SessionEngine {
