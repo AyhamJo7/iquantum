@@ -2,6 +2,7 @@ import { DiffEngine } from "@iquantum/diff-engine";
 import { SandboxFileTools } from "@iquantum/file-tools";
 import type { GitCheckpointPage, GitCheckpointStore } from "@iquantum/git";
 import { GitManager } from "@iquantum/git";
+import type { HookRunner } from "@iquantum/hooks";
 import type {
   PIVEngineOptions,
   PIVLLMRouter,
@@ -45,6 +46,7 @@ export interface SessionControllerOptions {
   >;
   llmRouterFactory: () => PIVLLMRouter;
   permissionGate?: PIVEngineOptions["permissionGate"];
+  hookRunner?: HookRunner;
   createEngine?: (options: PIVEngineOptions) => SessionEngine;
   createGitManager?: (repoPath: string) => SessionGitManager;
   fileToolMaxBytes?: number;
@@ -100,6 +102,7 @@ export class SessionController {
   readonly #sandbox: SessionControllerOptions["sandbox"];
   readonly #llmRouterFactory: SessionControllerOptions["llmRouterFactory"];
   readonly #permissionGate: PIVEngineOptions["permissionGate"];
+  readonly #hookRunner: HookRunner | undefined;
   readonly #fileToolMaxBytes: number | undefined;
   readonly #webTools: WebToolExecutor | undefined;
   readonly #webSearchRateLimiter: RateLimiter | undefined;
@@ -123,6 +126,7 @@ export class SessionController {
     this.#sandbox = options.sandbox;
     this.#llmRouterFactory = options.llmRouterFactory;
     this.#permissionGate = options.permissionGate;
+    this.#hookRunner = options.hookRunner;
     this.#fileToolMaxBytes = options.fileToolMaxBytes;
     this.#webTools = options.webTools;
     this.#webSearchRateLimiter = options.webSearchRateLimiter;
@@ -204,6 +208,9 @@ export class SessionController {
       ...(this.#permissionGate === undefined
         ? {}
         : { permissionGate: this.#permissionGate }),
+      ...(this.#hookRunner === undefined
+        ? {}
+        : { hookRunner: this.#hookRunner }),
       requireApproval: options.requireApproval ?? false,
       autoApprove: options.autoApprove ?? false,
       ...(this.#maxRetries === undefined
@@ -212,6 +219,11 @@ export class SessionController {
     });
 
     this.#liveSessions.set(sessionId, { engine, gitManager, session });
+    await this.#hookRunner?.fire({
+      type: "session_created",
+      sessionId,
+      repoPath,
+    });
     return session;
   }
 
@@ -231,6 +243,7 @@ export class SessionController {
 
   async destroySession(sessionId: string): Promise<void> {
     await this.getSession(sessionId);
+    await this.#hookRunner?.fire({ type: "session_destroyed", sessionId });
     await this.#sandbox.destroySandbox(sessionId);
     await this.#sessionStore.delete(sessionId);
     this.#liveSessions.delete(sessionId);

@@ -8,6 +8,7 @@ import {
 } from "@iquantum/diff-engine";
 import type { SandboxFileTools } from "@iquantum/file-tools";
 import type { GitManager } from "@iquantum/git";
+import type { HookRunner } from "@iquantum/hooks";
 import {
   type BuiltinTool,
   createFileToolBuiltins,
@@ -86,6 +87,7 @@ export interface PIVEngineOptions {
   webToolRateLimiter?: WebToolRateLimiter;
   memoryBlock?: string;
   permissionGate?: PermissionRequester;
+  hookRunner?: Pick<HookRunner, "fire" | "gate">;
   requireApproval?: boolean;
   autoApprove?: boolean;
   repoMapBuilder?: (
@@ -180,6 +182,7 @@ export class PIVEngine {
   #memoryBlock: string | undefined;
   #effort: EffortLevel;
   readonly #permissionGate: PermissionRequester | undefined;
+  readonly #hookRunner: Pick<HookRunner, "fire" | "gate"> | undefined;
   readonly #requireApproval: boolean;
   readonly #autoApprove: boolean;
   readonly #repoMapBuilder: NonNullable<PIVEngineOptions["repoMapBuilder"]>;
@@ -194,6 +197,7 @@ export class PIVEngine {
   #repoMap: string | undefined;
   #currentPlan: Plan | undefined;
   #currentTaskId: string | undefined;
+  #nextPlanId: string | undefined;
   #retryCount = 0;
   #validateAttempt = 0;
 
@@ -214,6 +218,7 @@ export class PIVEngine {
     this.#memoryBlock = options.memoryBlock;
     this.#effort = options.effort ?? "normal";
     this.#permissionGate = options.permissionGate;
+    this.#hookRunner = options.hookRunner;
     this.#requireApproval = options.requireApproval ?? false;
     this.#autoApprove = options.autoApprove ?? false;
     this.#repoMapBuilder = options.repoMapBuilder ?? buildRepoMap;
@@ -253,6 +258,15 @@ export class PIVEngine {
       this.#memoryBlock = options.memoryBlock;
     }
     this.#taskPrompt = prompt;
+    this.#nextPlanId = this.#createId();
+    if (this.#hookRunner) {
+      await this.#hookRunner.fire({
+        type: "task_started",
+        taskId: this.#nextPlanId,
+        prompt,
+        sessionId: this.#sessionId,
+      });
+    }
     return this.#guard(() => this.#plan());
   }
 
@@ -266,6 +280,11 @@ export class PIVEngine {
       status: "approved",
       feedback: plan.feedback,
       approvedAt: this.#now(),
+    });
+    await this.#hookRunner?.fire({
+      type: "plan_approved",
+      planId: plan.id,
+      sessionId: this.#sessionId,
     });
     await this.#guard(() => this.#runImplementationLoop());
   }
@@ -289,7 +308,8 @@ export class PIVEngine {
 
   async #plan(feedback?: string): Promise<Plan> {
     await this.#transition("planning");
-    const planId = this.#createId();
+    const planId = this.#nextPlanId ?? this.#createId();
+    this.#nextPlanId = undefined;
     this.#repoMap ??= (
       await this.#repoMapBuilder(
         this.#repoPath,
@@ -315,6 +335,12 @@ export class PIVEngine {
     };
 
     await this.#store.insertPlan(plan);
+    await this.#hookRunner?.fire({
+      type: "plan_generated",
+      planId,
+      content,
+      sessionId: this.#sessionId,
+    });
     this.#currentTaskId = planId;
     await this.#insertMessage("user", "plan", this.#taskPrompt ?? "");
     await this.#insertMessage("assistant", "plan", content);
@@ -370,6 +396,21 @@ export class PIVEngine {
 
     if (previews.length === 0 && implementation.mutated) {
       return true;
+    }
+
+    for (const preview of previews) {
+      const gate = await this.#hookRunner?.gate({
+        type: "pre_apply_diff",
+        file: preview.file,
+        patch: preview.patch,
+        sessionId: this.#sessionId,
+      });
+
+      if (gate?.allowed === false) {
+        throw await this.#fail(
+          new Error(gate.message ?? "pre_apply_diff hook blocked diff apply"),
+        );
+      }
     }
 
     try {
@@ -444,6 +485,13 @@ export class PIVEngine {
 
     await this.#store.insertValidateRun(run);
     this.events.emit("validate_result", run);
+    await this.#hookRunner?.fire({
+      type: "post_validate",
+      passed: run.passed,
+      stdout: run.stdout,
+      stderr: run.stderr,
+      sessionId: this.#sessionId,
+    });
 
     if (!run.passed) {
       await this.#insertMessage(
@@ -462,7 +510,17 @@ export class PIVEngine {
       run.id,
     );
     this.events.emit("checkpoint", checkpoint);
+    await this.#hookRunner?.fire({
+      type: "checkpoint_created",
+      commitHash: checkpoint.commitHash,
+      sessionId: this.#sessionId,
+    });
     await this.#transition("completed");
+    await this.#hookRunner?.fire({
+      type: "task_completed",
+      taskId: this.#approvedPlan().id,
+      sessionId: this.#sessionId,
+    });
     return true;
   }
 

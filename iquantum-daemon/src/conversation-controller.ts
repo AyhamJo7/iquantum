@@ -1,5 +1,6 @@
 import { countTokens } from "@iquantum/context-window";
 import type { SandboxFileTools } from "@iquantum/file-tools";
+import type { HookRunner } from "@iquantum/hooks";
 import { type BuiltinTool, createFileToolBuiltins } from "@iquantum/llm";
 import type { SandboxManager } from "@iquantum/sandbox";
 import type {
@@ -88,6 +89,7 @@ export interface ConversationControllerOptions {
   memoryUserId?: string;
   memoryOrgId?: string | null;
   autoMemory?: boolean;
+  hookRunner?: Pick<HookRunner, "gate">;
   maxResponseTokens?: number;
   maxToolTurns?: number;
   now?: () => string;
@@ -116,6 +118,7 @@ export class ConversationController {
   readonly #memoryUserId: string;
   readonly #memoryOrgId: string | null;
   readonly #autoMemory: boolean;
+  readonly #hookRunner: Pick<HookRunner, "gate"> | undefined;
   readonly #maxResponseTokens: number;
   readonly #maxToolTurns: number;
   readonly #now: () => string;
@@ -139,6 +142,7 @@ export class ConversationController {
     this.#memoryUserId = options.memoryUserId ?? "local";
     this.#memoryOrgId = options.memoryOrgId ?? null;
     this.#autoMemory = options.autoMemory ?? false;
+    this.#hookRunner = options.hookRunner;
     this.#maxResponseTokens = options.maxResponseTokens ?? 2000;
     this.#maxToolTurns = options.maxToolTurns ?? MAX_TOOL_TURNS_DEFAULT;
     this.#now = options.now ?? (() => new Date().toISOString());
@@ -396,19 +400,30 @@ export class ConversationController {
       input: toolUse.input,
     });
 
+    const gate = await this.#hookRunner?.gate({
+      type: "pre_tool_call",
+      tool: toolUse.name,
+      input: toolUse.input,
+      sessionId,
+    });
+
     // Gate on user permission
     const approved =
-      builtinTool !== undefined
-        ? true
-        : ((await this.#permissionChecker?.requestPermission(
-            sessionId,
-            requestId,
-            `mcp:${tool}`,
-            toolUse.input,
-          )) ?? true);
+      gate?.allowed === false
+        ? false
+        : builtinTool !== undefined
+          ? true
+          : ((await this.#permissionChecker?.requestPermission(
+              sessionId,
+              requestId,
+              `mcp:${tool}`,
+              toolUse.input,
+            )) ?? true);
 
     let resultText: string;
-    if (!approved || abortController.signal.aborted) {
+    if (gate?.allowed === false) {
+      resultText = `Tool call blocked by hook: ${gate.message ?? "blocked"}`;
+    } else if (!approved || abortController.signal.aborted) {
       resultText = "Tool call rejected by user.";
     } else {
       try {

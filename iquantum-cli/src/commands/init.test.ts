@@ -10,6 +10,7 @@ describe("validateApiKey", () => {
   it("requires a non-empty sk-prefixed key", () => {
     expect(validateApiKey("")).toBe("API key is required.");
     expect(validateApiKey("abc")).toBe("API key must start with sk-.");
+    expect(validateApiKey("sk-x")).toBe("API key is too short.");
     expect(validateApiKey("sk-ant-test")).toBeNull();
   });
 });

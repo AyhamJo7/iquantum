@@ -1,3 +1,7 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SkillLoader } from "@iquantum/skills";
 import type { REPLAction } from "@iquantum/ui-core";
 import { describe, expect, it, vi } from "vitest";
 import type { CommandContext } from "./registry";
@@ -156,6 +160,69 @@ describe("slash commands", () => {
     expect(text).toContain("Read a file");
   });
 
+  it("/hooks lists loaded hooks", async () => {
+    const ctx = makeContext({
+      client: {
+        ...makeContext().client,
+        listHooks: vi.fn().mockResolvedValue([
+          {
+            name: "block-all",
+            events: ["pre_apply_diff"],
+            filePath: "/tmp/hooks/block-all.sh",
+          },
+        ]),
+      },
+    }) as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("hooks").run("", ctx);
+
+    const text = (ctx.dispatched[0] as { text: string }).text;
+    expect(text).toContain("block-all");
+    expect(text).toContain("pre_apply_diff");
+    expect(text).toContain("/tmp/hooks/block-all.sh");
+  });
+
+  it("/hooks reports no hooks when the client method is absent", async () => {
+    const ctx = makeContext() as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("hooks").run("", ctx);
+
+    expect(ctx.dispatched[0]).toMatchObject({
+      type: "system_message",
+      text: "No hooks loaded.",
+      level: "info",
+    });
+  });
+
+  it("/keybindings lists active keybindings", async () => {
+    const ctx = makeContext({
+      keybindings: {
+        "ctrl+k ctrl+c": "compact",
+        "ctrl+e": "export",
+      },
+    }) as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("keybindings").run("", ctx);
+
+    const text = (ctx.dispatched[0] as { text: string }).text;
+    expect(text).toContain("ctrl+k ctrl+c");
+    expect(text).toContain("compact");
+    expect(text).toContain("ctrl+e");
+    expect(text).toContain("export");
+  });
+
+  it("/keybindings handles missing keybinding context", async () => {
+    const ctx = makeContext() as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("keybindings").run("", ctx);
+
+    expect(ctx.dispatched[0]).toMatchObject({
+      type: "system_message",
+      text: "No keybindings loaded.",
+      level: "info",
+    });
+  });
+
   it("/remember stores a project memory with a generated slug", async () => {
     const ctx = makeContext() as CommandContext & { dispatched: REPLAction[] };
 
@@ -233,5 +300,51 @@ describe("slash commands", () => {
     expect(baseClient.updateMemory).toHaveBeenCalledWith("memory-1", {
       pinned: true,
     });
+  });
+
+  it("loads a custom JS skill, lists it in /skills, and runs it", async () => {
+    const skillsDir = join(
+      tmpdir(),
+      `iq-skill-integration-${crypto.randomUUID()}`,
+    );
+    await mkdir(skillsDir, { recursive: true });
+    await writeFile(
+      join(skillsDir, "standup.js"),
+      [
+        "export default {",
+        '  name: "standup",',
+        '  description: "Create a standup note",',
+        "  async run(args, ctx) {",
+        '    ctx.dispatch({ type: "system_message", text: "standup:" + args, level: "info" });',
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    try {
+      const registry = makeCommandRegistry();
+      for (const skill of await SkillLoader.load(skillsDir)) {
+        registry.registerSkill(skill);
+      }
+      const ctx = makeContext({ registry }) as CommandContext & {
+        dispatched: REPLAction[];
+      };
+
+      await registry.get("skills")?.run("", ctx);
+      expect((ctx.dispatched[0] as { text: string }).text).toContain(
+        "/standup",
+      );
+
+      await registry.get("standup")?.run("today", ctx);
+      expect(ctx.dispatched[1]).toMatchObject({
+        type: "system_message",
+        text: "standup:today",
+        level: "info",
+      });
+    } finally {
+      await rm(skillsDir, { recursive: true, force: true });
+    }
   });
 });

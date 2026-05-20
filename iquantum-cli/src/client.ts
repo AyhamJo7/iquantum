@@ -70,6 +70,7 @@ export interface DaemonClient {
     sessionId: string,
     options?: { format?: "markdown" | "json" },
   ): Promise<string>;
+  listHooks?(): Promise<HookEntry[]>;
 }
 
 export type { ContextStats };
@@ -79,6 +80,12 @@ export interface McpToolEntry {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+}
+
+export interface HookEntry {
+  name: string;
+  events: string[];
+  filePath: string;
 }
 
 export interface ConversationEntry {
@@ -275,6 +282,10 @@ export class HttpDaemonClient implements DaemonClient {
     if (options.format) params.set("format", options.format);
     const qs = params.toString();
     return this.#getText(`/sessions/${sessionId}/export${qs ? `?${qs}` : ""}`);
+  }
+
+  listHooks(): Promise<HookEntry[]> {
+    return this.#get("/hooks");
   }
 
   async *openStream(sessionId: string): AsyncGenerator<ServerStreamFrame> {

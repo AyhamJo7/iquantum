@@ -1,8 +1,13 @@
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DiffApplyError } from "@iquantum/diff-engine";
+import { HookLoader, HookRunner } from "@iquantum/hooks";
 import type { ExecResult } from "@iquantum/sandbox";
 import type {
   CompletionEvent,
   GitCheckpoint,
+  HookRun,
   LLMMessage,
 } from "@iquantum/types";
 import { describe, expect, it } from "vitest";
@@ -161,6 +166,105 @@ describe("PIVEngine", () => {
       },
     ]);
     expect(harness.diffCalls).toEqual([validDiff()]);
+  });
+
+  it("blocks diff apply when a pre_apply_diff hook denies it", async () => {
+    const hookCalls: unknown[] = [];
+    const harness = createHarness({
+      completions: ["plan", validDiff()],
+      hookRunner: {
+        async fire() {},
+        async gate(event) {
+          hookCalls.push(event);
+          return { allowed: false, message: "denied" };
+        },
+      },
+    });
+    const errors: Error[] = [];
+    harness.engine.events.on("error", (error) => errors.push(error));
+
+    const plan = await harness.engine.startTask("edit code");
+    await expect(harness.engine.approve(plan.id)).rejects.toThrow("denied");
+
+    expect(hookCalls).toMatchObject([
+      { type: "pre_apply_diff", file: "src/a.ts", sessionId: "session-1" },
+    ]);
+    expect(harness.diffCalls).toEqual([]);
+    expect(errors[0]?.message).toBe("denied");
+  });
+
+  it("uses the first plan id as the task_started correlation id", async () => {
+    const firedEvents: unknown[] = [];
+    const harness = createHarness({
+      completions: ["plan", validDiff()],
+      hookRunner: {
+        async fire(event) {
+          firedEvents.push(event);
+        },
+        async gate() {
+          return { allowed: true };
+        },
+      },
+    });
+
+    const plan = await harness.engine.startTask("edit code");
+    await harness.engine.approve(plan.id);
+
+    expect(firedEvents).toMatchObject([
+      { type: "task_started", taskId: plan.id, sessionId: "session-1" },
+      { type: "plan_generated", planId: plan.id, sessionId: "session-1" },
+      { type: "plan_approved", planId: plan.id, sessionId: "session-1" },
+      { type: "post_validate", sessionId: "session-1" },
+      { type: "checkpoint_created", sessionId: "session-1" },
+      { type: "task_completed", taskId: plan.id, sessionId: "session-1" },
+    ]);
+  });
+
+  it("blocks diff apply through a loaded shell hook", async () => {
+    const dir = join(tmpdir(), `iq-piv-hook-${crypto.randomUUID()}`);
+    await mkdir(dir, { recursive: true });
+    const script = join(dir, "block-all.sh");
+    await writeFile(
+      script,
+      [
+        "#!/usr/bin/env bash",
+        "# events: pre_apply_diff",
+        "cat > /dev/null",
+        'printf \'{"block":true,"message":"shell denied"}\'',
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(script, 0o755);
+    const hookRuns = new MemoryHookRunStore();
+
+    try {
+      const harness = createHarness({
+        completions: ["plan", validDiff()],
+        hookRunner: new HookRunner(
+          await HookLoader.load(dir, 1000),
+          hookRuns,
+          () => fixedNow,
+        ),
+      });
+
+      const plan = await harness.engine.startTask("edit code");
+      await expect(harness.engine.approve(plan.id)).rejects.toThrow(
+        "shell denied",
+      );
+
+      expect(harness.diffCalls).toEqual([]);
+      expect(hookRuns.runs).toMatchObject([
+        {
+          hookName: "block-all",
+          eventType: "pre_apply_diff",
+          sessionId: "session-1",
+          blocked: true,
+        },
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("uses file tools during implementation and then applies the final diff", async () => {
@@ -476,6 +580,7 @@ interface HarnessOptions {
   webToolRateLimiter?: ConstructorParameters<
     typeof PIVEngine
   >[0]["webToolRateLimiter"];
+  hookRunner?: ConstructorParameters<typeof PIVEngine>[0]["hookRunner"];
 }
 
 function createHarness(options: HarnessOptions) {
@@ -618,6 +723,9 @@ function createHarness(options: HarnessOptions) {
     ...(options.memoryBlock === undefined
       ? {}
       : { memoryBlock: options.memoryBlock }),
+    ...(options.hookRunner === undefined
+      ? {}
+      : { hookRunner: options.hookRunner }),
     repoMapBuilder: async () => {
       if (options.repoMapError) {
         throw options.repoMapError;
@@ -682,4 +790,12 @@ function execResult(
     },
     exitCode: Promise.resolve(exitCode),
   };
+}
+
+class MemoryHookRunStore {
+  readonly runs: HookRun[] = [];
+
+  async insert(run: HookRun): Promise<void> {
+    this.runs.push(run);
+  }
 }

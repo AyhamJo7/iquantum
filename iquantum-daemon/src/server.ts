@@ -52,6 +52,7 @@ export interface DaemonServerOptions {
   compaction?: DaemonCompaction;
   permissions?: DaemonPermissions;
   mcpRegistry?: DaemonMcpRegistry;
+  hooks?: DaemonHooks;
   memory?: DaemonMemory;
   memoryUserId?: string;
   healthCheck?: () => Promise<{
@@ -68,6 +69,10 @@ export interface DaemonServerOptions {
   rateLimiter?: RateLimiter;
   corsOrigins?: string[];
   errorReporter?: ErrorReporter;
+}
+
+export interface DaemonHooks {
+  list(): Array<{ name: string; events: string[]; filePath: string }>;
 }
 
 export interface DaemonMemory {
@@ -321,6 +326,10 @@ async function handleRequest(
       }
 
       return Response.json({ ok: true });
+    }
+
+    if (request.method === "GET" && url.pathname === "/hooks") {
+      return Response.json(options.hooks?.list() ?? []);
     }
 
     if (request.method === "POST" && url.pathname === "/auth/register") {

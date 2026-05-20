@@ -32,6 +32,9 @@
       "path": "../packages/git"
     },
     {
+      "path": "../packages/hooks"
+    },
+    {
       "path": "../packages/piv-engine"
     },
     {
