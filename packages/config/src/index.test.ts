@@ -91,6 +91,23 @@ describe("loadConfig", () => {
     );
   });
 
+  it("parses web tool configuration", () => {
+    expect(
+      loadConfig({
+        ...validEnv,
+        IQUANTUM_WEB_TOOLS: "true",
+        IQUANTUM_SEARCH_PROVIDER: "tavily",
+        BRAVE_API_KEY: "brave-key",
+        TAVILY_API_KEY: "tavily-key",
+      }),
+    ).toMatchObject({
+      webTools: true,
+      searchProvider: "tavily",
+      braveApiKey: "brave-key",
+      tavilyApiKey: "tavily-key",
+    });
+  });
+
   it("does not require a base URL for the default anthropic provider", () => {
     expect(loadConfig({ ANTHROPIC_API_KEY: "test-key" })).toMatchObject({
       provider: "anthropic",

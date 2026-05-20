@@ -10,6 +10,10 @@ import type {
   McpTool,
   Memory,
 } from "@iquantum/types";
+import {
+  createWebToolBuiltins,
+  type WebToolExecutor,
+} from "@iquantum/web-tools";
 import { messagesSinceLastBoundary } from "./conversation-history";
 import type {
   ConversationContentBlock,
@@ -17,6 +21,7 @@ import type {
   ConversationPage,
   ConversationStore,
 } from "./db/stores";
+import type { RateLimiter } from "./rate-limit";
 
 export interface ConversationCompleter {
   complete(
@@ -76,6 +81,8 @@ export interface ConversationControllerOptions {
     tools: SandboxFileTools;
     sandbox: Pick<SandboxManager, "exec">;
   };
+  webTools?: WebToolExecutor;
+  webSearchRateLimiter?: RateLimiter;
   permissionChecker?: PermissionChecker;
   memoryManager?: ConversationMemoryManager;
   memoryUserId?: string;
@@ -102,6 +109,8 @@ export class ConversationController {
         sandbox: Pick<SandboxManager, "exec">;
       }
     | undefined;
+  readonly #webTools: WebToolExecutor | undefined;
+  readonly #webSearchRateLimiter: RateLimiter | undefined;
   readonly #permissionChecker: PermissionChecker | undefined;
   readonly #memoryManager: ConversationMemoryManager | undefined;
   readonly #memoryUserId: string;
@@ -123,6 +132,8 @@ export class ConversationController {
     this.#compactor = options.compactor;
     this.#mcpClient = options.mcpClient;
     this.#fileTools = options.fileTools;
+    this.#webTools = options.webTools;
+    this.#webSearchRateLimiter = options.webSearchRateLimiter;
     this.#permissionChecker = options.permissionChecker;
     this.#memoryManager = options.memoryManager;
     this.#memoryUserId = options.memoryUserId ?? "local";
@@ -168,6 +179,14 @@ export class ConversationController {
             sessionId,
           )
         : [];
+      const webTools = this.#webTools
+        ? createWebToolBuiltins(
+            this.#webTools,
+            userId ?? sessionId,
+            this.#webSearchRateLimiter,
+          )
+        : [];
+      builtinTools.push(...webTools);
       const tools = [...mcpTools, ...builtinTools];
       const useTools = tools.length > 0 && !!this.#completer.completeWithTools;
 
@@ -278,7 +297,7 @@ export class ConversationController {
       this.#completer,
     );
     if (!completeWithTools) {
-      await this.#runTextLoop(sessionId, abortController, orgId);
+      await this.#runTextLoop(sessionId, abortController, userId, orgId);
       return;
     }
 

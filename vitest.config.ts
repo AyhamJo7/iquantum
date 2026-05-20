@@ -30,6 +30,10 @@ export default defineConfig({
       "@iquantum/sandbox": resolve(__dirname, "packages/sandbox/src/index.ts"),
       "@iquantum/types": resolve(__dirname, "packages/types/src/index.ts"),
       "@iquantum/ui-core": resolve(__dirname, "packages/ui-core/src/index.ts"),
+      "@iquantum/web-tools": resolve(
+        __dirname,
+        "packages/web-tools/src/index.ts",
+      ),
     },
   },
   test: {

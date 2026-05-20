@@ -39,6 +39,9 @@
     },
     {
       "path": "../packages/context-window"
+    },
+    {
+      "path": "../packages/web-tools"
     }
   ]
 }

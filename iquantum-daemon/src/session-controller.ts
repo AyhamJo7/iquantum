@@ -11,13 +11,15 @@ import { PIVEngine } from "@iquantum/piv-engine";
 import type { SandboxManager } from "@iquantum/sandbox";
 import { loadTestCommand } from "@iquantum/sandbox";
 import type { Plan, Session } from "@iquantum/types";
+import type { WebToolExecutor } from "@iquantum/web-tools";
 import type { SessionStore } from "./db/stores";
+import type { RateLimiter } from "./rate-limit";
 
 export interface SessionEngine {
   readonly status: PIVEngine["status"];
   readonly currentPlan: PIVEngine["currentPlan"];
   readonly events: PIVEngine["events"];
-  startTask(prompt: string): Promise<Plan>;
+  startTask(prompt: string, options?: { memoryBlock?: string }): Promise<Plan>;
   approve(planId: string): Promise<void>;
   reject(planId: string, feedback: string): Promise<Plan>;
 }
@@ -41,6 +43,8 @@ export interface SessionControllerOptions {
   createEngine?: (options: PIVEngineOptions) => SessionEngine;
   createGitManager?: (repoPath: string) => SessionGitManager;
   fileToolMaxBytes?: number;
+  webTools?: WebToolExecutor;
+  webSearchRateLimiter?: RateLimiter;
   memoryManager?: {
     buildBlock(
       userId: string,
@@ -92,6 +96,8 @@ export class SessionController {
   readonly #llmRouterFactory: SessionControllerOptions["llmRouterFactory"];
   readonly #permissionGate: PIVEngineOptions["permissionGate"];
   readonly #fileToolMaxBytes: number | undefined;
+  readonly #webTools: WebToolExecutor | undefined;
+  readonly #webSearchRateLimiter: RateLimiter | undefined;
   readonly #memoryManager: SessionControllerOptions["memoryManager"];
   readonly #memoryUserId: string;
   readonly #createEngine: NonNullable<SessionControllerOptions["createEngine"]>;
@@ -113,6 +119,8 @@ export class SessionController {
     this.#llmRouterFactory = options.llmRouterFactory;
     this.#permissionGate = options.permissionGate;
     this.#fileToolMaxBytes = options.fileToolMaxBytes;
+    this.#webTools = options.webTools;
+    this.#webSearchRateLimiter = options.webSearchRateLimiter;
     this.#memoryManager = options.memoryManager;
     this.#memoryUserId = options.memoryUserId ?? "local";
     this.#createEngine =
@@ -166,12 +174,9 @@ export class SessionController {
     }
 
     const gitManager = this.#createGitManager(repoPath);
-    const memory = await this.#memoryManager?.buildBlock(
-      context?.userId ?? this.#memoryUserId,
-      context?.orgId ?? null,
-    );
     const engine = this.#createEngine({
       sessionId,
+      ...(context?.userId ? { userId: context.userId } : {}),
       repoPath,
       ...(options.extraRepoPaths?.length
         ? { extraRepoPaths: options.extraRepoPaths }
@@ -185,7 +190,10 @@ export class SessionController {
       ...(this.#fileToolMaxBytes === undefined
         ? {}
         : { fileTools: new SandboxFileTools(this.#fileToolMaxBytes) }),
-      ...(memory?.text ? { memoryBlock: memory.text } : {}),
+      ...(this.#webTools === undefined ? {} : { webTools: this.#webTools }),
+      ...(this.#webSearchRateLimiter === undefined
+        ? {}
+        : { webToolRateLimiter: this.#webSearchRateLimiter }),
       ...(this.#permissionGate === undefined
         ? {}
         : { permissionGate: this.#permissionGate }),
@@ -222,7 +230,15 @@ export class SessionController {
   }
 
   async startTask(sessionId: string, prompt: string): Promise<Plan> {
-    return this.#requireLiveSession(sessionId).engine.startTask(prompt);
+    const liveSession = this.#requireLiveSession(sessionId);
+    const { session } = liveSession;
+    const memory = await this.#memoryManager?.buildBlock(
+      session.userId ?? this.#memoryUserId,
+      session.orgId ?? null,
+    );
+    return liveSession.engine.startTask(prompt, {
+      ...(memory?.text ? { memoryBlock: memory.text } : {}),
+    });
   }
 
   async approve(sessionId: string, planId?: string): Promise<void> {

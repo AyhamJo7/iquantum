@@ -11,6 +11,7 @@ import {
 import { MemoryManager } from "@iquantum/memory";
 import { SandboxManager as LocalSandboxManager } from "@iquantum/sandbox";
 import type { LLMProvider, McpTool } from "@iquantum/types";
+import { WebToolExecutor } from "@iquantum/web-tools";
 import Redis from "ioredis";
 import { AuthStore } from "./auth/auth-store";
 import { JwtService } from "./auth/jwt-service";
@@ -94,6 +95,9 @@ const rateLimiter = config.cloud
     ? new RedisRateLimiter(redis)
     : new InMemoryRateLimiter()
   : undefined;
+const webSearchRateLimiter = config.webTools
+  ? (rateLimiter ?? new InMemoryRateLimiter())
+  : undefined;
 const sandbox = createSandboxManager(config);
 if (sandbox instanceof LocalSandboxManager) {
   await sandbox.ensureImageReady((msg) => logger.info({ msg }));
@@ -125,6 +129,14 @@ const llmRouter = new LLMRouter({
 const fileTools = config.fileTools
   ? new SandboxFileTools(config.fileToolMaxBytes)
   : undefined;
+const webTools = config.webTools
+  ? new WebToolExecutor({
+      enabled: config.webTools,
+      provider: config.searchProvider,
+      ...(config.braveApiKey ? { braveApiKey: config.braveApiKey } : {}),
+      ...(config.tavilyApiKey ? { tavilyApiKey: config.tavilyApiKey } : {}),
+    })
+  : undefined;
 let streams: StreamController;
 const permissions = new PermissionGate({
   publish(sessionId, frame) {
@@ -140,6 +152,8 @@ const sessions = new SessionController({
   llmRouterFactory: () => llmRouter,
   permissionGate: permissions,
   ...(config.fileTools ? { fileToolMaxBytes: config.fileToolMaxBytes } : {}),
+  ...(webTools ? { webTools } : {}),
+  ...(webSearchRateLimiter ? { webSearchRateLimiter } : {}),
   memoryManager,
   memoryUserId: "local",
 });
@@ -191,6 +205,8 @@ const conversations = new ConversationController({
   compactor: compaction,
   ...(mcpRegistry ? { mcpClient: mcpRegistry } : {}),
   ...(fileTools ? { fileTools: { tools: fileTools, sandbox } } : {}),
+  ...(webTools ? { webTools } : {}),
+  ...(webSearchRateLimiter ? { webSearchRateLimiter } : {}),
   permissionChecker: permissions,
   memoryManager,
   memoryUserId: "local",
