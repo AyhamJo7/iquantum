@@ -6,6 +6,7 @@ import {
   InvalidConversationCursorError,
 } from "./db/stores";
 import { InMemoryRateLimiter } from "./rate-limit";
+import type { ReviewEvent } from "./review-engine";
 import {
   createRequestHandler,
   createTcpDaemonServer,
@@ -14,6 +15,7 @@ import {
   type DaemonMcpRegistry,
   type DaemonMemory,
   type DaemonPermissions,
+  type DaemonReviewEngine,
   type DaemonSessions,
   type DaemonStreams,
 } from "./server";
@@ -1181,6 +1183,168 @@ describe("daemon request handler", () => {
       expect(body.messages).toBe(0);
       expect(body.available).toBe(body.budget);
     });
+
+    it("merges live conversation prompt token counts", async () => {
+      const { sessions } = fakeSessions();
+      const { conversations } = fakeConversations();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+        conversations,
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/context-stats`,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        systemPrompt: number;
+        memory: number;
+        messages: number;
+        available: number;
+      };
+      expect(body).toMatchObject({
+        systemPrompt: 11,
+        memory: 7,
+        messages: 100,
+        available: 199_882,
+      });
+    });
+  });
+
+  describe("POST /sessions/:id/review", () => {
+    it("streams review findings and done events", async () => {
+      const { sessions } = fakeSessions();
+      const { reviewEngine, calls } = fakeReviewEngine([
+        {
+          severity: "high",
+          title: "Unsafe default",
+          file: "src/auth.ts",
+          line: 12,
+          description: "Default allows bypassing auth.",
+          suggestion: "Require explicit configuration.",
+        },
+        {
+          type: "done",
+          summary: "One issue found.",
+          durationMs: 123,
+        },
+      ]);
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+        reviewEngine,
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/review`,
+        {
+          method: "POST",
+          body: { target: { type: "staged" } },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain(
+        "text/event-stream",
+      );
+      await expect(readSseData(response)).resolves.toMatchObject([
+        { severity: "high", title: "Unsafe default" },
+        { type: "done", summary: "One issue found.", durationMs: 123 },
+      ]);
+      expect(calls).toEqual([["review", { type: "staged" }, "/repo"]]);
+    });
+
+    it("returns 400 for invalid review targets", async () => {
+      const { sessions } = fakeSessions();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+        reviewEngine: fakeReviewEngine([]).reviewEngine,
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/review`,
+        {
+          method: "POST",
+          body: { target: { type: "commit" } },
+        },
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: "invalid_request",
+      });
+    });
+
+    it("returns 400 when commit ref starts with a dash (flag injection guard)", async () => {
+      const { sessions } = fakeSessions();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+        reviewEngine: fakeReviewEngine([]).reviewEngine,
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/review`,
+        {
+          method: "POST",
+          body: { target: { type: "commit", ref: "--output=/tmp/evil" } },
+        },
+      );
+
+      expect(response.status).toBe(400);
+    });
+
+    it("returns 400 when pr ref starts with a dash", async () => {
+      const { sessions } = fakeSessions();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+        reviewEngine: fakeReviewEngine([]).reviewEngine,
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/review`,
+        {
+          method: "POST",
+          body: { target: { type: "pr", ref: "--help" } },
+        },
+      );
+
+      expect(response.status).toBe(400);
+    });
+
+    it("returns 501 when the review engine is not configured", async () => {
+      const { sessions } = fakeSessions();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${SESSION_ID}/review`,
+        {
+          method: "POST",
+          body: { target: { type: "staged" } },
+        },
+      );
+
+      expect(response.status).toBe(501);
+    });
   });
 
   describe("GET /sessions/:id/diff", () => {
@@ -1278,6 +1442,27 @@ describe("daemon request handler", () => {
       expect(body).toHaveProperty("session");
       expect(body).toHaveProperty("messages");
       expect(body.truncated).toBe(false);
+    });
+
+    it("returns 404 for an unknown session", async () => {
+      const { sessions } = fakeSessions();
+      const { conversations } = fakeConversations();
+      const handler = createRequestHandler({
+        socketPath: "/tmp/daemon.sock",
+        sessions,
+        streams: fakeStreams(),
+        conversations,
+      });
+
+      const response = await request(
+        handler,
+        `/sessions/${MISSING_SESSION_ID}/export`,
+      );
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({
+        error: "session_not_found",
+      });
     });
   });
 });
@@ -1426,6 +1611,14 @@ function fakeConversations(): {
       cancel(sessionId) {
         calls.push(["cancel", sessionId]);
       },
+      getMemoryTokenCount(sessionId) {
+        calls.push(["getMemoryTokenCount", sessionId]);
+        return 7;
+      },
+      getSystemPromptTokenCount(sessionId) {
+        calls.push(["getSystemPromptTokenCount", sessionId]);
+        return 11;
+      },
     },
   };
 }
@@ -1449,6 +1642,25 @@ function fakePermissions(): {
     permissions: {
       resolvePermission(sessionId, requestId, approved) {
         calls.push(["resolvePermission", sessionId, requestId, approved]);
+      },
+    },
+  };
+}
+
+function fakeReviewEngine(events: ReviewEvent[]): {
+  reviewEngine: DaemonReviewEngine;
+  calls: unknown[][];
+} {
+  const calls: unknown[][] = [];
+
+  return {
+    calls,
+    reviewEngine: {
+      async *review(target, repoPath) {
+        calls.push(["review", target, repoPath]);
+        for (const event of events) {
+          yield event;
+        }
       },
     },
   };
@@ -1545,6 +1757,23 @@ function request(
           }),
     }),
   );
+}
+
+async function readSseData(response: Response): Promise<unknown[]> {
+  const text = await response.text();
+  return text
+    .split("\n\n")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const dataLine = part
+        .split("\n")
+        .find((line) => line.startsWith("data: "));
+      if (!dataLine) {
+        throw new Error(`missing SSE data line: ${part}`);
+      }
+      return JSON.parse(dataLine.slice("data: ".length));
+    });
 }
 
 // ---------------------------------------------------------------------------

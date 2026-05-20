@@ -9,6 +9,7 @@ import type {
   Session,
 } from "@iquantum/types";
 import { CONTEXT_TOKEN_BUDGET } from "@iquantum/types";
+import { formatSessionMarkdown } from "@iquantum/ui-core/export-markdown";
 import { ZodError, z } from "zod";
 import { type AuthContext, authMiddleware } from "./auth/auth-middleware";
 import {
@@ -26,6 +27,7 @@ import type { ErrorReporter } from "./error-reporter";
 import { logger } from "./logger";
 import { PermissionRequestNotFoundError } from "./permission-gate";
 import type { RateLimiter, RateLimitOptions } from "./rate-limit";
+import type { ReviewEvent, ReviewTarget } from "./review-engine";
 import {
   SessionNotFoundError,
   SessionNotLiveError,
@@ -53,6 +55,7 @@ export interface DaemonServerOptions {
   permissions?: DaemonPermissions;
   mcpRegistry?: DaemonMcpRegistry;
   hooks?: DaemonHooks;
+  reviewEngine?: DaemonReviewEngine;
   memory?: DaemonMemory;
   memoryUserId?: string;
   healthCheck?: () => Promise<{
@@ -73,6 +76,10 @@ export interface DaemonServerOptions {
 
 export interface DaemonHooks {
   list(): Array<{ name: string; events: string[]; filePath: string }>;
+}
+
+export interface DaemonReviewEngine {
+  review(target: ReviewTarget, repoPath: string): AsyncIterable<ReviewEvent>;
 }
 
 export interface DaemonMemory {
@@ -149,6 +156,8 @@ export interface DaemonConversations {
   ): Promise<unknown>;
   clear(sessionId: string, orgId?: string): Promise<void>;
   cancel(sessionId: string): void;
+  getMemoryTokenCount?(sessionId: string): number;
+  getSystemPromptTokenCount?(sessionId: string): number;
 }
 
 export interface DaemonCompaction {
@@ -204,6 +213,14 @@ const permissionSchema = z.object({
   requestId: z.string().min(1),
   approved: z.boolean(),
 });
+const safeRef = z.string().min(1).regex(/^[^-]/, "ref must not start with -");
+const reviewTargetSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("staged") }),
+  z.object({ type: z.literal("commit"), ref: safeRef }),
+  z.object({ type: z.literal("path"), path: z.string().min(1) }),
+  z.object({ type: z.literal("pr"), ref: safeRef }),
+]);
+const reviewSchema = z.object({ target: reviewTargetSchema });
 const memoryTypeSchema = z.enum(["user", "feedback", "project", "reference"]);
 const memoryNameSchema = z
   .string()
@@ -813,6 +830,22 @@ async function handleRequest(
     if (
       request.method === "POST" &&
       parts.length === 3 &&
+      parts[2] === "review"
+    ) {
+      if (!options.reviewEngine) {
+        return Response.json({ error: "not_supported" }, { status: 501 });
+      }
+      const body = reviewSchema.parse(await request.json());
+      const session = await options.sessions.getSession(
+        sessionId,
+        context?.orgId,
+      );
+      return streamReview(options.reviewEngine, body.target, session.repoPath);
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
       (parts[2] === "task" || parts[2] === "tasks")
     ) {
       const body = taskSchema.parse(await request.json());
@@ -969,7 +1002,15 @@ async function handleRequest(
         sessionId,
         context?.orgId,
       );
-      return Response.json(stats);
+      const memory = options.conversations?.getMemoryTokenCount?.(sessionId);
+      const systemPrompt =
+        options.conversations?.getSystemPromptTokenCount?.(sessionId);
+      return Response.json(
+        mergeLiveContextStats(stats, {
+          ...(memory === undefined ? {} : { memory }),
+          ...(systemPrompt === undefined ? {} : { systemPrompt }),
+        }),
+      );
     }
 
     if (request.method === "GET" && parts.length === 3 && parts[2] === "diff") {
@@ -1033,7 +1074,10 @@ async function handleRequest(
               null,
               2,
             )
-          : formatSessionMarkdown(session, msgPage.messages, truncated);
+          : formatSessionMarkdown(session, msgPage.messages, {
+              truncated,
+              messageLimit: EXPORT_MESSAGE_LIMIT,
+            });
       const headers: Record<string, string> = {
         "Content-Type": "text/plain; charset=utf-8",
       };
@@ -1173,6 +1217,42 @@ function requireMemory(options: DaemonServerOptions): DaemonMemory {
   }
 
   return options.memory;
+}
+
+function streamReview(
+  reviewEngine: DaemonReviewEngine,
+  target: ReviewTarget,
+  repoPath: string,
+): Response {
+  const encoder = new TextEncoder();
+  const readable = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const event of reviewEngine.review(target, repoPath)) {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+          );
+        }
+      } catch (error) {
+        controller.enqueue(
+          encoder.encode(
+            `event: error\ndata: ${JSON.stringify({
+              message: error instanceof Error ? error.message : String(error),
+            })}\n\n`,
+          ),
+        );
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(readable, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+    },
+  });
 }
 
 function requireAuthStore(options: DaemonServerOptions): AuthStore {
@@ -1477,6 +1557,25 @@ function notFound(): Response {
   return Response.json({ error: "not_found" }, { status: 404 });
 }
 
+function mergeLiveContextStats(
+  stats: ContextStats,
+  live: Partial<Pick<ContextStats, "memory" | "systemPrompt">>,
+): ContextStats {
+  const merged = {
+    ...stats,
+    ...(live.memory === undefined ? {} : { memory: live.memory }),
+    ...(live.systemPrompt === undefined
+      ? {}
+      : { systemPrompt: live.systemPrompt }),
+  };
+  const used =
+    merged.systemPrompt + merged.memory + merged.repoMap + merged.messages;
+  return {
+    ...merged,
+    available: Math.max(0, merged.budget - used),
+  };
+}
+
 function toErrorResponse(
   error: unknown,
   requestId: string,
@@ -1545,50 +1644,6 @@ function toErrorResponse(
     stack: error instanceof Error ? error.stack : undefined,
   });
   return Response.json({ error: "internal_error" }, { status: 500 });
-}
-
-function formatSessionMarkdown(
-  session: Session,
-  messages: ExportMessage[],
-  truncated = false,
-): string {
-  const lines: string[] = [
-    "# iquantum Session Export",
-    "",
-    `**Session ID**: ${session.id}`,
-    `**Date**: ${session.createdAt}`,
-    `**Repo**: ${session.repoPath}`,
-    "",
-    "---",
-    "",
-  ];
-
-  for (const msg of messages) {
-    lines.push(`### [${msg.role}] ${msg.createdAt}`, "");
-    const content = msg.content;
-    if (typeof content === "string") {
-      lines.push(content, "");
-    } else if (Array.isArray(content)) {
-      for (const block of content as Array<{ type?: string; text?: string }>) {
-        if (block.type === "text" && typeof block.text === "string") {
-          lines.push(block.text, "");
-        } else if (block.type === "tool_use" || block.type === "tool_result") {
-          lines.push("```json", JSON.stringify(block, null, 2), "```", "");
-        }
-      }
-    }
-  }
-
-  if (truncated) {
-    lines.push(
-      "---",
-      "",
-      `> ⚠ Export truncated — showing first ${EXPORT_MESSAGE_LIMIT} messages only.`,
-      "",
-    );
-  }
-
-  return lines.join("\n");
 }
 
 function toErrorFrame(error: unknown): { type: "error"; message: string } {

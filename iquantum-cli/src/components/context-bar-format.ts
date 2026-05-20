@@ -5,9 +5,10 @@ export function formatContextStats(stats: ContextStats): string {
   const pct = stats.budget > 0 ? used / stats.budget : 0;
   const filled = Math.max(0, Math.min(8, Math.round(pct * 8)));
   const bar = `${"▓".repeat(filled)}${"░".repeat(8 - filled)}`;
+  const percent = `${Math.round(pct * 100)}%`;
 
   const rows = [
-    `Context  ${bar}  ${formatK(used)} / ${formatK(stats.budget)} tokens`,
+    `Context  ${bar}  ${percent}  ${formatK(used)} / ${formatK(stats.budget)} tokens`,
     `  messages     ${formatK(stats.messages)}`,
     `  system       ${formatK(stats.systemPrompt)}`,
     `  memory       ${formatK(stats.memory)}`,

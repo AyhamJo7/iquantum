@@ -8,6 +8,7 @@ import {
   AnthropicProvider,
   LLMRouter,
   OpenAICompatibleProvider,
+  TokenBudgetExceededError,
 } from "@iquantum/llm";
 import { MemoryManager } from "@iquantum/memory";
 import { SandboxManager as LocalSandboxManager } from "@iquantum/sandbox";
@@ -34,6 +35,7 @@ import { logger } from "./logger";
 import { McpClient, McpRegistry } from "./mcp-client";
 import { PermissionGate } from "./permission-gate";
 import { InMemoryRateLimiter, RedisRateLimiter } from "./rate-limit";
+import { ReviewEngine } from "./review-engine";
 import { createSandboxManager } from "./sandbox-factory";
 import type { DaemonMcpRegistry } from "./server";
 import { createDaemonServer, createTcpDaemonServer } from "./server";
@@ -191,6 +193,21 @@ const compaction = new CompactionService({
   streams,
   modelContextWindow: maxInputTokens,
 });
+const reviewModel = config.reviewModel ?? config.architectModel;
+const reviewEngine = new ReviewEngine({
+  completer: {
+    async *complete(messages, options) {
+      const inputTokens = await provider.countTokens(messages, reviewModel);
+      if (inputTokens > maxInputTokens) {
+        throw new TokenBudgetExceededError(inputTokens, maxInputTokens);
+      }
+      yield* provider.complete(messages, {
+        model: reviewModel,
+        maxTokens: options.maxTokens,
+      });
+    },
+  },
+});
 
 const mcpClients = config.mcpServers.map((srv) => new McpClient(srv));
 const mcpRegistry =
@@ -275,6 +292,7 @@ const server = createDaemonServer({
   conversations,
   compaction,
   permissions,
+  reviewEngine,
   ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
   hooks: hookRunner,
   memory: memoryManager,
@@ -300,6 +318,7 @@ const tcpServer = createTcpDaemonServer(
     conversations,
     compaction,
     permissions,
+    reviewEngine,
     ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
     hooks: hookRunner,
     memory: memoryManager,

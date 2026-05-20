@@ -223,6 +223,59 @@ describe("slash commands", () => {
     });
   });
 
+  it("/review streams findings and a summary", async () => {
+    const ctx = makeContext({
+      client: {
+        ...makeContext().client,
+        async *reviewSession(sessionId, target) {
+          expect(sessionId).toBe("session-1");
+          expect(target).toEqual({ type: "commit", ref: "HEAD" });
+          yield {
+            severity: "high",
+            title: "Unsafe default",
+            file: "src/auth.ts",
+            line: 12,
+            description: "The diff adds a bypass.",
+            suggestion: "Require explicit configuration.",
+          };
+          yield {
+            type: "done",
+            summary: "One issue found.",
+            durationMs: 1200,
+          };
+        },
+      },
+    }) as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("review").run("commit HEAD", ctx);
+
+    expect((ctx.dispatched[0] as { text: string }).text).toContain(
+      "Reviewing commit HEAD",
+    );
+    expect(ctx.dispatched[1]).toMatchObject({
+      type: "review_finding",
+      finding: {
+        severity: "high",
+        title: "Unsafe default",
+      },
+    });
+    expect((ctx.dispatched[2] as { text: string }).text).toContain(
+      "Review complete: 1 finding",
+    );
+  });
+
+  it("/review reports unsupported clients", async () => {
+    const ctx = makeContext() as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("review").run("", ctx);
+
+    expect(ctx.dispatched[0]).toMatchObject({
+      type: "system_message",
+      level: "error",
+      text: "Review is not supported by this daemon client.",
+    });
+  });
+
   it("/remember stores a project memory with a generated slug", async () => {
     const ctx = makeContext() as CommandContext & { dispatched: REPLAction[] };
 

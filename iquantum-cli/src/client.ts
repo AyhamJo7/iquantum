@@ -71,6 +71,10 @@ export interface DaemonClient {
     options?: { format?: "markdown" | "json" },
   ): Promise<string>;
   listHooks?(): Promise<HookEntry[]>;
+  reviewSession?(
+    sessionId: string,
+    target: ReviewTarget,
+  ): AsyncIterable<ReviewStreamEvent>;
 }
 
 export type { ContextStats };
@@ -87,6 +91,27 @@ export interface HookEntry {
   events: string[];
   filePath: string;
 }
+
+export type ReviewSeverity = "critical" | "high" | "medium" | "low";
+
+export interface ReviewFinding {
+  severity: ReviewSeverity;
+  title: string;
+  file: string;
+  line: number | null;
+  description: string;
+  suggestion: string;
+}
+
+export type ReviewTarget =
+  | { type: "staged" }
+  | { type: "commit"; ref: string }
+  | { type: "path"; path: string }
+  | { type: "pr"; ref: string };
+
+export type ReviewStreamEvent =
+  | ReviewFinding
+  | { type: "done"; summary: string; durationMs: number };
 
 export interface ConversationEntry {
   id: string;
@@ -289,36 +314,46 @@ export class HttpDaemonClient implements DaemonClient {
   }
 
   async *openStream(sessionId: string): AsyncGenerator<ServerStreamFrame> {
-    const res = await this.#sseRequest(`/sessions/${sessionId}/stream`);
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    for await (const chunk of res) {
-      buffer += decoder.decode(chunk as Buffer, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() ?? "";
-
-      for (const part of parts) {
-        const line = part.trim();
-        if (line.startsWith("data: ")) {
-          const data = line.slice(6).trim();
-          if (data) {
-            yield JSON.parse(data) as ServerStreamFrame;
-          }
-        }
-      }
-    }
+    const res = await this.#sseRequest("GET", `/sessions/${sessionId}/stream`);
+    yield* this.#parseSse<ServerStreamFrame>(res);
   }
 
-  #sseRequest(path: string): Promise<NodeJS.ReadableStream> {
+  async *reviewSession(
+    sessionId: string,
+    target: ReviewTarget,
+  ): AsyncGenerator<ReviewStreamEvent> {
+    const res = await this.#sseRequest(
+      "POST",
+      `/sessions/${sessionId}/review`,
+      { target },
+      0,
+    );
+    yield* this.#parseSse<ReviewStreamEvent>(res);
+  }
+
+  #sseRequest(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    idleTimeoutMs = 30_000,
+  ): Promise<NodeJS.ReadableStream> {
     const socketPath = this.#socketPath;
 
     return new Promise((resolve, reject) => {
+      const bodyStr = body === undefined ? undefined : JSON.stringify(body);
       const req = nodeRequest({
         socketPath,
-        method: "GET",
+        method,
         path,
-        headers: { Accept: "text/event-stream" },
+        headers: {
+          Accept: "text/event-stream",
+          ...(bodyStr
+            ? {
+                "content-type": "application/json",
+                "content-length": Buffer.byteLength(bodyStr),
+              }
+            : {}),
+        },
       });
 
       req.on("response", (res) => {
@@ -333,8 +368,34 @@ export class HttpDaemonClient implements DaemonClient {
       });
 
       req.on("error", reject);
+      if (idleTimeoutMs > 0) {
+        req.setTimeout(idleTimeoutMs, () => {
+          req.destroy(new Error("daemon request timed out"));
+        });
+      }
+      if (bodyStr) {
+        req.write(bodyStr);
+      }
       req.end();
     });
+  }
+
+  async *#parseSse<T>(res: NodeJS.ReadableStream): AsyncGenerator<T> {
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    for await (const chunk of res) {
+      buffer += decoder.decode(chunk as Buffer, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+
+      for (const part of parts) {
+        const event = parseSsePart<T>(part);
+        if (event !== undefined) {
+          yield event;
+        }
+      }
+    }
   }
 
   #get<T = unknown>(path: string): Promise<T> {
@@ -454,6 +515,39 @@ export class HttpError extends Error {
     super(message);
     this.name = "HttpError";
   }
+}
+
+function parseSsePart<T>(part: string): T | undefined {
+  const lines = part.trim().split("\n");
+  if (lines.every((line) => line.startsWith(":"))) {
+    return undefined;
+  }
+
+  const eventName =
+    lines
+      .find((line) => line.startsWith("event: "))
+      ?.slice(7)
+      .trim() ?? "message";
+  const data = lines
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice(6))
+    .join("\n")
+    .trim();
+
+  if (!data) {
+    return undefined;
+  }
+
+  if (eventName === "error") {
+    let message = data;
+    try {
+      const parsed = JSON.parse(data) as { message?: string };
+      message = parsed.message ?? data;
+    } catch {}
+    throw new Error(message);
+  }
+
+  return JSON.parse(data) as T;
 }
 
 export function isDaemonNotRunning(error: unknown): boolean {

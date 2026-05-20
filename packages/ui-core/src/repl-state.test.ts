@@ -171,6 +171,26 @@ describe("reduceREPLViewState", () => {
     });
   });
 
+  it("review_finding adds a review card item", () => {
+    const state = reduceREPLViewState(initialREPLViewState, {
+      type: "review_finding",
+      finding: {
+        severity: "high",
+        title: "Unsafe default",
+        file: "src/auth.ts",
+        line: 12,
+        description: "The diff adds a bypass.",
+        suggestion: "Require explicit configuration.",
+      },
+    });
+
+    expect(state.messages[0]).toMatchObject({
+      type: "review_finding",
+      severity: "high",
+      title: "Unsafe default",
+    });
+  });
+
   it("clear_transcript resets messages and streaming text", () => {
     const withMessages = reduceREPLViewState(
       reduceREPLViewState(initialREPLViewState, {

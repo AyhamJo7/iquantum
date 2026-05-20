@@ -120,8 +120,7 @@ async function writeExtensibilityScaffold(configDir: string): Promise<void> {
       '  name: "example",',
       '  description: "Example custom skill",',
       "  async run(args, ctx) {",
-      '    ctx.dispatch({ type: "system_message", text: `example: $' +
-        '{args}`, level: "info" });',
+      `    ctx.dispatch({ type: "system_message", text: \`example: \${args}\`, level: "info" });`,
       "  },",
       "};",
       "",

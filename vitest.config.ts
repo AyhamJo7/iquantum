@@ -31,6 +31,10 @@ export default defineConfig({
       "@iquantum/sandbox": resolve(__dirname, "packages/sandbox/src/index.ts"),
       "@iquantum/skills": resolve(__dirname, "packages/skills/src/index.ts"),
       "@iquantum/types": resolve(__dirname, "packages/types/src/index.ts"),
+      "@iquantum/ui-core/export-markdown": resolve(
+        __dirname,
+        "packages/ui-core/src/export-markdown.ts",
+      ),
       "@iquantum/ui-core": resolve(__dirname, "packages/ui-core/src/index.ts"),
       "@iquantum/web-tools": resolve(
         __dirname,

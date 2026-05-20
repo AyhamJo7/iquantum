@@ -13,6 +13,7 @@ import { configGet, configList, configSet } from "./commands/config";
 import { daemonStatus, startDaemon, stopDaemon } from "./commands/daemon";
 import { runDoctor } from "./commands/doctor";
 import { InitWizard } from "./commands/init";
+import { runReviewCommand } from "./commands/review";
 import { runTask } from "./commands/task";
 import { runUpdate } from "./commands/update";
 import { VERSION } from "./version";
@@ -177,6 +178,37 @@ program
       process.exit(1);
     }
   });
+
+program
+  .command("review")
+  .description("Review staged changes, a commit, a path, or a pull request")
+  .option("--repo <path>", "Repository path (default: cwd)")
+  .option("--staged", "Review staged changes (default)")
+  .option("--commit <ref>", "Review one commit")
+  .option("--path <path>", "Review changes to a path against HEAD")
+  .option("--pr <ref>", "Review a GitHub pull request")
+  .action(
+    async (opts: {
+      repo?: string;
+      staged?: boolean;
+      commit?: string;
+      path?: string;
+      pr?: string;
+    }) => {
+      try {
+        await runReviewCommand(
+          opts,
+          new HttpDaemonClient(configuredSocketPath()),
+          stdoutWriter,
+        );
+      } catch (error) {
+        process.stderr.write(
+          `${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        process.exit(1);
+      }
+    },
+  );
 
 program
   .command("update")

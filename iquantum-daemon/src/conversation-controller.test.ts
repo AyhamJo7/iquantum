@@ -139,6 +139,34 @@ describe("ConversationController", () => {
     expect(harness.controller.getMemoryTokenCount("session-1")).toBe(5);
   });
 
+  it("tracks system prompt wrapper tokens separately from memory tokens", async () => {
+    const harness = createHarness(["reply"], {
+      memoryManager: {
+        store: {
+          async upsertByName(memory) {
+            return memory;
+          },
+        },
+        async buildBlock() {
+          return { text: "remembered context", tokenCount: 3 };
+        },
+        async materialize() {
+          return undefined;
+        },
+      },
+      tokenCounter(messages) {
+        return String(messages[0]?.content ?? "").includes("Your Memory")
+          ? 8
+          : messages.length;
+      },
+    });
+
+    await harness.controller.addMessage("session-1", "hello");
+
+    expect(harness.controller.getMemoryTokenCount("session-1")).toBe(3);
+    expect(harness.controller.getSystemPromptTokenCount("session-1")).toBe(5);
+  });
+
   it("leaves the LLM prompt unchanged when memory is not configured", async () => {
     const harness = createHarness(["reply"]);
 
