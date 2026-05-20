@@ -13,6 +13,82 @@ function sysError(ctx: CommandContext, text: string): void {
 
 const commandDefs: LocalCommand[] = [
   {
+    name: "remember",
+    description: "Save a memory (/remember <fact>)",
+    async run(args, ctx) {
+      const body = args.trim();
+
+      if (!body) {
+        sysError(ctx, "Usage: /remember <fact>");
+        return;
+      }
+
+      try {
+        await ctx.client.createMemory({
+          type: "project",
+          name: slugFromFact(body),
+          description: "(from /remember)",
+          body,
+          pinned: false,
+        });
+        sysInfo(ctx, "Saved.");
+      } catch (e) {
+        sysError(
+          ctx,
+          `Remember failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
+    name: "memory",
+    description: "Manage memories (/memory [list|forget <name>|pin <name>])",
+    async run(args, ctx) {
+      const [subcommand = "list", name] = args.trim().split(/\s+/, 2);
+
+      try {
+        if (subcommand === "list") {
+          const memories = await ctx.client.listMemories();
+          if (!memories.length) {
+            sysInfo(ctx, "No memories saved.");
+            return;
+          }
+
+          sysInfo(
+            ctx,
+            `Memories:\n${memories.map(formatMemoryRow).join("\n")}`,
+          );
+          return;
+        }
+
+        if ((subcommand === "forget" || subcommand === "pin") && name) {
+          const memories = await ctx.client.listMemories();
+          const memory = memories.find((entry) => entry.name === name);
+          if (!memory) {
+            sysError(ctx, `Memory not found: ${name}`);
+            return;
+          }
+
+          if (subcommand === "forget") {
+            await ctx.client.deleteMemory(memory.id);
+            sysInfo(ctx, `Forgot ${name}.`);
+          } else {
+            await ctx.client.updateMemory(memory.id, { pinned: true });
+            sysInfo(ctx, `Pinned ${name}.`);
+          }
+          return;
+        }
+
+        sysError(ctx, "Usage: /memory [list|forget <name>|pin <name>]");
+      } catch (e) {
+        sysError(
+          ctx,
+          `Memory command failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
     name: "help",
     description: "Show available commands",
     run(_, ctx) {
@@ -241,6 +317,31 @@ const commandDefs: LocalCommand[] = [
     },
   },
 ];
+
+function slugFromFact(fact: string): string {
+  const words = fact
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9\s-]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 5);
+  const slug = words
+    .join("-")
+    .slice(0, 40)
+    .replace(/^-+|-+$/g, "");
+  return slug || "memory";
+}
+
+function formatMemoryRow(memory: {
+  name: string;
+  type: string;
+  body: string;
+}): string {
+  const preview =
+    memory.body.length > 60 ? `${memory.body.slice(0, 57)}...` : memory.body;
+  return `  ${memory.name} (${memory.type}) - ${preview}`;
+}
 
 export function makeCommandRegistry(): CommandRegistry {
   return new CommandRegistry(commandDefs);

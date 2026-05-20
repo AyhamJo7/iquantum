@@ -41,6 +41,13 @@ export interface SessionControllerOptions {
   createEngine?: (options: PIVEngineOptions) => SessionEngine;
   createGitManager?: (repoPath: string) => SessionGitManager;
   fileToolMaxBytes?: number;
+  memoryManager?: {
+    buildBlock(
+      userId: string,
+      orgId: string | null,
+    ): Promise<{ text: string; tokenCount: number }>;
+  };
+  memoryUserId?: string;
   maxRetries?: number;
   now?: () => string;
   createId?: () => string;
@@ -85,6 +92,8 @@ export class SessionController {
   readonly #llmRouterFactory: SessionControllerOptions["llmRouterFactory"];
   readonly #permissionGate: PIVEngineOptions["permissionGate"];
   readonly #fileToolMaxBytes: number | undefined;
+  readonly #memoryManager: SessionControllerOptions["memoryManager"];
+  readonly #memoryUserId: string;
   readonly #createEngine: NonNullable<SessionControllerOptions["createEngine"]>;
   readonly #createGitManager: NonNullable<
     SessionControllerOptions["createGitManager"]
@@ -104,6 +113,8 @@ export class SessionController {
     this.#llmRouterFactory = options.llmRouterFactory;
     this.#permissionGate = options.permissionGate;
     this.#fileToolMaxBytes = options.fileToolMaxBytes;
+    this.#memoryManager = options.memoryManager;
+    this.#memoryUserId = options.memoryUserId ?? "local";
     this.#createEngine =
       options.createEngine ?? ((engineOptions) => new PIVEngine(engineOptions));
     this.#createGitManager =
@@ -155,6 +166,10 @@ export class SessionController {
     }
 
     const gitManager = this.#createGitManager(repoPath);
+    const memory = await this.#memoryManager?.buildBlock(
+      context?.userId ?? this.#memoryUserId,
+      context?.orgId ?? null,
+    );
     const engine = this.#createEngine({
       sessionId,
       repoPath,
@@ -170,6 +185,7 @@ export class SessionController {
       ...(this.#fileToolMaxBytes === undefined
         ? {}
         : { fileTools: new SandboxFileTools(this.#fileToolMaxBytes) }),
+      ...(memory?.text ? { memoryBlock: memory.text } : {}),
       ...(this.#permissionGate === undefined
         ? {}
         : { permissionGate: this.#permissionGate }),

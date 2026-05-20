@@ -213,6 +213,39 @@ function createHarness(options: HarnessOptions) {
     async listMcpTools() {
       return [];
     },
+    async listMemories() {
+      return [];
+    },
+    async createMemory(memory) {
+      return {
+        id: "memory-1",
+        userId: "local",
+        orgId: null,
+        createdAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+        ...memory,
+      };
+    },
+    async updateMemory(_id, updates) {
+      return {
+        id: "memory-1",
+        userId: "local",
+        orgId: null,
+        type: updates.type ?? "project",
+        name: updates.name ?? "memory",
+        description: updates.description ?? "Memory",
+        body: updates.body ?? "Memory body",
+        pinned: updates.pinned ?? false,
+        createdAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      };
+    },
+    async deleteMemory() {
+      return undefined;
+    },
+    async syncMemoryFromFile() {
+      return { upserted: 0 };
+    },
     async getMessages() {
       return { messages: [], nextCursor: null };
     },

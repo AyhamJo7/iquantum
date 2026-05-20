@@ -1,4 +1,5 @@
 import { InvalidTransitionError } from "@iquantum/piv-engine";
+import type { Memory } from "@iquantum/types";
 import { describe, expect, it } from "vitest";
 import {
   InvalidCheckpointCursorError,
@@ -11,6 +12,7 @@ import {
   type DaemonCompaction,
   type DaemonConversations,
   type DaemonMcpRegistry,
+  type DaemonMemory,
   type DaemonPermissions,
   type DaemonSessions,
   type DaemonStreams,
@@ -380,6 +382,256 @@ describe("daemon request handler", () => {
     expect(response.status).toBe(200);
     const tools = await response.json();
     expect(tools).toMatchObject([{ serverName: "fs", name: "read_file" }]);
+  });
+
+  it("creates and lists memories through the memory API", async () => {
+    const { memory, calls } = fakeMemory();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      memory,
+    });
+
+    const created = await request(handler, "/memory", {
+      method: "POST",
+      body: {
+        type: "project",
+        name: "uses-bun",
+        description: "Runtime",
+        body: "This project uses Bun.",
+        pinned: true,
+      },
+    });
+    const listed = await request(handler, "/memory?pinned=true");
+
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({
+      userId: "local",
+      orgId: null,
+      name: "uses-bun",
+      pinned: true,
+    });
+    expect(await listed.json()).toMatchObject([
+      { name: "uses-bun", body: "This project uses Bun." },
+    ]);
+    expect(calls).toContainEqual(["materialize", "local", null]);
+  });
+
+  it("validates memory names", async () => {
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      memory: fakeMemory().memory,
+    });
+
+    const response = await request(handler, "/memory", {
+      method: "POST",
+      body: {
+        type: "project",
+        name: "uses bun",
+        description: "Runtime",
+        body: "This project uses Bun.",
+      },
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "invalid_request" });
+  });
+
+  it("returns 404 for unknown memory updates and deletes existing memories", async () => {
+    const { memory, calls } = fakeMemory([
+      {
+        id: "memory-1",
+        userId: "local",
+        orgId: null,
+        type: "project",
+        name: "uses-bun",
+        description: "Runtime",
+        body: "This project uses Bun.",
+        pinned: false,
+        createdAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      },
+    ]);
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      memory,
+    });
+
+    const missing = await request(handler, "/memory/missing", {
+      method: "PATCH",
+      body: { pinned: true },
+    });
+    const deleted = await request(handler, "/memory/memory-1", {
+      method: "DELETE",
+    });
+
+    expect(missing.status).toBe(404);
+    expect(deleted.status).toBe(204);
+    expect(calls).toContainEqual(["delete", "memory-1", "local"]);
+  });
+
+  it("syncs memories from MEMORY.md through the daemon memory manager", async () => {
+    const { memory, calls } = fakeMemory();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      memory,
+    });
+
+    const response = await request(handler, "/memory/sync-from-file", {
+      method: "POST",
+    });
+
+    expect(await response.json()).toEqual({ upserted: 2 });
+    expect(calls).toContainEqual([
+      "syncFromFile",
+      expect.stringContaining(".iquantum/MEMORY.md"),
+      "local",
+      null,
+    ]);
+  });
+
+  it("scopes memory routes to the authenticated cloud user", async () => {
+    const { memory } = fakeMemory([
+      {
+        id: "memory-1",
+        userId: "user-1",
+        orgId: "org-1",
+        type: "project",
+        name: "visible",
+        description: "Visible",
+        body: "Visible memory",
+        pinned: false,
+        createdAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      },
+      {
+        id: "memory-2",
+        userId: "user-2",
+        orgId: "org-2",
+        type: "project",
+        name: "hidden",
+        description: "Hidden",
+        body: "Hidden memory",
+        pinned: false,
+        createdAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      },
+    ]);
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      memory,
+      cloud: true,
+      authStore: {
+        async lookupApiToken() {
+          return null;
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return { userId: "user-1", orgId: "org-1", role: "owner" };
+        },
+      } as never,
+    });
+
+    const unauthorized = await request(handler, "/memory");
+    const authorized = await request(handler, "/memory", {
+      headers: { Authorization: "Bearer jwt" },
+    });
+
+    expect(unauthorized.status).toBe(401);
+    const memories = await authorized.json();
+    expect(memories).toMatchObject([{ name: "visible" }]);
+    expect(JSON.stringify(memories)).not.toContain("hidden");
+  });
+
+  it("requires auth for cloud PATCH and DELETE /memory", async () => {
+    const { memory } = fakeMemory([
+      {
+        id: "memory-1",
+        userId: "user-1",
+        orgId: "org-1",
+        type: "project",
+        name: "uses-bun",
+        description: "Runtime",
+        body: "This project uses Bun.",
+        pinned: false,
+        createdAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      },
+    ]);
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      memory,
+      cloud: true,
+      authStore: {
+        async lookupApiToken() {
+          return null;
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return { userId: "user-1", orgId: "org-1", role: "owner" };
+        },
+      } as never,
+    });
+
+    const patchUnauth = await request(handler, "/memory/memory-1", {
+      method: "PATCH",
+      body: { pinned: true },
+    });
+    const deleteUnauth = await request(handler, "/memory/memory-1", {
+      method: "DELETE",
+    });
+    const patchAuth = await request(handler, "/memory/memory-1", {
+      method: "PATCH",
+      body: { pinned: true },
+      headers: { Authorization: "Bearer jwt" },
+    });
+
+    expect(patchUnauth.status).toBe(401);
+    expect(deleteUnauth.status).toBe(401);
+    expect(patchAuth.status).toBe(200);
+  });
+
+  it("rejects sync-from-file in cloud mode", async () => {
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: fakeSessions().sessions,
+      streams: fakeStreams(),
+      memory: fakeMemory().memory,
+      cloud: true,
+      authStore: {
+        async lookupApiToken() {
+          return null;
+        },
+      } as never,
+      jwtService: {
+        async verify() {
+          return { userId: "user-1", orgId: "org-1", role: "owner" };
+        },
+      } as never,
+    });
+
+    const response = await request(handler, "/memory/sync-from-file", {
+      method: "POST",
+      headers: { Authorization: "Bearer jwt" },
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: expect.stringContaining("cloud"),
+    });
   });
 
   it("returns 400 for a conversation cursor outside the session", async () => {
@@ -957,6 +1209,73 @@ function fakePermissions(): {
     permissions: {
       resolvePermission(sessionId, requestId, approved) {
         calls.push(["resolvePermission", sessionId, requestId, approved]);
+      },
+    },
+  };
+}
+
+function fakeMemory(initial: Memory[] = []): {
+  memory: DaemonMemory;
+  calls: unknown[][];
+} {
+  const memories = [...initial];
+  const calls: unknown[][] = [];
+
+  return {
+    calls,
+    memory: {
+      store: {
+        async upsertByName(memory) {
+          const existing = memories.find(
+            (m) => m.name === memory.name && m.userId === memory.userId,
+          );
+          if (existing) {
+            Object.assign(existing, memory);
+            calls.push(["upsertByName", memory.name]);
+            return existing;
+          }
+          memories.push(memory);
+          calls.push(["upsertByName", memory.name]);
+          return memory;
+        },
+        async get(id, userId) {
+          return (
+            memories.find(
+              (memory) => memory.id === id && memory.userId === userId,
+            ) ?? null
+          );
+        },
+        async listByUser(userId, orgId) {
+          return memories.filter(
+            (memory) =>
+              memory.userId === userId &&
+              (orgId ? memory.orgId === orgId || memory.orgId === null : true),
+          );
+        },
+        async update(id, userId, updates) {
+          const memory = memories.find(
+            (entry) => entry.id === id && entry.userId === userId,
+          );
+          if (!memory) return null;
+          Object.assign(memory, updates, {
+            updatedAt: "2026-05-19T01:00:00.000Z",
+          });
+          return memory;
+        },
+        async delete(id, userId) {
+          calls.push(["delete", id, userId]);
+          const index = memories.findIndex(
+            (memory) => memory.id === id && memory.userId === userId,
+          );
+          if (index !== -1) memories.splice(index, 1);
+        },
+      },
+      async materialize(userId, orgId) {
+        calls.push(["materialize", userId, orgId]);
+      },
+      async syncFromFile(filePath, userId, orgId) {
+        calls.push(["syncFromFile", filePath, userId, orgId]);
+        return 2;
       },
     },
   };

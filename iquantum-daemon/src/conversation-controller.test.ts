@@ -108,6 +108,46 @@ describe("ConversationController", () => {
       { role: "user", content: "continue" },
     ]);
   });
+
+  it("prepends memory to the LLM system prompt when configured", async () => {
+    const harness = createHarness(["reply"], {
+      memoryManager: {
+        store: {
+          async upsertByName(memory) {
+            return memory;
+          },
+        },
+        async buildBlock() {
+          return { text: "this project uses Bun", tokenCount: 5 };
+        },
+        async materialize() {
+          return undefined;
+        },
+      },
+    });
+
+    await harness.controller.addMessage("session-1", "hello");
+
+    expect(harness.calls[0]?.messages[0]).toMatchObject({
+      role: "system",
+      content: expect.stringContaining("## Your Memory"),
+    });
+    expect(String(harness.calls[0]?.messages[0]?.content)).toContain(
+      "this project uses Bun",
+    );
+    expect(harness.controller.getMemoryTokenCount("session-1")).toBe(5);
+  });
+
+  it("leaves the LLM prompt unchanged when memory is not configured", async () => {
+    const harness = createHarness(["reply"]);
+
+    await harness.controller.addMessage("session-1", "hello");
+
+    expect(harness.calls[0]?.messages[0]).toMatchObject({
+      role: "user",
+      content: "hello",
+    });
+  });
 });
 
 describe("ConversationController — tool loop", () => {
@@ -354,7 +394,12 @@ describe("ConversationController — tool loop", () => {
   });
 });
 
-function createHarness(completions: string[]) {
+function createHarness(
+  completions: string[],
+  options: Partial<
+    ConstructorParameters<typeof ConversationController>[0]
+  > = {},
+) {
   let nextId = 1;
   const store = new InMemoryConversationStore();
   const calls: Array<{ messages: import("@iquantum/types").LLMMessage[] }> = [];
@@ -375,6 +420,7 @@ function createHarness(completions: string[]) {
     now: () => fixedNow,
     createId: () => `id-${nextId++}`,
     tokenCounter: (messages) => messages.length,
+    ...options,
   });
 
   return { controller, store, calls, frames };

@@ -87,6 +87,20 @@ describe("SessionController", () => {
     ]);
   });
 
+  it("passes memory blocks to the PIV engine", async () => {
+    const harness = createHarness({
+      memoryManager: {
+        async buildBlock() {
+          return { text: "this project uses Bun", tokenCount: 5 };
+        },
+      },
+    });
+
+    await harness.controller.createSession("/repo");
+
+    expect(harness.engineOptions?.memoryBlock).toBe("this project uses Bun");
+  });
+
   it("delegates plan actions to the live engine and reads the pending plan", async () => {
     const harness = createHarness();
     await harness.controller.createSession("/repo");
@@ -105,7 +119,14 @@ describe("SessionController", () => {
   });
 });
 
-function createHarness(options: { fileToolMaxBytes?: number } = {}) {
+function createHarness(
+  options: {
+    fileToolMaxBytes?: number;
+    memoryManager?: ConstructorParameters<
+      typeof SessionController
+    >[0]["memoryManager"];
+  } = {},
+) {
   const sessions = new Map<string, Session>();
   const plans = new Map<string, Plan>();
   const createdSandboxes: string[][] = [];
@@ -223,6 +244,9 @@ function createHarness(options: { fileToolMaxBytes?: number } = {}) {
     ...(options.fileToolMaxBytes === undefined
       ? {}
       : { fileToolMaxBytes: options.fileToolMaxBytes }),
+    ...(options.memoryManager === undefined
+      ? {}
+      : { memoryManager: options.memoryManager }),
     maxRetries: 3,
     loadTestCommand: async () => "bun test",
     now: () => "2026-05-15T00:00:00.000Z",

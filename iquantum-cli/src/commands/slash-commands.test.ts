@@ -24,6 +24,11 @@ function makeContext(overrides?: Partial<CommandContext>): CommandContext {
       compact: vi.fn().mockResolvedValue({ compacted: false, summary: null }),
       cancelStream: vi.fn().mockResolvedValue(undefined),
       listMcpTools: vi.fn().mockResolvedValue([]),
+      listMemories: vi.fn().mockResolvedValue([]),
+      createMemory: vi.fn(),
+      updateMemory: vi.fn(),
+      deleteMemory: vi.fn(),
+      syncMemoryFromFile: vi.fn(),
       openStream: vi.fn(),
     } as unknown as CommandContext["client"],
     registry,
@@ -149,5 +154,84 @@ describe("slash commands", () => {
     const text = (ctx.dispatched[0] as { text: string }).text;
     expect(text).toContain("fs/read");
     expect(text).toContain("Read a file");
+  });
+
+  it("/remember stores a project memory with a generated slug", async () => {
+    const ctx = makeContext() as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("remember").run("  this project uses Bun not Node  ", ctx);
+
+    expect(ctx.client.createMemory).toHaveBeenCalledWith({
+      type: "project",
+      name: "this-project-uses-bun-not",
+      description: "(from /remember)",
+      body: "this project uses Bun not Node",
+      pinned: false,
+    });
+    expect(ctx.dispatched[0]).toMatchObject({ level: "info" });
+  });
+
+  it("/memory list displays saved memories", async () => {
+    const ctx = makeContext({
+      client: {
+        ...makeContext().client,
+        listMemories: vi.fn().mockResolvedValue([
+          {
+            id: "memory-1",
+            userId: "local",
+            orgId: null,
+            type: "project",
+            name: "uses-bun",
+            description: "Runtime",
+            body: "This project uses Bun.",
+            pinned: false,
+            createdAt: "2026-05-19T00:00:00.000Z",
+            updatedAt: "2026-05-19T00:00:00.000Z",
+          },
+        ]),
+      },
+    }) as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("memory").run("list", ctx);
+
+    const text = (ctx.dispatched[0] as { text: string }).text;
+    expect(text).toContain("uses-bun (project)");
+    expect(text).toContain("This project uses Bun.");
+  });
+
+  it("/memory forget and pin target memories by name", async () => {
+    const baseClient = {
+      ...makeContext().client,
+      listMemories: vi.fn().mockResolvedValue([
+        {
+          id: "memory-1",
+          userId: "local",
+          orgId: null,
+          type: "project",
+          name: "uses-bun",
+          description: "Runtime",
+          body: "This project uses Bun.",
+          pinned: false,
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        },
+      ]),
+      deleteMemory: vi.fn().mockResolvedValue(undefined),
+      updateMemory: vi.fn().mockResolvedValue(undefined),
+    };
+    const forgetCtx = makeContext({ client: baseClient }) as CommandContext & {
+      dispatched: REPLAction[];
+    };
+    const pinCtx = makeContext({ client: baseClient }) as CommandContext & {
+      dispatched: REPLAction[];
+    };
+
+    await getCmd("memory").run("forget uses-bun", forgetCtx);
+    await getCmd("memory").run("pin uses-bun", pinCtx);
+
+    expect(baseClient.deleteMemory).toHaveBeenCalledWith("memory-1");
+    expect(baseClient.updateMemory).toHaveBeenCalledWith("memory-1", {
+      pinned: true,
+    });
   });
 });

@@ -20,6 +20,9 @@
       "path": "../packages/llm"
     },
     {
+      "path": "../packages/memory"
+    },
+    {
       "path": "../packages/diff-engine"
     },
     {
