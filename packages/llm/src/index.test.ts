@@ -392,7 +392,6 @@ describe("LLMRouter", () => {
     expect(architect.toolCalls).toEqual([]);
   });
 
-
   it("routes thorough to a dedicated thorough model when configured", async () => {
     const thorough = new MockProvider("thorough-token", 5);
     const architect = new MockProvider("arch-token", 5);

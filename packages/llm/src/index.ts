@@ -59,7 +59,6 @@ export function createFileToolBuiltins(
     .map((tool) => fileToolToBuiltinTool(tool, sandbox, sessionId));
 }
 
-
 export interface LLMRoute {
   provider: LLMProvider;
   model: string;
