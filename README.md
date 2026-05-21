@@ -177,7 +177,7 @@ PLAN ✓  ·  IMPLEMENT ✓  ·  VALIDATE ✓
 ╰────────────────────────────────────────────╯
 
 describe a task, or /help for commands
- iq v3.0.0  ·  claude-sonnet-4-6 ·  12k ▓▓▓░░░░░
+ iq v4.0.0-alpha.2  ·  claude-sonnet-4-6 ·  12k ▓▓▓░░░░░
 ```
 
 The agent waits for your approval before writing a single line of code. If you are not happy with the plan, type `no` and explain what to change — the agent will revise and show you a new plan.
@@ -212,6 +212,7 @@ Type any of these inside the `iq` REPL:
 | `/hooks` | List loaded hooks |
 | `/skills` | List built-in and custom skills |
 | `/keybindings` | Show active keybindings |
+| `/snapshots` | List file snapshots for the current session; restore to a named snapshot |
 | `/review` | Review staged changes, a commit, path, or pull request |
 | `/quit` | Exit the REPL — the daemon and sandbox stay running for resume |
 
@@ -360,8 +361,12 @@ Settings are saved in `~/.iquantum/config.json`. You can also set any of these a
 | `IQUANTUM_MCP_SERVERS` | — | `[]` | External tools to expose to the agent via MCP (JSON array) |
 | `IQUANTUM_MEMORY_TOKENS` | — | `2000` | Token budget reserved for injected memories |
 | `IQUANTUM_AUTO_MEMORY` | — | `false` | Enable automatic memory extraction |
+| `IQUANTUM_AUTO_MEMORY_MAX` | — | `5` | Maximum number of memories to extract per automatic run |
+| `IQUANTUM_AUTO_MEMORY_MODEL` | — | Architect model | Optional model override for automatic memory extraction |
+| `IQUANTUM_MEMORY_RANKING` | — | `true` | Rank memories by relevance before injecting into context |
+| `IQUANTUM_MEMORY_RANKING_MODEL` | — | Architect model | Optional model override for memory ranking |
 | `IQUANTUM_FILE_TOOLS` | — | `true` | Enable built-in file read/write/edit/glob/grep tools |
-| `IQUANTUM_FILE_TOOL_MAX_BYTES` | — | `200000` | Maximum bytes returned by one file tool read |
+| `IQUANTUM_FILE_TOOL_MAX_BYTES` | — | `10485760` | Maximum bytes returned by one file tool read |
 | `IQUANTUM_WEB_TOOLS` | — | `false` | Enable built-in web search and fetch tools |
 | `IQUANTUM_SEARCH_PROVIDER` | For web search | `brave` | Search provider: `brave` or `tavily` |
 | `BRAVE_API_KEY` | For Brave search | — | Brave Search API key |
@@ -371,6 +376,25 @@ Settings are saved in `~/.iquantum/config.json`. You can also set any of these a
 | `IQUANTUM_SKILLS_DIR` | — | `~/.iquantum/skills` | Directory for hot-loaded custom skills |
 | `IQUANTUM_KEYBINDINGS_FILE` | — | `~/.iquantum/keybindings.json` | REPL keybinding map |
 | `IQUANTUM_REVIEW_MODEL` | — | Architect model | Optional model override for `iq review` |
+| `IQUANTUM_COMPACTION_AUTO_THRESHOLD` | — | `0.8` | Fraction of context budget used that triggers automatic compaction |
+| `IQUANTUM_COMPACTION_KEEP_TURNS` | — | `8` | Number of most-recent turns to keep verbatim after compaction |
+| `IQUANTUM_COMPACTION_SUMMARY_TOKENS` | — | `4000` | Token budget for the compaction summary block |
+| `IQUANTUM_SNAPSHOTS` | — | `true` | Enable automatic file snapshots on each turn |
+| `IQUANTUM_SNAPSHOT_MAX_TURNS` | — | `100` | Maximum number of snapshots retained per session |
+| `IQUANTUM_MAX_AGENTS` | — | `4` | Maximum number of child agents allowed per coordinator session |
+| `IQUANTUM_AGENT_MAX_TURNS` | — | `50` | Default maximum PIV turns for each child agent |
+| `IQUANTUM_AGENT_TIMEOUT_MS` | — | `1800000` | How long (ms) to wait for a child agent before marking it as failed |
+| `IQUANTUM_APPROVAL_MODE` | — | `cli` | How plan approval is handled: `cli` (interactive) · `webhook` · `slack` · `auto` |
+| `IQUANTUM_APPROVAL_WEBHOOK_URL` | For `webhook` mode | — | URL that receives approval request payloads |
+| `IQUANTUM_APPROVAL_WEBHOOK_SECRET` | For `webhook` mode | — | HMAC secret for webhook request signing |
+| `IQUANTUM_APPROVAL_TIMEOUT_MS` | — | `1800000` | How long (ms) to wait for an external approval before timing out |
+| `IQUANTUM_SLACK_TOKEN` | For `slack` mode | — | Slack bot token |
+| `IQUANTUM_SLACK_CHANNEL` | For `slack` mode | — | Slack channel ID for approval messages |
+| `IQUANTUM_SLACK_APPROVAL_WEBHOOK` | For `slack` mode | — | Slack incoming webhook URL for approval notifications |
+| `IQUANTUM_SANDBOX_CPU_SHARES` | — | `1024` | CPU shares assigned to each sandbox container (relative weight) |
+| `IQUANTUM_SANDBOX_MEMORY_LIMIT_MB` | — | `2048` | Memory limit per sandbox container in megabytes |
+| `IQUANTUM_SANDBOX_NETWORK` | — | `none` | Sandbox network mode: `none` · `bridge` · `host` |
+| `IQUANTUM_SANDBOX_UPSTREAM_PROXY` | — | `false` | Forward sandbox traffic through the host's proxy settings |
 | `SENTRY_DSN` | For production monitoring | — | Optional Sentry DSN used to capture daemon request and process errors |
 | `LOG_LEVEL` | — | `info` | Daemon log verbosity: `error` · `warn` · `info` · `debug` |
 
@@ -698,14 +722,20 @@ iquantum/
     ├── diff-engine/   Unified diff parser and fuzzy hunk applicator
     ├── git/           Git checkpoint commits and sandbox restore
     ├── piv-engine/    Plan → Implement → Validate state machine
+    ├── agent/         Child agent registry, spawner, and color assignment for coordinator mode
+    ├── coordinator/   Worker manifest planning, dependency ordering, and parallel execution engine
+    ├── compaction/    Conversation compaction (snip and full strategies)
+    ├── snapshots/     Per-turn file snapshot diffing and restore
+    ├── approval/      Plan approval modes: CLI, webhook, Slack, and auto
+    ├── permissions/   Tool permission policy and approval-request types
+    ├── context-window/ Token budget accounting and ContextBudgetGuard
     ├── file-tools/    Built-in repository read/write/search tools
     ├── web-tools/     Opt-in search and fetch tools with SSRF protection
     ├── memory/        Durable project memory materialized into MEMORY.md
     ├── hooks/         Event hooks with timeout-bounded execution
     ├── skills/        Built-in and custom slash-command skills
     ├── protocol/      CLI ↔ daemon message types
-    ├── ui-core/       Headless state hooks shared by CLI and VS Code webview
-    └── context-window/  Token budget management
+    └── ui-core/       Headless state hooks shared by CLI and VS Code webview
 ```
 
 The CLI communicates with the daemon over a Unix socket (`~/.iquantum/daemon.sock`). The daemon manages all AI calls, sandbox containers, and SQLite state. The CLI renders the REPL and streams events back to the user in real time.
@@ -752,6 +782,10 @@ bun run typecheck        # TypeScript type check across all packages
 - [x] Skills — built-in and hot-reloaded custom slash commands
 - [x] Keybindings — user-configurable REPL chords
 - [x] Worktree mode — `iq task --worktree` session branches
+- [x] Conversation compaction — `/compact` and automatic threshold-based compaction
+- [x] File snapshots — per-turn snapshots with `/snapshots` restore
+- [x] Context budget guard — automatic compaction before the context window fills
+- [x] Agent orchestration — `iq task --coordinator` spawns parallel agents on worktree branches, merges validated results
 
 ---
 
