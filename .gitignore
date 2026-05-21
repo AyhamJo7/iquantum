@@ -14,3 +14,7 @@ coverage/
 CLAUDE.md
 AGENTS.md
 docs/
+
+# Local Claude Code config — personal, not shared
+.claude/settings.json
+.claude/hooks/
