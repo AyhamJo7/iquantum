@@ -37,17 +37,24 @@
       "dependencies": {
         "@aws-sdk/client-ecs": "^3.1048.0",
         "@aws-sdk/client-ssm": "^3.1048.0",
+        "@iquantum/agent": "workspace:*",
+        "@iquantum/approval": "workspace:*",
+        "@iquantum/compaction": "workspace:*",
         "@iquantum/config": "workspace:*",
         "@iquantum/context-window": "workspace:*",
+        "@iquantum/coordinator": "workspace:*",
         "@iquantum/diff-engine": "workspace:*",
         "@iquantum/file-tools": "workspace:*",
         "@iquantum/git": "workspace:*",
         "@iquantum/hooks": "workspace:*",
         "@iquantum/llm": "workspace:*",
         "@iquantum/memory": "workspace:*",
+        "@iquantum/permissions": "workspace:*",
         "@iquantum/piv-engine": "workspace:*",
+        "@iquantum/plugins": "workspace:*",
         "@iquantum/protocol": "workspace:*",
         "@iquantum/sandbox": "workspace:*",
+        "@iquantum/snapshots": "workspace:*",
         "@iquantum/types": "workspace:*",
         "@iquantum/ui-core": "workspace:*",
         "@iquantum/web-tools": "workspace:*",
@@ -85,6 +92,32 @@
         "@vscode/vsce": "^3.7.1",
       },
     },
+    "packages/agent": {
+      "name": "@iquantum/agent",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "@iquantum/memory": "workspace:*",
+        "@iquantum/repo-map": "workspace:*",
+        "@iquantum/sandbox": "workspace:*",
+        "@iquantum/types": "workspace:*",
+      },
+    },
+    "packages/approval": {
+      "name": "@iquantum/approval",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "@iquantum/types": "workspace:*",
+      },
+    },
+    "packages/compaction": {
+      "name": "@iquantum/compaction",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "@iquantum/context-window": "workspace:*",
+        "@iquantum/llm": "workspace:*",
+        "@iquantum/types": "workspace:*",
+      },
+    },
     "packages/config": {
       "name": "@iquantum/config",
       "version": "3.0.0",
@@ -100,6 +133,15 @@
       "version": "0.0.0",
       "dependencies": {
         "@anthropic-ai/tokenizer": "latest",
+      },
+    },
+    "packages/coordinator": {
+      "name": "@iquantum/coordinator",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "@iquantum/agent": "workspace:*",
+        "@iquantum/piv-engine": "workspace:*",
+        "@iquantum/repo-map": "workspace:*",
       },
     },
     "packages/diff-engine": {
@@ -153,6 +195,13 @@
         "zod": "^4.4.3",
       },
     },
+    "packages/permissions": {
+      "name": "@iquantum/permissions",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "@iquantum/types": "workspace:*",
+      },
+    },
     "packages/piv-engine": {
       "name": "@iquantum/piv-engine",
       "version": "3.0.0",
@@ -166,6 +215,15 @@
         "@iquantum/sandbox": "workspace:*",
         "@iquantum/types": "workspace:*",
         "@iquantum/web-tools": "workspace:*",
+      },
+    },
+    "packages/plugins": {
+      "name": "@iquantum/plugins",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "@iquantum/hooks": "workspace:*",
+        "@iquantum/skills": "workspace:*",
+        "@iquantum/types": "workspace:*",
       },
     },
     "packages/protocol": {
@@ -199,6 +257,13 @@
       "version": "1.0.0",
       "dependencies": {
         "@iquantum/config": "workspace:*",
+        "@iquantum/types": "workspace:*",
+      },
+    },
+    "packages/snapshots": {
+      "name": "@iquantum/snapshots",
+      "version": "1.0.0",
+      "peerDependencies": {
         "@iquantum/types": "workspace:*",
       },
     },
@@ -351,11 +416,19 @@
 
     "@ioredis/commands": ["@ioredis/commands@1.5.1", "", {}, "sha512-JH8ZL/ywcJyR9MmJ5BNqZllXNZQqQbnVZOqpPQqE1vHiFgAw4NHbvE0FOduNU8IX9babitBT46571OnPTT0Zcw=="],
 
+    "@iquantum/agent": ["@iquantum/agent@workspace:packages/agent"],
+
+    "@iquantum/approval": ["@iquantum/approval@workspace:packages/approval"],
+
     "@iquantum/cli": ["@iquantum/cli@workspace:iquantum-cli"],
+
+    "@iquantum/compaction": ["@iquantum/compaction@workspace:packages/compaction"],
 
     "@iquantum/config": ["@iquantum/config@workspace:packages/config"],
 
     "@iquantum/context-window": ["@iquantum/context-window@workspace:packages/context-window"],
+
+    "@iquantum/coordinator": ["@iquantum/coordinator@workspace:packages/coordinator"],
 
     "@iquantum/daemon": ["@iquantum/daemon@workspace:iquantum-daemon"],
 
@@ -371,7 +444,11 @@
 
     "@iquantum/memory": ["@iquantum/memory@workspace:packages/memory"],
 
+    "@iquantum/permissions": ["@iquantum/permissions@workspace:packages/permissions"],
+
     "@iquantum/piv-engine": ["@iquantum/piv-engine@workspace:packages/piv-engine"],
+
+    "@iquantum/plugins": ["@iquantum/plugins@workspace:packages/plugins"],
 
     "@iquantum/protocol": ["@iquantum/protocol@workspace:packages/protocol"],
 
@@ -380,6 +457,8 @@
     "@iquantum/sandbox": ["@iquantum/sandbox@workspace:packages/sandbox"],
 
     "@iquantum/skills": ["@iquantum/skills@workspace:packages/skills"],
+
+    "@iquantum/snapshots": ["@iquantum/snapshots@workspace:packages/snapshots"],
 
     "@iquantum/types": ["@iquantum/types@workspace:packages/types"],
 

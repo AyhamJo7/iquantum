@@ -1,15 +1,10 @@
-import type { HookEvent, HookRun } from "@iquantum/types";
+import type { HookEvent, HookResult, HookRun } from "@iquantum/types";
 
-export type { HookEvent } from "@iquantum/types";
+export type { HookEvent, HookResult } from "@iquantum/types";
 export { InvalidHookError, JsHook } from "./js-hook";
 export { HookLoader } from "./loader";
 export { HookRunner } from "./runner";
 export { ShellHook } from "./shell-hook";
-
-export interface HookResult {
-  block?: boolean;
-  message?: string;
-}
 
 export interface Hook {
   name: string;
@@ -33,6 +28,7 @@ export const HOOK_EVENT_TYPES = [
   "plan_generated",
   "plan_approved",
   "plan_rejected",
+  "post_sampling",
   "checkpoint_created",
   "task_started",
   "task_completed",

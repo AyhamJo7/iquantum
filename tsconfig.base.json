@@ -29,6 +29,13 @@
       "@iquantum/piv-engine": ["packages/piv-engine/src/index.ts"],
       "@iquantum/protocol": ["packages/protocol/src/index.ts"],
       "@iquantum/context-window": ["packages/context-window/src/index.ts"],
+      "@iquantum/compaction": ["packages/compaction/src/index.ts"],
+      "@iquantum/snapshots": ["packages/snapshots/src/index.ts"],
+      "@iquantum/agent": ["packages/agent/src/index.ts"],
+      "@iquantum/coordinator": ["packages/coordinator/src/index.ts"],
+      "@iquantum/approval": ["packages/approval/src/index.ts"],
+      "@iquantum/plugins": ["packages/plugins/src/index.ts"],
+      "@iquantum/permissions": ["packages/permissions/src/index.ts"],
       "@iquantum/ui-core": ["packages/ui-core/src/index.ts"],
       "@iquantum/ui-core/export-markdown": [
         "packages/ui-core/src/export-markdown.ts"

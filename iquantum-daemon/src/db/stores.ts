@@ -2,17 +2,24 @@ import type { Database } from "bun:sqlite";
 import type { GitCheckpointPage, GitCheckpointStore } from "@iquantum/git";
 import type { PIVStore } from "@iquantum/piv-engine";
 import type {
+  AllowRule,
+  ApprovalDecision,
+  ApprovalRequest,
   ContextStats,
+  FileSnapshot,
   GitCheckpoint,
   HookRun,
   Memory,
   Message,
+  PermissionDenial,
   Plan,
+  PluginManifest,
   Session,
   SessionStatus,
   ValidateRun,
 } from "@iquantum/types";
 import { CONTEXT_TOKEN_BUDGET } from "@iquantum/types";
+import { createPatch } from "diff";
 
 export type { ContextStats };
 
@@ -44,6 +51,7 @@ export interface ConversationMessage {
   hasThinking: boolean;
   tokenCount: number;
   compactionBoundary: boolean;
+  compactionAnchor?: boolean;
   createdAt: string;
 }
 
@@ -90,8 +98,9 @@ export class SqliteSessionStore implements SessionStore {
         `INSERT INTO sessions (
           id, status, repo_path, container_id, volume_id, config, mode,
           effort, worktree_path, worktree_branch, start_checkpoint_hash,
+          parent_session_id, agent_name, agent_color, coordinator_mode,
           user_id, org_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         session.id,
@@ -105,6 +114,10 @@ export class SqliteSessionStore implements SessionStore {
         session.worktreePath,
         session.worktreeBranch,
         session.startCheckpointHash,
+        session.parentSessionId ?? null,
+        session.agentName ?? null,
+        session.agentColor ?? null,
+        Number(session.coordinatorMode ?? false),
         session.userId,
         session.orgId,
         session.createdAt,
@@ -127,6 +140,10 @@ export class SqliteSessionStore implements SessionStore {
           worktree_path AS "worktreePath",
           worktree_branch AS "worktreeBranch",
           start_checkpoint_hash AS "startCheckpointHash",
+          parent_session_id AS "parentSessionId",
+          agent_name AS "agentName",
+          agent_color AS "agentColor",
+          coordinator_mode AS "coordinatorMode",
           user_id AS "userId",
           org_id AS "orgId",
           created_at AS "createdAt",
@@ -203,6 +220,23 @@ export class SqliteSessionStore implements SessionStore {
         .query("DELETE FROM git_checkpoints WHERE session_id = ?")
         .run(sessionId);
       this.#db
+        .query("DELETE FROM file_snapshots WHERE session_id = ?")
+        .run(sessionId);
+      this.#db
+        .query("DELETE FROM permission_denials WHERE session_id = ?")
+        .run(sessionId);
+      this.#db
+        .query("DELETE FROM permission_allow_rules WHERE session_id = ?")
+        .run(sessionId);
+      this.#db
+        .query("DELETE FROM approval_requests WHERE session_id = ?")
+        .run(sessionId);
+      this.#db
+        .query(
+          "DELETE FROM memory_embeddings WHERE memory_id NOT IN (SELECT id FROM memories)",
+        )
+        .run();
+      this.#db
         .query("DELETE FROM validate_runs WHERE session_id = ?")
         .run(sessionId);
       this.#db
@@ -225,16 +259,20 @@ export class SqliteSessionStore implements SessionStore {
           status,
           repo_path AS "repoPath",
           container_id AS "containerId",
-          volume_id AS "volumeId",
-          config,
-          mode,
-          effort,
-          worktree_path AS "worktreePath",
-          worktree_branch AS "worktreeBranch",
-          start_checkpoint_hash AS "startCheckpointHash",
-          user_id AS "userId",
-          org_id AS "orgId",
-          created_at AS "createdAt",
+              volume_id AS "volumeId",
+              config,
+              mode,
+              effort,
+              worktree_path AS "worktreePath",
+              worktree_branch AS "worktreeBranch",
+              start_checkpoint_hash AS "startCheckpointHash",
+              parent_session_id AS "parentSessionId",
+              agent_name AS "agentName",
+              agent_color AS "agentColor",
+              coordinator_mode AS "coordinatorMode",
+              user_id AS "userId",
+              org_id AS "orgId",
+              created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM sessions
         WHERE org_id = ?
@@ -269,8 +307,9 @@ export class SqlitePIVStore implements PIVStore {
       .query(
         `INSERT INTO messages (
           id, session_id, task_id, role, phase, model, content,
-          has_thinking, token_count, compaction_boundary, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          has_thinking, token_count, compaction_boundary, compaction_anchor,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -283,6 +322,7 @@ export class SqlitePIVStore implements PIVStore {
         Number(message.hasThinking),
         message.tokenCount,
         Number(message.compactionBoundary),
+        Number(message.compactionAnchor ?? false),
         message.createdAt,
       );
   }
@@ -304,6 +344,7 @@ export class SqlitePIVStore implements PIVStore {
           has_thinking AS "hasThinking",
           token_count AS "tokenCount",
           compaction_boundary AS "compactionBoundary",
+          compaction_anchor AS "compactionAnchor",
           created_at AS "createdAt"
         FROM messages
         WHERE session_id = ? AND task_id = ?
@@ -420,8 +461,9 @@ export class SqliteConversationStore implements ConversationStore {
       .query(
         `INSERT INTO messages (
           id, session_id, task_id, role, phase, model, content,
-          has_thinking, token_count, compaction_boundary, created_at
-        ) VALUES (?, ?, NULL, ?, 'plan', NULL, ?, ?, ?, ?, ?)`,
+          has_thinking, token_count, compaction_boundary, compaction_anchor,
+          created_at
+        ) VALUES (?, ?, NULL, ?, 'plan', NULL, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -431,6 +473,7 @@ export class SqliteConversationStore implements ConversationStore {
         Number(message.hasThinking),
         message.tokenCount,
         Number(message.compactionBoundary),
+        Number(message.compactionAnchor ?? false),
         message.createdAt,
       );
   }
@@ -483,6 +526,7 @@ export class SqliteConversationStore implements ConversationStore {
           has_thinking AS "hasThinking",
           token_count AS "tokenCount",
           compaction_boundary AS "compactionBoundary",
+          compaction_anchor AS "compactionAnchor",
           created_at AS "createdAt"
         FROM messages
         WHERE session_id = ? AND task_id IS NULL
@@ -519,6 +563,7 @@ export class SqliteConversationStore implements ConversationStore {
           has_thinking AS "hasThinking",
           token_count AS "tokenCount",
           compaction_boundary AS "compactionBoundary",
+          compaction_anchor AS "compactionAnchor",
           created_at AS "createdAt"
         FROM messages
         WHERE session_id = ? AND task_id IS NULL
@@ -648,6 +693,68 @@ export interface HookRunStore {
   listBySession(sessionId: string, limit?: number): Promise<HookRun[]>;
 }
 
+export interface FileSnapshotTurnSummary {
+  turnIndex: number;
+  fileCount: number;
+  savedAt: string;
+}
+
+export interface FileSnapshotDiff {
+  filePath: string;
+  patch: string;
+}
+
+export interface FileSnapshotStore {
+  save(snapshot: FileSnapshot): Promise<void>;
+  restore(sessionId: string, turnIndex: number): Promise<FileSnapshot[]>;
+  listTurns(sessionId: string): Promise<FileSnapshotTurnSummary[]>;
+  diff(
+    sessionId: string,
+    fromTurn: number,
+    toTurn: number,
+  ): Promise<FileSnapshotDiff[]>;
+  evict(sessionId: string, keepTurns: number): Promise<void>;
+}
+
+export interface ApprovalRequestStore {
+  insert(request: ApprovalRequest): Promise<void>;
+  get(id: string): Promise<ApprovalRequest | null>;
+  listBySession(sessionId: string): Promise<ApprovalRequest[]>;
+  applyDecision(
+    id: string,
+    decision: ApprovalDecision,
+  ): Promise<ApprovalRequest | null>;
+}
+
+export interface PermissionStore {
+  insertDenial(denial: PermissionDenial): Promise<void>;
+  listDenials(sessionId: string): Promise<PermissionDenial[]>;
+  insertAllowRule(rule: AllowRule): Promise<void>;
+  listAllowRules(
+    sessionId?: string | null,
+    orgId?: string | null,
+  ): Promise<AllowRule[]>;
+}
+
+export interface InstalledPluginRecord {
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  manifestJson: string;
+  installedAt: string;
+}
+
+export interface InstalledPluginStore {
+  upsert(
+    plugin: PluginManifest,
+    installedAt: string,
+  ): Promise<InstalledPluginRecord>;
+  get(name: string): Promise<InstalledPluginRecord | null>;
+  list(): Promise<InstalledPluginRecord[]>;
+  delete(name: string): Promise<void>;
+}
+
 export class SqliteMemoryStore implements MemoryStore {
   readonly #db: Database;
 
@@ -659,14 +766,16 @@ export class SqliteMemoryStore implements MemoryStore {
     this.#db
       .query(
         `INSERT INTO memories (
-          id, user_id, org_id, type, name, description, body, pinned, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, user_id, org_id, type, scope, source, name, description, body, pinned, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         memory.id,
         memory.userId,
         memory.orgId,
         memory.type,
+        memory.scope ?? "user",
+        memory.source ?? "manual",
         memory.name,
         memory.description,
         memory.body,
@@ -679,7 +788,7 @@ export class SqliteMemoryStore implements MemoryStore {
   async get(id: string, userId: string): Promise<Memory | null> {
     const row = this.#db
       .query(
-        `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+        `SELECT id, user_id AS "userId", org_id AS "orgId", type, scope, source, name, description,
                 body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
          FROM memories WHERE id = ? AND user_id = ?`,
       )
@@ -690,7 +799,7 @@ export class SqliteMemoryStore implements MemoryStore {
   async getByName(userId: string, name: string): Promise<Memory | null> {
     const row = this.#db
       .query(
-        `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+        `SELECT id, user_id AS "userId", org_id AS "orgId", type, scope, source, name, description,
                 body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
          FROM memories WHERE user_id = ? AND name = ?`,
       )
@@ -701,7 +810,7 @@ export class SqliteMemoryStore implements MemoryStore {
   async listByUser(userId: string, orgId?: string | null): Promise<Memory[]> {
     const rows = this.#db
       .query(
-        `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+        `SELECT id, user_id AS "userId", org_id AS "orgId", type, scope, source, name, description,
                 body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
          FROM memories
          WHERE user_id = ? ${orgId ? "AND (org_id = ? OR org_id IS NULL)" : ""}
@@ -756,10 +865,12 @@ export class SqliteMemoryStore implements MemoryStore {
     this.#db
       .query(
         `INSERT INTO memories (
-          id, user_id, org_id, type, name, description, body, pinned, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, user_id, org_id, type, scope, source, name, description, body, pinned, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (user_id, name) DO UPDATE SET
           type = excluded.type,
+          scope = excluded.scope,
+          source = excluded.source,
           description = excluded.description,
           body = excluded.body,
           pinned = excluded.pinned,
@@ -770,6 +881,8 @@ export class SqliteMemoryStore implements MemoryStore {
         memory.userId,
         memory.orgId,
         memory.type,
+        memory.scope ?? "user",
+        memory.source ?? "manual",
         memory.name,
         memory.description,
         memory.body,
@@ -833,19 +946,308 @@ export class SqliteHookRunStore implements HookRunStore {
   }
 }
 
+export class SqliteFileSnapshotStore implements FileSnapshotStore {
+  readonly #db: Database;
+
+  constructor(db: Database) {
+    this.#db = db;
+  }
+
+  async save(snapshot: FileSnapshot): Promise<void> {
+    this.#db
+      .query(
+        `INSERT OR REPLACE INTO file_snapshots (
+          id, session_id, turn_index, file_path, content_hash, content, saved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        snapshot.id,
+        snapshot.sessionId,
+        snapshot.turnIndex,
+        snapshot.filePath,
+        snapshot.contentHash,
+        snapshot.content,
+        snapshot.savedAt,
+      );
+  }
+
+  async restore(sessionId: string, turnIndex: number): Promise<FileSnapshot[]> {
+    return this.#db
+      .query(
+        `SELECT id, session_id AS "sessionId", turn_index AS "turnIndex",
+                file_path AS "filePath", content_hash AS "contentHash",
+                content, saved_at AS "savedAt"
+         FROM file_snapshots
+         WHERE session_id = ? AND turn_index = ?
+         ORDER BY file_path`,
+      )
+      .all(sessionId, turnIndex) as FileSnapshot[];
+  }
+
+  async listTurns(sessionId: string): Promise<FileSnapshotTurnSummary[]> {
+    return this.#db
+      .query(
+        `SELECT turn_index AS "turnIndex",
+                COUNT(*) AS "fileCount",
+                MAX(saved_at) AS "savedAt"
+         FROM file_snapshots
+         WHERE session_id = ?
+         GROUP BY turn_index
+         ORDER BY turn_index`,
+      )
+      .all(sessionId) as FileSnapshotTurnSummary[];
+  }
+
+  async diff(
+    sessionId: string,
+    fromTurn: number,
+    toTurn: number,
+  ): Promise<FileSnapshotDiff[]> {
+    return diffSnapshots(
+      await this.restore(sessionId, fromTurn),
+      await this.restore(sessionId, toTurn),
+    );
+  }
+
+  async evict(sessionId: string, keepTurns: number): Promise<void> {
+    const maxTurnRow = this.#db
+      .query(
+        "SELECT COALESCE(MAX(turn_index), -1) AS maxTurn FROM file_snapshots WHERE session_id = ?",
+      )
+      .get(sessionId) as { maxTurn: number } | null;
+    const threshold = (maxTurnRow?.maxTurn ?? -1) - keepTurns;
+    this.#db
+      .query(
+        "DELETE FROM file_snapshots WHERE session_id = ? AND turn_index < ?",
+      )
+      .run(sessionId, threshold);
+  }
+}
+
+export class SqliteApprovalRequestStore implements ApprovalRequestStore {
+  readonly #db: Database;
+
+  constructor(db: Database) {
+    this.#db = db;
+  }
+
+  async insert(request: ApprovalRequest): Promise<void> {
+    this.#db
+      .query(
+        `INSERT INTO approval_requests (
+          id, session_id, plan_id, plan_content, created_at, expires_at, status, feedback
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        request.id,
+        request.sessionId,
+        request.planId,
+        request.planContent,
+        request.createdAt,
+        request.expiresAt,
+        request.status,
+        request.feedback,
+      );
+  }
+
+  async get(id: string): Promise<ApprovalRequest | null> {
+    return (
+      (this.#db
+        .query(
+          `SELECT id, session_id AS "sessionId", plan_id AS "planId",
+                plan_content AS "planContent", created_at AS "createdAt",
+                expires_at AS "expiresAt", status, feedback
+         FROM approval_requests
+         WHERE id = ?`,
+        )
+        .get(id) as ApprovalRequest | null) ?? null
+    );
+  }
+
+  async listBySession(sessionId: string): Promise<ApprovalRequest[]> {
+    return this.#db
+      .query(
+        `SELECT id, session_id AS "sessionId", plan_id AS "planId",
+                plan_content AS "planContent", created_at AS "createdAt",
+                expires_at AS "expiresAt", status, feedback
+         FROM approval_requests
+         WHERE session_id = ?
+         ORDER BY created_at DESC`,
+      )
+      .all(sessionId) as ApprovalRequest[];
+  }
+
+  async applyDecision(
+    id: string,
+    decision: ApprovalDecision,
+  ): Promise<ApprovalRequest | null> {
+    this.#db
+      .query(
+        "UPDATE approval_requests SET status = ?, feedback = ? WHERE id = ?",
+      )
+      .run(decision.approved ? "approved" : "rejected", decision.feedback, id);
+    return this.get(id);
+  }
+}
+
+export class SqlitePermissionStore implements PermissionStore {
+  readonly #db: Database;
+
+  constructor(db: Database) {
+    this.#db = db;
+  }
+
+  async insertDenial(denial: PermissionDenial): Promise<void> {
+    this.#db
+      .query(
+        `INSERT INTO permission_denials (
+          id, session_id, tool, input, denied_by, reason, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        denial.id,
+        denial.sessionId,
+        denial.tool,
+        JSON.stringify(denial.input),
+        denial.deniedBy,
+        denial.reason,
+        denial.createdAt,
+      );
+  }
+
+  async listDenials(sessionId: string): Promise<PermissionDenial[]> {
+    const rows = this.#db
+      .query(
+        `SELECT id, session_id AS "sessionId", tool, input,
+                denied_by AS "deniedBy", reason, created_at AS "createdAt"
+         FROM permission_denials
+         WHERE session_id = ?
+         ORDER BY created_at DESC`,
+      )
+      .all(sessionId) as PermissionDenialRow[];
+    return rows.map(toPermissionDenial);
+  }
+
+  async insertAllowRule(rule: AllowRule): Promise<void> {
+    this.#db
+      .query(
+        `INSERT INTO permission_allow_rules (
+          id, session_id, org_id, tool, input_pattern, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        rule.id,
+        rule.sessionId,
+        rule.orgId,
+        rule.tool,
+        rule.inputPattern,
+        rule.createdAt,
+      );
+  }
+
+  async listAllowRules(
+    sessionId?: string | null,
+    orgId?: string | null,
+  ): Promise<AllowRule[]> {
+    const rows = this.#db
+      .query(
+        `SELECT id, session_id AS "sessionId", org_id AS "orgId", tool,
+                input_pattern AS "inputPattern", created_at AS "createdAt"
+         FROM permission_allow_rules
+         WHERE (session_id IS NULL AND (org_id IS NULL OR org_id = ?))
+            OR session_id = ?
+         ORDER BY created_at DESC`,
+      )
+      .all(orgId ?? null, sessionId ?? null) as AllowRule[];
+    return rows;
+  }
+}
+
+export class SqliteInstalledPluginStore implements InstalledPluginStore {
+  readonly #db: Database;
+
+  constructor(db: Database) {
+    this.#db = db;
+  }
+
+  async upsert(
+    plugin: PluginManifest,
+    installedAt: string,
+  ): Promise<InstalledPluginRecord> {
+    const manifestJson = JSON.stringify(plugin);
+    this.#db
+      .query(
+        `INSERT INTO installed_plugins (
+          name, version, description, author, manifest_json, installed_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+          version = excluded.version,
+          description = excluded.description,
+          author = excluded.author,
+          manifest_json = excluded.manifest_json,
+          installed_at = excluded.installed_at`,
+      )
+      .run(
+        plugin.name,
+        plugin.version,
+        plugin.description,
+        plugin.author,
+        manifestJson,
+        installedAt,
+      );
+    const record = await this.get(plugin.name);
+    if (!record) {
+      throw new Error(`Installed plugin upsert failed for ${plugin.name}`);
+    }
+    return record;
+  }
+
+  async get(name: string): Promise<InstalledPluginRecord | null> {
+    return (
+      (this.#db
+        .query(
+          `SELECT name, version, description, author,
+                manifest_json AS "manifestJson",
+                installed_at AS "installedAt"
+         FROM installed_plugins
+         WHERE name = ?`,
+        )
+        .get(name) as InstalledPluginRecord | null) ?? null
+    );
+  }
+
+  async list(): Promise<InstalledPluginRecord[]> {
+    return this.#db
+      .query(
+        `SELECT name, version, description, author,
+                manifest_json AS "manifestJson",
+                installed_at AS "installedAt"
+         FROM installed_plugins
+         ORDER BY installed_at DESC, name`,
+      )
+      .all() as InstalledPluginRecord[];
+  }
+
+  async delete(name: string): Promise<void> {
+    this.#db.query("DELETE FROM installed_plugins WHERE name = ?").run(name);
+  }
+}
+
 export class AdapterMemoryStore implements MemoryStore {
   constructor(private readonly db: DbAdapter) {}
 
   async insert(memory: Memory): Promise<void> {
     await this.db.execute(
       `INSERT INTO memories (
-        id, user_id, org_id, type, name, description, body, pinned, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, user_id, org_id, type, scope, source, name, description, body, pinned, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         memory.id,
         memory.userId,
         memory.orgId,
         memory.type,
+        memory.scope ?? "user",
+        memory.source ?? "manual",
         memory.name,
         memory.description,
         memory.body,
@@ -858,7 +1260,7 @@ export class AdapterMemoryStore implements MemoryStore {
 
   async get(id: string, userId: string): Promise<Memory | null> {
     const row = await this.db.first<MemoryRow>(
-      `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+      `SELECT id, user_id AS "userId", org_id AS "orgId", type, scope, source, name, description,
               body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM memories WHERE id = ? AND user_id = ?`,
       [id, userId],
@@ -868,7 +1270,7 @@ export class AdapterMemoryStore implements MemoryStore {
 
   async getByName(userId: string, name: string): Promise<Memory | null> {
     const row = await this.db.first<MemoryRow>(
-      `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+      `SELECT id, user_id AS "userId", org_id AS "orgId", type, scope, source, name, description,
               body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM memories WHERE user_id = ? AND name = ?`,
       [userId, name],
@@ -878,7 +1280,7 @@ export class AdapterMemoryStore implements MemoryStore {
 
   async listByUser(userId: string, orgId?: string | null): Promise<Memory[]> {
     const rows = await this.db.query<MemoryRow>(
-      `SELECT id, user_id AS "userId", org_id AS "orgId", type, name, description,
+      `SELECT id, user_id AS "userId", org_id AS "orgId", type, scope, source, name, description,
               body, pinned, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM memories
        WHERE user_id = ? ${orgId ? "AND (org_id = ? OR org_id IS NULL)" : ""}
@@ -930,10 +1332,12 @@ export class AdapterMemoryStore implements MemoryStore {
   async upsertByName(memory: Memory): Promise<Memory> {
     await this.db.execute(
       `INSERT INTO memories (
-        id, user_id, org_id, type, name, description, body, pinned, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, user_id, org_id, type, scope, source, name, description, body, pinned, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (user_id, name) DO UPDATE SET
         type = excluded.type,
+        scope = excluded.scope,
+        source = excluded.source,
         description = excluded.description,
         body = excluded.body,
         pinned = excluded.pinned,
@@ -943,6 +1347,8 @@ export class AdapterMemoryStore implements MemoryStore {
         memory.userId,
         memory.orgId,
         memory.type,
+        memory.scope ?? "user",
+        memory.source ?? "manual",
         memory.name,
         memory.description,
         memory.body,
@@ -999,9 +1405,261 @@ export class AdapterHookRunStore implements HookRunStore {
   }
 }
 
+export class AdapterFileSnapshotStore implements FileSnapshotStore {
+  constructor(private readonly db: DbAdapter) {}
+
+  async save(snapshot: FileSnapshot): Promise<void> {
+    await this.db.execute(
+      `INSERT OR REPLACE INTO file_snapshots (
+        id, session_id, turn_index, file_path, content_hash, content, saved_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        snapshot.id,
+        snapshot.sessionId,
+        snapshot.turnIndex,
+        snapshot.filePath,
+        snapshot.contentHash,
+        snapshot.content,
+        snapshot.savedAt,
+      ],
+    );
+  }
+
+  async restore(sessionId: string, turnIndex: number): Promise<FileSnapshot[]> {
+    return this.db.query<FileSnapshot>(
+      `SELECT id, session_id AS "sessionId", turn_index AS "turnIndex",
+              file_path AS "filePath", content_hash AS "contentHash",
+              content, saved_at AS "savedAt"
+       FROM file_snapshots
+       WHERE session_id = ? AND turn_index = ?
+       ORDER BY file_path`,
+      [sessionId, turnIndex],
+    );
+  }
+
+  async listTurns(sessionId: string): Promise<FileSnapshotTurnSummary[]> {
+    return this.db.query<FileSnapshotTurnSummary>(
+      `SELECT turn_index AS "turnIndex",
+              COUNT(*) AS "fileCount",
+              MAX(saved_at) AS "savedAt"
+       FROM file_snapshots
+       WHERE session_id = ?
+       GROUP BY turn_index
+       ORDER BY turn_index`,
+      [sessionId],
+    );
+  }
+
+  async diff(
+    sessionId: string,
+    fromTurn: number,
+    toTurn: number,
+  ): Promise<FileSnapshotDiff[]> {
+    return diffSnapshots(
+      await this.restore(sessionId, fromTurn),
+      await this.restore(sessionId, toTurn),
+    );
+  }
+
+  async evict(sessionId: string, keepTurns: number): Promise<void> {
+    const row = await this.db.first<{ maxTurn: number }>(
+      "SELECT COALESCE(MAX(turn_index), -1) AS maxTurn FROM file_snapshots WHERE session_id = ?",
+      [sessionId],
+    );
+    const threshold = (row?.maxTurn ?? -1) - keepTurns;
+    await this.db.execute(
+      "DELETE FROM file_snapshots WHERE session_id = ? AND turn_index < ?",
+      [sessionId, threshold],
+    );
+  }
+}
+
+export class AdapterApprovalRequestStore implements ApprovalRequestStore {
+  constructor(private readonly db: DbAdapter) {}
+
+  async insert(request: ApprovalRequest): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO approval_requests (
+        id, session_id, plan_id, plan_content, created_at, expires_at, status, feedback
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        request.id,
+        request.sessionId,
+        request.planId,
+        request.planContent,
+        request.createdAt,
+        request.expiresAt,
+        request.status,
+        request.feedback,
+      ],
+    );
+  }
+
+  async get(id: string): Promise<ApprovalRequest | null> {
+    return this.db.first<ApprovalRequest>(
+      `SELECT id, session_id AS "sessionId", plan_id AS "planId",
+              plan_content AS "planContent", created_at AS "createdAt",
+              expires_at AS "expiresAt", status, feedback
+       FROM approval_requests
+       WHERE id = ?`,
+      [id],
+    );
+  }
+
+  async listBySession(sessionId: string): Promise<ApprovalRequest[]> {
+    return this.db.query<ApprovalRequest>(
+      `SELECT id, session_id AS "sessionId", plan_id AS "planId",
+              plan_content AS "planContent", created_at AS "createdAt",
+              expires_at AS "expiresAt", status, feedback
+       FROM approval_requests
+       WHERE session_id = ?
+       ORDER BY created_at DESC`,
+      [sessionId],
+    );
+  }
+
+  async applyDecision(
+    id: string,
+    decision: ApprovalDecision,
+  ): Promise<ApprovalRequest | null> {
+    await this.db.execute(
+      "UPDATE approval_requests SET status = ?, feedback = ? WHERE id = ?",
+      [decision.approved ? "approved" : "rejected", decision.feedback, id],
+    );
+    return this.get(id);
+  }
+}
+
+export class AdapterPermissionStore implements PermissionStore {
+  constructor(private readonly db: DbAdapter) {}
+
+  async insertDenial(denial: PermissionDenial): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO permission_denials (
+        id, session_id, tool, input, denied_by, reason, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        denial.id,
+        denial.sessionId,
+        denial.tool,
+        JSON.stringify(denial.input),
+        denial.deniedBy,
+        denial.reason,
+        denial.createdAt,
+      ],
+    );
+  }
+
+  async listDenials(sessionId: string): Promise<PermissionDenial[]> {
+    const rows = await this.db.query<PermissionDenialRow>(
+      `SELECT id, session_id AS "sessionId", tool, input,
+              denied_by AS "deniedBy", reason, created_at AS "createdAt"
+       FROM permission_denials
+       WHERE session_id = ?
+       ORDER BY created_at DESC`,
+      [sessionId],
+    );
+    return rows.map(toPermissionDenial);
+  }
+
+  async insertAllowRule(rule: AllowRule): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO permission_allow_rules (
+        id, session_id, org_id, tool, input_pattern, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        rule.id,
+        rule.sessionId,
+        rule.orgId,
+        rule.tool,
+        rule.inputPattern,
+        rule.createdAt,
+      ],
+    );
+  }
+
+  async listAllowRules(
+    sessionId?: string | null,
+    orgId?: string | null,
+  ): Promise<AllowRule[]> {
+    return this.db.query<AllowRule>(
+      `SELECT id, session_id AS "sessionId", org_id AS "orgId", tool,
+              input_pattern AS "inputPattern", created_at AS "createdAt"
+       FROM permission_allow_rules
+       WHERE (session_id IS NULL AND (org_id IS NULL OR org_id = ?))
+          OR session_id = ?
+       ORDER BY created_at DESC`,
+      [orgId ?? null, sessionId ?? null],
+    );
+  }
+}
+
+export class AdapterInstalledPluginStore implements InstalledPluginStore {
+  constructor(private readonly db: DbAdapter) {}
+
+  async upsert(
+    plugin: PluginManifest,
+    installedAt: string,
+  ): Promise<InstalledPluginRecord> {
+    const manifestJson = JSON.stringify(plugin);
+    await this.db.execute(
+      `INSERT INTO installed_plugins (
+        name, version, description, author, manifest_json, installed_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(name) DO UPDATE SET
+        version = excluded.version,
+        description = excluded.description,
+        author = excluded.author,
+        manifest_json = excluded.manifest_json,
+        installed_at = excluded.installed_at`,
+      [
+        plugin.name,
+        plugin.version,
+        plugin.description,
+        plugin.author,
+        manifestJson,
+        installedAt,
+      ],
+    );
+    const record = await this.get(plugin.name);
+    if (!record) {
+      throw new Error(`Installed plugin upsert failed for ${plugin.name}`);
+    }
+    return record;
+  }
+
+  async get(name: string): Promise<InstalledPluginRecord | null> {
+    return this.db.first<InstalledPluginRecord>(
+      `SELECT name, version, description, author,
+              manifest_json AS "manifestJson",
+              installed_at AS "installedAt"
+       FROM installed_plugins
+       WHERE name = ?`,
+      [name],
+    );
+  }
+
+  async list(): Promise<InstalledPluginRecord[]> {
+    return this.db.query<InstalledPluginRecord>(
+      `SELECT name, version, description, author,
+              manifest_json AS "manifestJson",
+              installed_at AS "installedAt"
+       FROM installed_plugins
+       ORDER BY installed_at DESC, name`,
+    );
+  }
+
+  async delete(name: string): Promise<void> {
+    await this.db.execute("DELETE FROM installed_plugins WHERE name = ?", [
+      name,
+    ]);
+  }
+}
+
 type SessionRow = Omit<Session, "config"> & { config: string };
 type MemoryRow = Omit<Memory, "pinned"> & { pinned: number };
 type HookRunRow = Omit<HookRun, "blocked"> & { blocked: number };
+type PermissionDenialRow = Omit<PermissionDenial, "input"> & { input: string };
 
 function toMemory(row: MemoryRow): Memory {
   return { ...row, pinned: Boolean(row.pinned) };
@@ -1011,21 +1669,30 @@ function toHookRun(row: HookRunRow): HookRun {
   return { ...row, blocked: Boolean(row.blocked) };
 }
 
+function toPermissionDenial(row: PermissionDenialRow): PermissionDenial {
+  return {
+    ...row,
+    input: decodeJson(row.input),
+  };
+}
+
 type MessageRow = Omit<
   Message,
-  "content" | "hasThinking" | "compactionBoundary"
+  "content" | "hasThinking" | "compactionBoundary" | "compactionAnchor"
 > & {
   content: string;
   hasThinking: number;
   compactionBoundary: number;
+  compactionAnchor: number;
 };
 type ConversationMessageRow = Omit<
   ConversationMessage,
-  "content" | "hasThinking" | "compactionBoundary"
+  "content" | "hasThinking" | "compactionBoundary" | "compactionAnchor"
 > & {
   content: string;
   hasThinking: number;
   compactionBoundary: number;
+  compactionAnchor: number;
 };
 
 function encodeTextContent(content: string): string {
@@ -1049,6 +1716,7 @@ function toMessage(row: MessageRow): Message {
     content: decodeTextContent(row.content),
     hasThinking: Boolean(row.hasThinking),
     compactionBoundary: Boolean(row.compactionBoundary),
+    compactionAnchor: Boolean(row.compactionAnchor),
   };
 }
 
@@ -1060,7 +1728,45 @@ function toConversationMessage(
     content: decodeContentBlocks(row.content),
     hasThinking: Boolean(row.hasThinking),
     compactionBoundary: Boolean(row.compactionBoundary),
+    compactionAnchor: Boolean(row.compactionAnchor),
   };
+}
+
+function decodeJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function diffSnapshots(
+  fromSnapshots: FileSnapshot[],
+  toSnapshots: FileSnapshot[],
+): FileSnapshotDiff[] {
+  const fromMap = new Map(
+    fromSnapshots.map((snapshot) => [snapshot.filePath, snapshot]),
+  );
+  const toMap = new Map(
+    toSnapshots.map((snapshot) => [snapshot.filePath, snapshot]),
+  );
+  const filePaths = new Set([...fromMap.keys(), ...toMap.keys()]);
+
+  return [...filePaths].sort().flatMap((filePath) => {
+    const before = fromMap.get(filePath)?.content ?? "";
+    const after = toMap.get(filePath)?.content ?? "";
+
+    if (before === after) {
+      return [];
+    }
+
+    return [
+      {
+        filePath,
+        patch: createPatch(filePath, before, after, "turn-from", "turn-to"),
+      },
+    ];
+  });
 }
 
 function decodeContentBlocks(content: string): ConversationContentBlock[] {
@@ -1097,8 +1803,9 @@ export class AdapterSessionStore implements SessionStore {
       `INSERT INTO sessions (
         id, status, repo_path, container_id, volume_id, config, mode,
         effort, worktree_path, worktree_branch, start_checkpoint_hash,
+        parent_session_id, agent_name, agent_color, coordinator_mode,
         user_id, org_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         session.id,
         session.status,
@@ -1111,6 +1818,10 @@ export class AdapterSessionStore implements SessionStore {
         session.worktreePath,
         session.worktreeBranch,
         session.startCheckpointHash,
+        session.parentSessionId ?? null,
+        session.agentName ?? null,
+        session.agentColor ?? null,
+        Number(session.coordinatorMode ?? false),
         session.userId,
         session.orgId,
         session.createdAt,
@@ -1125,6 +1836,10 @@ export class AdapterSessionStore implements SessionStore {
               volume_id AS "volumeId", config, mode, effort,
               worktree_path AS "worktreePath", worktree_branch AS "worktreeBranch",
               start_checkpoint_hash AS "startCheckpointHash",
+              parent_session_id AS "parentSessionId",
+              agent_name AS "agentName",
+              agent_color AS "agentColor",
+              coordinator_mode AS "coordinatorMode",
               user_id AS "userId", org_id AS "orgId",
               created_at AS "createdAt", updated_at AS "updatedAt"
        FROM sessions WHERE id = ? ${orgId ? "AND org_id = ?" : ""}`,
@@ -1183,6 +1898,22 @@ export class AdapterSessionStore implements SessionStore {
       await tx.execute("DELETE FROM git_checkpoints WHERE session_id = ?", [
         sessionId,
       ]);
+      await tx.execute("DELETE FROM file_snapshots WHERE session_id = ?", [
+        sessionId,
+      ]);
+      await tx.execute("DELETE FROM permission_denials WHERE session_id = ?", [
+        sessionId,
+      ]);
+      await tx.execute(
+        "DELETE FROM permission_allow_rules WHERE session_id = ?",
+        [sessionId],
+      );
+      await tx.execute("DELETE FROM approval_requests WHERE session_id = ?", [
+        sessionId,
+      ]);
+      await tx.execute(
+        "DELETE FROM memory_embeddings WHERE memory_id NOT IN (SELECT id FROM memories)",
+      );
       await tx.execute("DELETE FROM validate_runs WHERE session_id = ?", [
         sessionId,
       ]);
@@ -1200,6 +1931,10 @@ export class AdapterSessionStore implements SessionStore {
               volume_id AS "volumeId", config, mode, effort,
               worktree_path AS "worktreePath", worktree_branch AS "worktreeBranch",
               start_checkpoint_hash AS "startCheckpointHash",
+              parent_session_id AS "parentSessionId",
+              agent_name AS "agentName",
+              agent_color AS "agentColor",
+              coordinator_mode AS "coordinatorMode",
               user_id AS "userId", org_id AS "orgId",
               created_at AS "createdAt", updated_at AS "updatedAt"
        FROM sessions WHERE org_id = ? ORDER BY created_at, id`,
@@ -1226,7 +1961,7 @@ export class AdapterPIVStore implements PIVStore {
   }
   async insertMessage(message: Message): Promise<void> {
     await this.db.execute(
-      `INSERT INTO messages (id, session_id, task_id, role, phase, model, content, has_thinking, token_count, compaction_boundary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (id, session_id, task_id, role, phase, model, content, has_thinking, token_count, compaction_boundary, compaction_anchor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         message.id,
         message.sessionId,
@@ -1238,6 +1973,7 @@ export class AdapterPIVStore implements PIVStore {
         Number(message.hasThinking),
         message.tokenCount,
         Number(message.compactionBoundary),
+        Number(message.compactionAnchor ?? false),
         message.createdAt,
       ],
     );
@@ -1247,7 +1983,7 @@ export class AdapterPIVStore implements PIVStore {
     taskId: string,
   ): Promise<Message[]> {
     const rows = await this.db.query<MessageRow>(
-      `SELECT id, session_id AS "sessionId", task_id AS "taskId", role, phase, model, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id = ? ORDER BY created_at, id LIMIT 2000`,
+      `SELECT id, session_id AS "sessionId", task_id AS "taskId", role, phase, model, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", compaction_anchor AS "compactionAnchor", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id = ? ORDER BY created_at, id LIMIT 2000`,
       [sessionId, taskId],
     );
     return rows.map(toMessage);
@@ -1312,7 +2048,7 @@ export class AdapterConversationStore implements ConversationStore {
   constructor(private readonly db: DbAdapter) {}
   async insert(message: ConversationMessage): Promise<void> {
     await this.db.execute(
-      `INSERT INTO messages (id, session_id, task_id, role, phase, model, content, has_thinking, token_count, compaction_boundary, created_at) VALUES (?, ?, NULL, ?, 'plan', NULL, ?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (id, session_id, task_id, role, phase, model, content, has_thinking, token_count, compaction_boundary, compaction_anchor, created_at) VALUES (?, ?, NULL, ?, 'plan', NULL, ?, ?, ?, ?, ?, ?)`,
       [
         message.id,
         message.sessionId,
@@ -1321,6 +2057,7 @@ export class AdapterConversationStore implements ConversationStore {
         Number(message.hasThinking),
         message.tokenCount,
         Number(message.compactionBoundary),
+        Number(message.compactionAnchor ?? false),
         message.createdAt,
       ],
     );
@@ -1374,7 +2111,7 @@ export class AdapterConversationStore implements ConversationStore {
         ]
       : [sessionId, ...(orgId ? [orgId] : []), options.limit + 1];
     const rows = await this.db.query<ConversationMessageRow>(
-      `SELECT id, session_id AS "sessionId", role, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ${beforeClause} ORDER BY created_at DESC, id DESC LIMIT ?`,
+      `SELECT id, session_id AS "sessionId", role, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", compaction_anchor AS "compactionAnchor", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ${beforeClause} ORDER BY created_at DESC, id DESC LIMIT ?`,
       params,
     );
     const hasMore = rows.length > options.limit;
@@ -1392,7 +2129,7 @@ export class AdapterConversationStore implements ConversationStore {
       ? "AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = messages.session_id AND sessions.org_id = ?)"
       : "";
     const rows = await this.db.query<ConversationMessageRow>(
-      `SELECT id, session_id AS "sessionId", role, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ORDER BY created_at, id`,
+      `SELECT id, session_id AS "sessionId", role, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", compaction_anchor AS "compactionAnchor", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ORDER BY created_at, id`,
       orgId ? [sessionId, orgId] : [sessionId],
     );
     return rows.map(toConversationMessage);

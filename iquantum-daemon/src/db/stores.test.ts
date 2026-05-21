@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { DbAdapter } from "./adapter";
 import {
   AdapterConversationStore,
+  AdapterFileSnapshotStore,
+  AdapterInstalledPluginStore,
   AdapterMemoryStore,
+  AdapterPermissionStore,
+  SqliteApprovalRequestStore,
   SqliteHookRunStore,
   SqliteMemoryStore,
   SqliteSessionStore,
@@ -138,14 +142,21 @@ describe("SqliteSessionStore", () => {
     expect(statements.map((statement) => statement.sql)).toEqual([
       expect.stringContaining("DELETE FROM tool_uses"),
       "DELETE FROM git_checkpoints WHERE session_id = ?",
+      "DELETE FROM file_snapshots WHERE session_id = ?",
+      "DELETE FROM permission_denials WHERE session_id = ?",
+      "DELETE FROM permission_allow_rules WHERE session_id = ?",
+      "DELETE FROM approval_requests WHERE session_id = ?",
+      "DELETE FROM memory_embeddings WHERE memory_id NOT IN (SELECT id FROM memories)",
       "DELETE FROM validate_runs WHERE session_id = ?",
       "DELETE FROM messages WHERE session_id = ?",
       "DELETE FROM plans WHERE session_id = ?",
       "DELETE FROM sessions WHERE id = ?",
     ]);
-    expect(statements.every(({ params }) => params[0] === "session-1")).toBe(
-      true,
-    );
+    expect(
+      statements
+        .filter(({ params }) => params.length > 0)
+        .every(({ params }) => params[0] === "session-1"),
+    ).toBe(true);
   });
 });
 
@@ -207,6 +218,8 @@ describe("SqliteMemoryStore", () => {
       userId: "user-1",
       orgId: null,
       type: "user",
+      scope: "user",
+      source: "manual",
       name: "test-memory",
       description: "desc",
       body: "body content",
@@ -319,6 +332,8 @@ describe("AdapterMemoryStore", () => {
       userId: "user-1",
       orgId: null,
       type: "feedback",
+      scope: "user",
+      source: "manual",
       name: "my-memory",
       description: "desc",
       body: "body",
@@ -329,6 +344,184 @@ describe("AdapterMemoryStore", () => {
 
     expect(statements.some((sql) => sql.includes("ON CONFLICT"))).toBe(true);
     expect(statements.some((sql) => sql.includes("DO UPDATE SET"))).toBe(true);
+  });
+});
+
+describe("AdapterFileSnapshotStore", () => {
+  it("diffs snapshots, summarizes turns, and evicts old rows", async () => {
+    const db = new RecordingSnapshotDb();
+    const store = new AdapterFileSnapshotStore(db);
+
+    const diff = await store.diff("session-1", 1, 2);
+    const turns = await store.listTurns("session-1");
+    await store.evict("session-1", 3);
+
+    expect(diff).toHaveLength(1);
+    expect(diff[0]?.filePath).toBe("src/a.ts");
+    expect(diff[0]?.patch).toContain("-before");
+    expect(diff[0]?.patch).toContain("+after");
+    expect(turns).toEqual([
+      { turnIndex: 1, fileCount: 1, savedAt: "2026-05-21T00:00:00.000Z" },
+      { turnIndex: 2, fileCount: 1, savedAt: "2026-05-21T00:01:00.000Z" },
+    ]);
+    expect(db.executed.at(-1)).toEqual({
+      sql: "DELETE FROM file_snapshots WHERE session_id = ? AND turn_index < ?",
+      params: ["session-1", 4],
+    });
+  });
+
+  it("uses upsert semantics for save and restores the persisted snapshot", async () => {
+    const db = new RecordingSnapshotDb();
+    const store = new AdapterFileSnapshotStore(db);
+    const snapshot = {
+      id: "snap-3",
+      sessionId: "session-1",
+      turnIndex: 3,
+      filePath: "src/b.ts",
+      contentHash: "hash-3",
+      content: "saved\n",
+      savedAt: "2026-05-21T00:02:00.000Z",
+    };
+
+    await store.save(snapshot);
+    const restored = await store.restore("session-1", 3);
+
+    expect(db.executed[0]?.sql).toContain("INSERT OR REPLACE");
+    expect(restored).toEqual([snapshot]);
+  });
+});
+
+describe("SqliteApprovalRequestStore", () => {
+  it("inserts, gets, and lists approval requests", async () => {
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const request = {
+      id: "approval-1",
+      sessionId: "session-1",
+      planId: "plan-1",
+      planContent: "ship it",
+      createdAt: "2026-05-21T00:00:00.000Z",
+      expiresAt: "2026-05-21T00:30:00.000Z",
+      status: "pending" as const,
+      feedback: null,
+    };
+    const store = new SqliteApprovalRequestStore({
+      query(sql: string) {
+        return {
+          run(...params: unknown[]) {
+            statements.push({ sql, params });
+          },
+          get() {
+            return request;
+          },
+          all() {
+            return [request];
+          },
+        };
+      },
+    } as never);
+
+    await store.insert(request);
+
+    expect(statements[0]?.sql).toContain("INSERT INTO approval_requests");
+    await expect(store.get("approval-1")).resolves.toEqual(request);
+    await expect(store.listBySession("session-1")).resolves.toEqual([request]);
+  });
+
+  it("updates approval state and re-reads the request", async () => {
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const store = new SqliteApprovalRequestStore({
+      query(sql: string) {
+        return {
+          run(...params: unknown[]) {
+            statements.push({ sql, params });
+          },
+          get() {
+            return {
+              id: "approval-1",
+              sessionId: "session-1",
+              planId: "plan-1",
+              planContent: "ship it",
+              createdAt: "2026-05-21T00:00:00.000Z",
+              expiresAt: "2026-05-21T00:30:00.000Z",
+              status: "approved",
+              feedback: "looks good",
+            };
+          },
+        };
+      },
+    } as never);
+
+    const updated = await store.applyDecision("approval-1", {
+      approved: true,
+      feedback: "looks good",
+    });
+
+    expect(statements[0]?.sql).toContain("UPDATE approval_requests");
+    expect(updated?.status).toBe("approved");
+    expect(updated?.feedback).toBe("looks good");
+  });
+});
+
+describe("AdapterPermissionStore", () => {
+  it("round-trips denials and allow-rules", async () => {
+    const db = new RecordingPermissionDb();
+    const store = new AdapterPermissionStore(db);
+
+    await store.insertDenial({
+      id: "denial-1",
+      sessionId: "session-1",
+      tool: "bash",
+      input: { cmd: "rm -rf" },
+      deniedBy: "rule",
+      reason: "dangerous",
+      createdAt: "2026-05-21T00:00:00.000Z",
+    });
+    const denials = await store.listDenials("session-1");
+    await store.insertAllowRule({
+      id: "rule-1",
+      sessionId: null,
+      orgId: null,
+      tool: "read_file",
+      inputPattern: "src/**",
+      createdAt: "2026-05-21T00:00:00.000Z",
+    });
+    const rules = await store.listAllowRules("session-1", "org-1");
+
+    expect(denials[0]).toMatchObject({
+      id: "denial-1",
+      deniedBy: "rule",
+      input: { cmd: "rm -rf" },
+    });
+    expect(rules[0]).toMatchObject({
+      id: "rule-1",
+      tool: "read_file",
+      inputPattern: "src/**",
+    });
+    expect(db.lastQueryParams).toEqual(["org-1", "session-1"]);
+  });
+});
+
+describe("AdapterInstalledPluginStore", () => {
+  it("upserts and re-fetches plugin records", async () => {
+    const db = new RecordingPluginDb();
+    const store = new AdapterInstalledPluginStore(db);
+
+    const record = await store.upsert(
+      {
+        name: "example",
+        version: "1.0.0",
+        description: "desc",
+        author: "author",
+        exports: [],
+      },
+      "2026-05-21T00:00:00.000Z",
+    );
+
+    expect(record.name).toBe("example");
+    expect(record.manifestJson).toContain('"name":"example"');
+    expect(db.executed.some((sql) => sql.includes("ON CONFLICT(name)"))).toBe(
+      true,
+    );
   });
 });
 
@@ -386,6 +579,164 @@ class RecordingConversationDb implements DbAdapter {
   }
 
   async execute(): Promise<void> {}
+
+  async transaction<T>(fn: (db: DbAdapter) => Promise<T>): Promise<T> {
+    return fn(this);
+  }
+
+  async close(): Promise<void> {}
+}
+
+class RecordingSnapshotDb implements DbAdapter {
+  readonly executed: Array<{ sql: string; params: unknown[] }> = [];
+  readonly saved = new Map<string, object>();
+
+  async query<T extends object>(
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<T[]> {
+    if (sql.includes("GROUP BY turn_index")) {
+      return [
+        {
+          turnIndex: 1,
+          fileCount: 1,
+          savedAt: "2026-05-21T00:00:00.000Z",
+        },
+        {
+          turnIndex: 2,
+          fileCount: 1,
+          savedAt: "2026-05-21T00:01:00.000Z",
+        },
+      ] as T[];
+    }
+
+    if (params[1] === 1) {
+      return [
+        {
+          id: "snap-1",
+          sessionId: "session-1",
+          turnIndex: 1,
+          filePath: "src/a.ts",
+          contentHash: "hash-1",
+          content: "before\n",
+          savedAt: "2026-05-21T00:00:00.000Z",
+        },
+      ] as T[];
+    }
+
+    const saved = this.saved.get(`${params[0]}:${params[1]}`);
+    if (saved) {
+      return [saved] as T[];
+    }
+
+    return [
+      {
+        id: "snap-2",
+        sessionId: "session-1",
+        turnIndex: 2,
+        filePath: "src/a.ts",
+        contentHash: "hash-2",
+        content: "after\n",
+        savedAt: "2026-05-21T00:01:00.000Z",
+      },
+    ] as T[];
+  }
+
+  async first<T extends object>(): Promise<T | null> {
+    return { maxTurn: 7 } as T;
+  }
+
+  async execute(sql: string, params: unknown[] = []): Promise<void> {
+    this.executed.push({ sql, params });
+    if (sql.includes("file_snapshots") && sql.includes("VALUES")) {
+      this.saved.set(`${params[1]}:${params[2]}`, {
+        id: params[0],
+        sessionId: params[1],
+        turnIndex: params[2],
+        filePath: params[3],
+        contentHash: params[4],
+        content: params[5],
+        savedAt: params[6],
+      });
+    }
+  }
+
+  async transaction<T>(fn: (db: DbAdapter) => Promise<T>): Promise<T> {
+    return fn(this);
+  }
+
+  async close(): Promise<void> {}
+}
+
+class RecordingPermissionDb implements DbAdapter {
+  lastQueryParams: unknown[] = [];
+
+  async query<T extends object>(
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<T[]> {
+    this.lastQueryParams = params;
+    if (sql.includes("permission_denials")) {
+      return [
+        {
+          id: "denial-1",
+          sessionId: "session-1",
+          tool: "bash",
+          input: '{"cmd":"rm -rf"}',
+          deniedBy: "rule",
+          reason: "dangerous",
+          createdAt: "2026-05-21T00:00:00.000Z",
+        },
+      ] as T[];
+    }
+
+    return [
+      {
+        id: "rule-1",
+        sessionId: null,
+        orgId: "org-1",
+        tool: "read_file",
+        inputPattern: "src/**",
+        createdAt: "2026-05-21T00:00:00.000Z",
+      },
+    ] as T[];
+  }
+
+  async first<T extends object>(): Promise<T | null> {
+    return null;
+  }
+
+  async execute(): Promise<void> {}
+
+  async transaction<T>(fn: (db: DbAdapter) => Promise<T>): Promise<T> {
+    return fn(this);
+  }
+
+  async close(): Promise<void> {}
+}
+
+class RecordingPluginDb implements DbAdapter {
+  readonly executed: string[] = [];
+
+  async query<T extends object>(): Promise<T[]> {
+    return [];
+  }
+
+  async first<T extends object>(): Promise<T | null> {
+    return {
+      name: "example",
+      version: "1.0.0",
+      description: "desc",
+      author: "author",
+      manifestJson:
+        '{"name":"example","version":"1.0.0","description":"desc","author":"author","exports":[]}',
+      installedAt: "2026-05-21T00:00:00.000Z",
+    } as T;
+  }
+
+  async execute(sql: string): Promise<void> {
+    this.executed.push(sql);
+  }
 
   async transaction<T>(fn: (db: DbAdapter) => Promise<T>): Promise<T> {
     return fn(this);

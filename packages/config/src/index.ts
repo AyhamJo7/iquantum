@@ -74,6 +74,15 @@ const envBoolean = z.preprocess((value) => {
   return value;
 }, z.boolean().default(false));
 
+const envBooleanDefault = (defaultValue: boolean) =>
+  z.preprocess((value) => {
+    if (value === undefined || value === "") return undefined;
+    if (typeof value === "string") {
+      return value.trim().toLowerCase() === "true";
+    }
+    return value;
+  }, z.boolean().default(defaultValue));
+
 const envSchema = z
   .object({
     ANTHROPIC_API_KEY: optionalNonEmptyString,
@@ -115,6 +124,8 @@ const envSchema = z
     SENTRY_DSN: optionalUrl,
     IQUANTUM_MEMORY_TOKENS: z.coerce.number().int().min(100).default(2000),
     IQUANTUM_AUTO_MEMORY: envBoolean,
+    IQUANTUM_AUTO_MEMORY_MAX: z.coerce.number().int().min(1).default(5),
+    IQUANTUM_AUTO_MEMORY_MODEL: optionalNonEmptyString,
     IQUANTUM_FILE_TOOLS: z.preprocess((value) => {
       if (value === undefined || value === "") return true;
       if (typeof value === "string")
@@ -140,6 +151,46 @@ const envSchema = z
       .min(1)
       .default("~/.iquantum/keybindings.json"),
     IQUANTUM_REVIEW_MODEL: optionalNonEmptyString,
+    IQUANTUM_COMPACTION_AUTO_THRESHOLD: z.coerce
+      .number()
+      .min(0)
+      .max(1)
+      .default(0.8),
+    IQUANTUM_COMPACTION_KEEP_TURNS: z.coerce.number().int().min(1).default(8),
+    IQUANTUM_COMPACTION_SUMMARY_TOKENS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .default(4000),
+    IQUANTUM_SNAPSHOTS: envBooleanDefault(true),
+    IQUANTUM_SNAPSHOT_MAX_TURNS: z.coerce.number().int().min(1).default(100),
+    IQUANTUM_MAX_AGENTS: z.coerce.number().int().min(1).default(4),
+    IQUANTUM_AGENT_MAX_TURNS: z.coerce.number().int().min(1).default(50),
+    IQUANTUM_MEMORY_RANKING: envBooleanDefault(true),
+    IQUANTUM_MEMORY_RANKING_MODEL: optionalNonEmptyString,
+    IQUANTUM_APPROVAL_MODE: z
+      .enum(["cli", "webhook", "slack", "auto"])
+      .default("cli"),
+    IQUANTUM_APPROVAL_WEBHOOK_URL: optionalUrl,
+    IQUANTUM_APPROVAL_WEBHOOK_SECRET: optionalNonEmptyString,
+    IQUANTUM_APPROVAL_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .default(1_800_000),
+    IQUANTUM_SLACK_TOKEN: optionalNonEmptyString,
+    IQUANTUM_SLACK_CHANNEL: optionalNonEmptyString,
+    IQUANTUM_SLACK_APPROVAL_WEBHOOK: optionalUrl,
+    IQUANTUM_SANDBOX_UPSTREAM_PROXY: envBoolean,
+    IQUANTUM_SANDBOX_CPU_SHARES: z.coerce.number().int().min(2).default(1024),
+    IQUANTUM_SANDBOX_MEMORY_LIMIT_MB: z.coerce
+      .number()
+      .int()
+      .min(128)
+      .default(2048),
+    IQUANTUM_SANDBOX_NETWORK: z
+      .enum(["none", "bridge", "host"])
+      .default("none"),
   })
   .superRefine((value, context) => {
     if (value.IQUANTUM_PROVIDER === "openai" && !value.IQUANTUM_BASE_URL) {
@@ -181,6 +232,8 @@ export interface IquantumConfig {
   sentryDsn: string | undefined;
   memoryTokens: number;
   autoMemory: boolean;
+  autoMemoryMax: number;
+  autoMemoryModel: string | undefined;
   fileTools: boolean;
   fileToolMaxBytes: number;
   webTools: boolean;
@@ -192,6 +245,26 @@ export interface IquantumConfig {
   skillsDir: string;
   keybindingsFile: string;
   reviewModel: string | undefined;
+  compactionAutoThreshold: number;
+  compactionKeepTurns: number;
+  compactionSummaryTokens: number;
+  snapshots: boolean;
+  snapshotMaxTurns: number;
+  maxAgents: number;
+  agentMaxTurns: number;
+  memoryRanking: boolean;
+  memoryRankingModel: string | undefined;
+  approvalMode: "cli" | "webhook" | "slack" | "auto";
+  approvalWebhookUrl: string | undefined;
+  approvalWebhookSecret: string | undefined;
+  approvalTimeoutMs: number;
+  slackToken: string | undefined;
+  slackChannel: string | undefined;
+  slackApprovalWebhook: string | undefined;
+  sandboxUpstreamProxy: boolean;
+  sandboxCpuShares: number;
+  sandboxMemoryLimitMb: number;
+  sandboxNetwork: "none" | "bridge" | "host";
 }
 
 export interface LoadConfigOptions {
@@ -242,6 +315,8 @@ export function loadConfig(
     sentryDsn: parsed.SENTRY_DSN,
     memoryTokens: parsed.IQUANTUM_MEMORY_TOKENS,
     autoMemory: parsed.IQUANTUM_AUTO_MEMORY,
+    autoMemoryMax: parsed.IQUANTUM_AUTO_MEMORY_MAX,
+    autoMemoryModel: parsed.IQUANTUM_AUTO_MEMORY_MODEL,
     fileTools: parsed.IQUANTUM_FILE_TOOLS,
     fileToolMaxBytes: parsed.IQUANTUM_FILE_TOOL_MAX_BYTES,
     webTools: parsed.IQUANTUM_WEB_TOOLS,
@@ -253,6 +328,26 @@ export function loadConfig(
     skillsDir: expandHome(parsed.IQUANTUM_SKILLS_DIR),
     keybindingsFile: expandHome(parsed.IQUANTUM_KEYBINDINGS_FILE),
     reviewModel: parsed.IQUANTUM_REVIEW_MODEL,
+    compactionAutoThreshold: parsed.IQUANTUM_COMPACTION_AUTO_THRESHOLD,
+    compactionKeepTurns: parsed.IQUANTUM_COMPACTION_KEEP_TURNS,
+    compactionSummaryTokens: parsed.IQUANTUM_COMPACTION_SUMMARY_TOKENS,
+    snapshots: parsed.IQUANTUM_SNAPSHOTS,
+    snapshotMaxTurns: parsed.IQUANTUM_SNAPSHOT_MAX_TURNS,
+    maxAgents: parsed.IQUANTUM_MAX_AGENTS,
+    agentMaxTurns: parsed.IQUANTUM_AGENT_MAX_TURNS,
+    memoryRanking: parsed.IQUANTUM_MEMORY_RANKING,
+    memoryRankingModel: parsed.IQUANTUM_MEMORY_RANKING_MODEL,
+    approvalMode: parsed.IQUANTUM_APPROVAL_MODE,
+    approvalWebhookUrl: parsed.IQUANTUM_APPROVAL_WEBHOOK_URL,
+    approvalWebhookSecret: parsed.IQUANTUM_APPROVAL_WEBHOOK_SECRET,
+    approvalTimeoutMs: parsed.IQUANTUM_APPROVAL_TIMEOUT_MS,
+    slackToken: parsed.IQUANTUM_SLACK_TOKEN,
+    slackChannel: parsed.IQUANTUM_SLACK_CHANNEL,
+    slackApprovalWebhook: parsed.IQUANTUM_SLACK_APPROVAL_WEBHOOK,
+    sandboxUpstreamProxy: parsed.IQUANTUM_SANDBOX_UPSTREAM_PROXY,
+    sandboxCpuShares: parsed.IQUANTUM_SANDBOX_CPU_SHARES,
+    sandboxMemoryLimitMb: parsed.IQUANTUM_SANDBOX_MEMORY_LIMIT_MB,
+    sandboxNetwork: parsed.IQUANTUM_SANDBOX_NETWORK,
   };
 }
 

@@ -19,12 +19,19 @@ export interface Memory {
   userId: string;
   orgId: string | null;
   type: MemoryType;
+  scope: "user" | "org";
+  source: "manual" | "auto";
   name: string;
   description: string;
   body: string;
   pinned: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AssistantMessage {
+  role: "assistant";
+  content: string;
 }
 
 export interface HookRun {
@@ -75,9 +82,21 @@ export type HookEvent =
       feedback: string;
       sessionId: string;
     }
+  | {
+      type: "post_sampling";
+      sessionId: string;
+      message: AssistantMessage;
+      turnIndex: number;
+    }
   | { type: "checkpoint_created"; commitHash: string; sessionId: string }
   | { type: "task_started"; taskId: string; prompt: string; sessionId: string }
   | { type: "task_completed"; taskId: string; sessionId: string };
+
+export interface HookResult {
+  block?: boolean;
+  message?: string;
+  mutatedMessage?: AssistantMessage;
+}
 
 export type SessionStatus =
   | "idle"
@@ -106,6 +125,10 @@ export interface Session {
   worktreePath: string | null;
   worktreeBranch: string | null;
   startCheckpointHash: string | null;
+  parentSessionId?: string | null;
+  agentName?: string | null;
+  agentColor?: string | null;
+  coordinatorMode?: boolean;
   userId: string | null;
   orgId: string | null;
   createdAt: string;
@@ -123,6 +146,119 @@ export interface Message {
   hasThinking: boolean;
   tokenCount: number;
   compactionBoundary: boolean;
+  compactionAnchor?: boolean;
+  createdAt: string;
+}
+
+export interface FileSnapshot {
+  id: string;
+  sessionId: string;
+  turnIndex: number;
+  filePath: string;
+  contentHash: string;
+  content: string;
+  savedAt: string;
+}
+
+export interface AgentManifest {
+  name: string;
+  prompt: string;
+  inheritMemory: boolean;
+  worktree: boolean;
+  tools?: string[];
+  maxTurns?: number;
+}
+
+export interface AgentEntry {
+  sessionId: string;
+  name: string;
+  colorIndex: number;
+  coordinatorSessionId: string;
+  status: "running" | "done" | "failed" | "killed";
+}
+
+export interface WorkerManifest {
+  workers: Array<{
+    name: string;
+    task: string;
+    dependsOn?: string[];
+    worktree: boolean;
+  }>;
+}
+
+export type ApprovalMode = "cli" | "webhook" | "slack" | "auto";
+
+export interface ApprovalRequest {
+  id: string;
+  sessionId: string;
+  planId: string;
+  planContent: string;
+  createdAt: string;
+  expiresAt: string;
+  status: "pending" | "approved" | "rejected";
+  feedback: string | null;
+}
+
+export interface ApprovalDecision {
+  approved: boolean;
+  feedback: string | null;
+}
+
+export interface Skill {
+  name: string;
+  description: string;
+  chatAvailable?: boolean;
+}
+
+export interface Hook {
+  name: string;
+  filePath: string;
+  events: HookEvent["type"][];
+}
+
+export interface BuiltinTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  mutates?: boolean;
+}
+
+export interface SlashCommand {
+  name: string;
+  description: string;
+  chatUnavailable?: boolean;
+}
+
+export type PluginExport =
+  | { type: "skill"; skill: Skill }
+  | { type: "hook"; hook: Hook }
+  | { type: "tool"; tool: BuiltinTool }
+  | { type: "command"; command: SlashCommand };
+
+export interface PluginManifest {
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  exports: PluginExport[];
+}
+
+export interface PermissionDenial {
+  id: string;
+  sessionId: string;
+  tool: string;
+  input: unknown;
+  deniedBy: "user" | "hook" | "rule";
+  reason: string | null;
+  createdAt: string;
+}
+
+export interface AllowRule {
+  id: string;
+  sessionId: string | null;
+  orgId: string | null;
+  tool: string;
+  inputPattern: string | null;
   createdAt: string;
 }
 

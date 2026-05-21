@@ -267,6 +267,114 @@ const migrations: readonly Migration[] = [
       ALTER TABLE sessions ADD COLUMN worktree_branch TEXT;
     `,
   },
+  {
+    version: 16,
+    sql: `
+      ALTER TABLE messages
+        ADD COLUMN compaction_anchor INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 17,
+    sql: `
+      CREATE TABLE file_snapshots (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        turn_index INTEGER NOT NULL,
+        file_path TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        content TEXT NOT NULL,
+        saved_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX idx_file_snapshots_dedup
+        ON file_snapshots(session_id, turn_index, file_path);
+    `,
+  },
+  {
+    version: 18,
+    sql: `
+      ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id);
+      ALTER TABLE sessions ADD COLUMN agent_name TEXT;
+      ALTER TABLE sessions ADD COLUMN agent_color TEXT;
+      ALTER TABLE sessions ADD COLUMN coordinator_mode INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 19,
+    sql: `
+      ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'user';
+      ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'manual';
+    `,
+  },
+  {
+    version: 20,
+    sql: `
+      CREATE TABLE memory_embeddings (
+        memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+        model TEXT NOT NULL,
+        embedding BLOB NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    version: 21,
+    sql: `
+      CREATE TABLE permission_denials (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        tool TEXT NOT NULL,
+        input TEXT NOT NULL,
+        denied_by TEXT NOT NULL,
+        reason TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_permission_denials_session_id
+        ON permission_denials(session_id);
+
+      CREATE TABLE permission_allow_rules (
+        id TEXT PRIMARY KEY,
+        session_id TEXT REFERENCES sessions(id),
+        org_id TEXT REFERENCES organizations(id),
+        tool TEXT NOT NULL,
+        input_pattern TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_permission_allow_rules_session_id
+        ON permission_allow_rules(session_id);
+    `,
+  },
+  {
+    version: 22,
+    sql: `
+      CREATE TABLE installed_plugins (
+        name TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        description TEXT NOT NULL,
+        author TEXT NOT NULL,
+        manifest_json TEXT NOT NULL,
+        installed_at TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    version: 23,
+    sql: `
+      CREATE TABLE approval_requests (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        plan_id TEXT NOT NULL REFERENCES plans(id),
+        plan_content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        status TEXT NOT NULL
+          CHECK (status IN ('pending', 'approved', 'rejected')),
+        feedback TEXT
+      );
+      CREATE INDEX idx_approval_requests_session_id
+        ON approval_requests(session_id, created_at);
+    `,
+  },
 ];
 
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
@@ -349,6 +457,10 @@ const postgresBootstrapStatements = [
     worktree_path TEXT,
     worktree_branch TEXT,
     start_checkpoint_hash TEXT,
+    parent_session_id TEXT REFERENCES sessions(id),
+    agent_name TEXT,
+    agent_color TEXT,
+    coordinator_mode INTEGER NOT NULL DEFAULT 0,
     user_id TEXT REFERENCES users(id),
     org_id TEXT REFERENCES organizations(id),
     created_at TEXT NOT NULL,
@@ -374,6 +486,7 @@ const postgresBootstrapStatements = [
     has_thinking INTEGER NOT NULL DEFAULT 0,
     token_count INTEGER NOT NULL,
     compaction_boundary INTEGER NOT NULL DEFAULT 0,
+    compaction_anchor INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS validate_runs (
@@ -464,6 +577,8 @@ const postgresBootstrapStatements = [
     user_id     TEXT NOT NULL,
     org_id      TEXT,
     type        TEXT NOT NULL CHECK (type IN ('user','feedback','project','reference')),
+    scope       TEXT NOT NULL DEFAULT 'user',
+    source      TEXT NOT NULL DEFAULT 'manual',
     name        TEXT NOT NULL,
     description TEXT NOT NULL,
     body        TEXT NOT NULL,
@@ -483,6 +598,61 @@ const postgresBootstrapStatements = [
     created_at  TEXT NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS idx_hook_runs_session_id ON hook_runs(session_id)",
+  `CREATE TABLE IF NOT EXISTS file_snapshots (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    turn_index INTEGER NOT NULL,
+    file_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    content TEXT NOT NULL,
+    saved_at TEXT NOT NULL
+  )`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_file_snapshots_dedup ON file_snapshots(session_id, turn_index, file_path)",
+  `CREATE TABLE IF NOT EXISTS memory_embeddings (
+    memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+    model TEXT NOT NULL,
+    embedding BYTEA NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS permission_denials (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    tool TEXT NOT NULL,
+    input TEXT NOT NULL,
+    denied_by TEXT NOT NULL,
+    reason TEXT,
+    created_at TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_permission_denials_session_id ON permission_denials(session_id)",
+  `CREATE TABLE IF NOT EXISTS permission_allow_rules (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES sessions(id),
+    org_id TEXT REFERENCES organizations(id),
+    tool TEXT NOT NULL,
+    input_pattern TEXT,
+    created_at TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_permission_allow_rules_session_id ON permission_allow_rules(session_id)",
+  `CREATE TABLE IF NOT EXISTS installed_plugins (
+    name TEXT PRIMARY KEY,
+    version TEXT NOT NULL,
+    description TEXT NOT NULL,
+    author TEXT NOT NULL,
+    manifest_json TEXT NOT NULL,
+    installed_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS approval_requests (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    plan_id TEXT NOT NULL REFERENCES plans(id),
+    plan_content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    status TEXT NOT NULL
+      CHECK (status IN ('pending', 'approved', 'rejected')),
+    feedback TEXT
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_approval_requests_session_id ON approval_requests(session_id, created_at)",
   `INSERT INTO schema_migrations (version, applied_at)
    VALUES (${latestSchemaVersion}, CURRENT_TIMESTAMP)
    ON CONFLICT (version) DO NOTHING`,

@@ -32,6 +32,27 @@
       "path": "./packages/context-window"
     },
     {
+      "path": "./packages/compaction"
+    },
+    {
+      "path": "./packages/snapshots"
+    },
+    {
+      "path": "./packages/agent"
+    },
+    {
+      "path": "./packages/coordinator"
+    },
+    {
+      "path": "./packages/approval"
+    },
+    {
+      "path": "./packages/plugins"
+    },
+    {
+      "path": "./packages/permissions"
+    },
+    {
       "path": "./packages/ui-core"
     },
     {
