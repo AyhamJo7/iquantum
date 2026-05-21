@@ -1,7 +1,6 @@
 import type { HookEvent, HookResult, HookRun } from "@iquantum/types";
 
-export type { HookEvent } from "@iquantum/types";
-export type { HookResult } from "@iquantum/types";
+export type { HookEvent, HookResult } from "@iquantum/types";
 export { InvalidHookError, JsHook } from "./js-hook";
 export { HookLoader } from "./loader";
 export { HookRunner } from "./runner";

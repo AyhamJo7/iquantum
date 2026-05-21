@@ -12,8 +12,8 @@ import type {
   Memory,
   Message,
   PermissionDenial,
-  PluginManifest,
   Plan,
+  PluginManifest,
   Session,
   SessionStatus,
   ValidateRun,
@@ -1051,15 +1051,17 @@ export class SqliteApprovalRequestStore implements ApprovalRequestStore {
   }
 
   async get(id: string): Promise<ApprovalRequest | null> {
-    return (this.#db
-      .query(
-        `SELECT id, session_id AS "sessionId", plan_id AS "planId",
+    return (
+      (this.#db
+        .query(
+          `SELECT id, session_id AS "sessionId", plan_id AS "planId",
                 plan_content AS "planContent", created_at AS "createdAt",
                 expires_at AS "expiresAt", status, feedback
          FROM approval_requests
          WHERE id = ?`,
-      )
-      .get(id) as ApprovalRequest | null) ?? null;
+        )
+        .get(id) as ApprovalRequest | null) ?? null
+    );
   }
 
   async listBySession(sessionId: string): Promise<ApprovalRequest[]> {
@@ -1201,15 +1203,17 @@ export class SqliteInstalledPluginStore implements InstalledPluginStore {
   }
 
   async get(name: string): Promise<InstalledPluginRecord | null> {
-    return (this.#db
-      .query(
-        `SELECT name, version, description, author,
+    return (
+      (this.#db
+        .query(
+          `SELECT name, version, description, author,
                 manifest_json AS "manifestJson",
                 installed_at AS "installedAt"
          FROM installed_plugins
          WHERE name = ?`,
-      )
-      .get(name) as InstalledPluginRecord | null) ?? null;
+        )
+        .get(name) as InstalledPluginRecord | null) ?? null
+    );
   }
 
   async list(): Promise<InstalledPluginRecord[]> {
@@ -1225,9 +1229,7 @@ export class SqliteInstalledPluginStore implements InstalledPluginStore {
   }
 
   async delete(name: string): Promise<void> {
-    this.#db
-      .query("DELETE FROM installed_plugins WHERE name = ?")
-      .run(name);
+    this.#db.query("DELETE FROM installed_plugins WHERE name = ?").run(name);
   }
 }
 
@@ -1750,23 +1752,21 @@ function diffSnapshots(
   );
   const filePaths = new Set([...fromMap.keys(), ...toMap.keys()]);
 
-  return [...filePaths]
-    .sort()
-    .flatMap((filePath) => {
-      const before = fromMap.get(filePath)?.content ?? "";
-      const after = toMap.get(filePath)?.content ?? "";
+  return [...filePaths].sort().flatMap((filePath) => {
+    const before = fromMap.get(filePath)?.content ?? "";
+    const after = toMap.get(filePath)?.content ?? "";
 
-      if (before === after) {
-        return [];
-      }
+    if (before === after) {
+      return [];
+    }
 
-      return [
-        {
-          filePath,
-          patch: createPatch(filePath, before, after, "turn-from", "turn-to"),
-        },
-      ];
-    });
+    return [
+      {
+        filePath,
+        patch: createPatch(filePath, before, after, "turn-from", "turn-to"),
+      },
+    ];
+  });
 }
 
 function decodeContentBlocks(content: string): ConversationContentBlock[] {

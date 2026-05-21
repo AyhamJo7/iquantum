@@ -4,8 +4,8 @@ import {
   AdapterConversationStore,
   AdapterFileSnapshotStore,
   AdapterInstalledPluginStore,
-  AdapterPermissionStore,
   AdapterMemoryStore,
+  AdapterPermissionStore,
   SqliteApprovalRequestStore,
   SqliteHookRunStore,
   SqliteMemoryStore,
@@ -518,7 +518,7 @@ describe("AdapterInstalledPluginStore", () => {
     );
 
     expect(record.name).toBe("example");
-    expect(record.manifestJson).toContain("\"name\":\"example\"");
+    expect(record.manifestJson).toContain('"name":"example"');
     expect(db.executed.some((sql) => sql.includes("ON CONFLICT(name)"))).toBe(
       true,
     );
@@ -682,7 +682,7 @@ class RecordingPermissionDb implements DbAdapter {
           id: "denial-1",
           sessionId: "session-1",
           tool: "bash",
-          input: "{\"cmd\":\"rm -rf\"}",
+          input: '{"cmd":"rm -rf"}',
           deniedBy: "rule",
           reason: "dangerous",
           createdAt: "2026-05-21T00:00:00.000Z",
@@ -729,7 +729,7 @@ class RecordingPluginDb implements DbAdapter {
       description: "desc",
       author: "author",
       manifestJson:
-        "{\"name\":\"example\",\"version\":\"1.0.0\",\"description\":\"desc\",\"author\":\"author\",\"exports\":[]}",
+        '{"name":"example","version":"1.0.0","description":"desc","author":"author","exports":[]}',
       installedAt: "2026-05-21T00:00:00.000Z",
     } as T;
   }
