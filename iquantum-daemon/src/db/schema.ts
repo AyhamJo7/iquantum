@@ -375,6 +375,12 @@ const migrations: readonly Migration[] = [
         ON approval_requests(session_id, created_at);
     `,
   },
+  {
+    version: 24,
+    sql: `
+      ALTER TABLE messages ADD COLUMN body_compressed BLOB;
+    `,
+  },
 ];
 
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
@@ -487,6 +493,7 @@ const postgresBootstrapStatements = [
     token_count INTEGER NOT NULL,
     compaction_boundary INTEGER NOT NULL DEFAULT 0,
     compaction_anchor INTEGER NOT NULL DEFAULT 0,
+    body_compressed BYTEA,
     created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS validate_runs (

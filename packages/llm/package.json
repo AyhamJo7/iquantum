@@ -9,7 +9,8 @@
     "@iquantum/file-tools": "workspace:*",
     "@iquantum/sandbox": "workspace:*",
     "@iquantum/types": "workspace:*",
-    "openai": "latest"
+    "openai": "latest",
+    "zod": "^4.4.3"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"

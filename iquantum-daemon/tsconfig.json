@@ -47,6 +47,12 @@
       "path": "../packages/context-window"
     },
     {
+      "path": "../packages/compaction"
+    },
+    {
+      "path": "../packages/snapshots"
+    },
+    {
       "path": "../packages/web-tools"
     }
   ]

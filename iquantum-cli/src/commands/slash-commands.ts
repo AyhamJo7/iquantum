@@ -321,11 +321,29 @@ const commandDefs: LocalCommand[] = [
   },
   {
     name: "restore",
-    description: "List checkpoints or restore to one (/restore <hash>)",
+    description:
+      "List checkpoints or restore checkpoint/snapshot (/restore <hash|turn>)",
     async run(args, ctx) {
       const hash = args.trim();
 
       if (hash) {
+        if (/^\d+$/.test(hash)) {
+          if (!ctx.client.restoreSnapshot) {
+            sysError(ctx, "Snapshot restore is not supported by this client.");
+            return;
+          }
+          try {
+            await ctx.client.restoreSnapshot(ctx.sessionId, Number(hash));
+            sysInfo(ctx, `Restored snapshot turn ${hash}.`);
+          } catch (e) {
+            sysError(
+              ctx,
+              `Snapshot restore failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+          return;
+        }
+
         if (!COMMIT_HASH_RE.test(hash)) {
           sysError(ctx, "Invalid commit hash.");
           return;
@@ -364,6 +382,66 @@ const commandDefs: LocalCommand[] = [
         );
       } catch {
         sysError(ctx, "Failed to list checkpoints.");
+      }
+    },
+  },
+  {
+    name: "snapshots",
+    description: "List file snapshots or diff turns (/snapshots [from to])",
+    async run(args, ctx) {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      if (!ctx.client.listSnapshots || !ctx.client.diffSnapshots) {
+        sysError(ctx, "Snapshots are not supported by this client.");
+        return;
+      }
+
+      try {
+        if (parts.length === 2 && parts.every((part) => /^\d+$/.test(part))) {
+          const diff = await ctx.client.diffSnapshots(
+            ctx.sessionId,
+            Number(parts[0]),
+            Number(parts[1]),
+          );
+          if (!diff.length) {
+            sysInfo(ctx, "No snapshot changes.");
+            return;
+          }
+          const patchText = diff.map((entry) => entry.patch).join("\n");
+          const lines = patchText.split("\n");
+          const MAX_LINES = 200;
+          const truncated =
+            lines.length > MAX_LINES
+              ? `${lines.slice(0, MAX_LINES).join("\n")}\n… (${lines.length - MAX_LINES} more lines)`
+              : patchText;
+          sysInfo(ctx, truncated);
+          return;
+        }
+
+        if (parts.length > 0) {
+          sysError(ctx, "Usage: /snapshots [from-turn to-turn]");
+          return;
+        }
+
+        const turns = await ctx.client.listSnapshots(ctx.sessionId);
+        if (!turns.length) {
+          sysInfo(ctx, "No snapshots available.");
+          return;
+        }
+
+        sysInfo(
+          ctx,
+          `Snapshots:\n${turns
+            .map(
+              (turn) =>
+                `  ${String(turn.turnIndex).padEnd(5)} ${turn.fileCount} files  ${turn.savedAt}`,
+            )
+            .join("\n")}\n\nUse /restore <turn> to restore a snapshot.`,
+        );
+      } catch (e) {
+        sysError(
+          ctx,
+          `Snapshots failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     },
   },

@@ -90,6 +90,13 @@ export interface ConversationControllerOptions {
   memoryOrgId?: string | null;
   autoMemory?: boolean;
   hookRunner?: Pick<HookRunner, "gate">;
+  snapshotStore?: {
+    saveFilesFromSandbox(
+      sessionId: string,
+      turnIndex: number,
+      filePaths: readonly string[],
+    ): Promise<void>;
+  };
   maxResponseTokens?: number;
   maxToolTurns?: number;
   now?: () => string;
@@ -119,6 +126,7 @@ export class ConversationController {
   readonly #memoryOrgId: string | null;
   readonly #autoMemory: boolean;
   readonly #hookRunner: Pick<HookRunner, "gate"> | undefined;
+  readonly #snapshotStore: ConversationControllerOptions["snapshotStore"];
   readonly #maxResponseTokens: number;
   readonly #maxToolTurns: number;
   readonly #now: () => string;
@@ -126,6 +134,7 @@ export class ConversationController {
   readonly #tokenCounter: typeof countTokens;
   readonly #memoryTokenCounts = new Map<string, number>();
   readonly #systemPromptTokenCounts = new Map<string, number>();
+  readonly #snapshotTurnIndexes = new Map<string, number>();
   #abortController: AbortController | null = null;
   #currentMemoryBlock: { text: string; tokenCount: number } | null | undefined;
 
@@ -144,6 +153,7 @@ export class ConversationController {
     this.#memoryOrgId = options.memoryOrgId ?? null;
     this.#autoMemory = options.autoMemory ?? false;
     this.#hookRunner = options.hookRunner;
+    this.#snapshotStore = options.snapshotStore;
     this.#maxResponseTokens = options.maxResponseTokens ?? 2000;
     this.#maxToolTurns = options.maxToolTurns ?? MAX_TOOL_TURNS_DEFAULT;
     this.#now = options.now ?? (() => new Date().toISOString());
@@ -268,6 +278,12 @@ export class ConversationController {
     this.#systemPromptTokenCounts.delete(sessionId);
   }
 
+  clearSession(sessionId: string): void {
+    this.#snapshotTurnIndexes.delete(sessionId);
+    this.#memoryTokenCounts.delete(sessionId);
+    this.#systemPromptTokenCounts.delete(sessionId);
+  }
+
   async #runTextLoop(
     sessionId: string,
     abortController: AbortController,
@@ -292,6 +308,7 @@ export class ConversationController {
       await this.#maybeAutoRemember(sessionId, userId, orgId).catch(
         () => undefined,
       );
+      await this.#compactor?.maybeCompact(sessionId);
       this.#streams.publish(sessionId, { type: "done" });
     }
   }
@@ -344,6 +361,7 @@ export class ConversationController {
         await this.#maybeAutoRemember(sessionId, userId, orgId).catch(
           () => undefined,
         );
+        await this.#compactor?.maybeCompact(sessionId);
         this.#streams.publish(sessionId, { type: "done" });
         return;
       }
@@ -438,6 +456,9 @@ export class ConversationController {
           ? await builtinTool.execute(toolUse.input)
           : ((await this.#mcpClient?.callTool(toolUse.name, toolUse.input)) ??
             "Tool unavailable.");
+        if (builtinTool?.mutates) {
+          await this.#snapshotMutatedFiles(sessionId, toolUse.input);
+        }
       } catch (e) {
         resultText = `Tool error: ${e instanceof Error ? e.message : String(e)}`;
       }
@@ -452,6 +473,28 @@ export class ConversationController {
     ];
     await this.#store.insert(
       this.#newMessageWithContent(sessionId, "tool_result", resultContent),
+    );
+  }
+
+  async #snapshotMutatedFiles(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.#snapshotStore) {
+      return;
+    }
+
+    const filePaths = snapshotPathsFromToolInput(input);
+    if (filePaths.length === 0) {
+      return;
+    }
+
+    const turnIndex = this.#snapshotTurnIndexes.get(sessionId) ?? 0;
+    this.#snapshotTurnIndexes.set(sessionId, turnIndex + 1);
+    await this.#snapshotStore.saveFilesFromSandbox(
+      sessionId,
+      turnIndex,
+      filePaths,
     );
   }
 
@@ -609,4 +652,31 @@ export function contentToText(message: ConversationMessage): string {
   return message.content
     .map((block) => (typeof block.text === "string" ? block.text : ""))
     .join("\n");
+}
+
+function snapshotPathsFromToolInput(input: Record<string, unknown>): string[] {
+  const paths = new Set<string>();
+  for (const key of ["path", "filePath", "targetPath"]) {
+    const value = input[key];
+    if (typeof value === "string") {
+      paths.add(value);
+    }
+  }
+
+  const files = input.files;
+  if (Array.isArray(files)) {
+    for (const file of files) {
+      if (typeof file === "string") {
+        paths.add(file);
+      } else if (typeof file === "object" && file !== null) {
+        const path = (file as { path?: unknown; filePath?: unknown }).path;
+        const filePath = (file as { path?: unknown; filePath?: unknown })
+          .filePath;
+        if (typeof path === "string") paths.add(path);
+        if (typeof filePath === "string") paths.add(filePath);
+      }
+    }
+  }
+
+  return [...paths];
 }

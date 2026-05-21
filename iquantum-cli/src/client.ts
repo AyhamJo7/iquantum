@@ -3,6 +3,8 @@ import type { ServerStreamFrame } from "@iquantum/protocol";
 import type {
   ContextStats,
   EffortLevel,
+  FileSnapshotDiff,
+  FileSnapshotTurnSummary,
   GitCheckpoint,
   Memory,
   Plan,
@@ -35,6 +37,17 @@ export interface DaemonClient {
   compact(
     sessionId: string,
   ): Promise<{ compacted: boolean; summary: string | null }>;
+  listSnapshots?(sessionId: string): Promise<FileSnapshotTurnSummary[]>;
+  getSnapshot?(
+    sessionId: string,
+    turnIndex: number,
+  ): Promise<Record<string, string>>;
+  restoreSnapshot?(sessionId: string, turnIndex: number): Promise<void>;
+  diffSnapshots?(
+    sessionId: string,
+    fromTurn: number,
+    toTurn: number,
+  ): Promise<FileSnapshotDiff[]>;
   getMessages(
     sessionId: string,
     options?: { before?: string; limit?: number },
@@ -222,6 +235,38 @@ export class HttpDaemonClient implements DaemonClient {
     sessionId: string,
   ): Promise<{ compacted: boolean; summary: string | null }> {
     return this.#post(`/sessions/${sessionId}/compact`);
+  }
+
+  async listSnapshots(sessionId: string): Promise<FileSnapshotTurnSummary[]> {
+    const response = await this.#get<{ turns: FileSnapshotTurnSummary[] }>(
+      `/sessions/${sessionId}/snapshots`,
+    );
+    return response.turns;
+  }
+
+  async getSnapshot(
+    sessionId: string,
+    turnIndex: number,
+  ): Promise<Record<string, string>> {
+    const response = await this.#get<{ files: Record<string, string> }>(
+      `/sessions/${sessionId}/snapshots/${turnIndex}`,
+    );
+    return response.files;
+  }
+
+  async restoreSnapshot(sessionId: string, turnIndex: number): Promise<void> {
+    await this.#post(`/sessions/${sessionId}/snapshots/${turnIndex}/restore`);
+  }
+
+  async diffSnapshots(
+    sessionId: string,
+    fromTurn: number,
+    toTurn: number,
+  ): Promise<FileSnapshotDiff[]> {
+    const response = await this.#get<{ diff: FileSnapshotDiff[] }>(
+      `/sessions/${sessionId}/snapshots/diff?from=${fromTurn}&to=${toTurn}`,
+    );
+    return response.diff;
   }
 
   getMessages(

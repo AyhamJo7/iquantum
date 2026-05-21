@@ -52,6 +52,7 @@ export interface DaemonServerOptions {
   streams: DaemonStreams;
   conversations?: DaemonConversations;
   compaction?: DaemonCompaction;
+  snapshots?: DaemonSnapshots;
   permissions?: DaemonPermissions;
   mcpRegistry?: DaemonMcpRegistry;
   hooks?: DaemonHooks;
@@ -163,7 +164,14 @@ export interface DaemonConversations {
 }
 
 export interface DaemonCompaction {
-  compact(sessionId: string): Promise<unknown | null>;
+  compact(sessionId: string): Promise<{ summary: { content: string } } | null>;
+}
+
+export interface DaemonSnapshots {
+  listTurns(sessionId: string): Promise<unknown>;
+  restore(sessionId: string, turnIndex: number): Promise<Map<string, string>>;
+  restoreToSandbox(sessionId: string, turnIndex: number): Promise<void>;
+  diff(sessionId: string, fromTurn: number, toTurn: number): Promise<unknown>;
 }
 
 interface ExportMessage {
@@ -728,6 +736,65 @@ async function handleRequest(
     }
 
     if (
+      request.method === "GET" &&
+      parts.length === 3 &&
+      parts[2] === "snapshots"
+    ) {
+      const snapshots = requireSnapshots(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      return Response.json({ turns: await snapshots.listTurns(sessionId) });
+    }
+
+    if (
+      request.method === "GET" &&
+      parts.length === 4 &&
+      parts[2] === "snapshots" &&
+      parts[3] === "diff"
+    ) {
+      const snapshots = requireSnapshots(options);
+      const from = parseTurnIndex(url.searchParams.get("from"));
+      const to = parseTurnIndex(url.searchParams.get("to"));
+      if (from === null || to === null) {
+        return Response.json(
+          { error: "from and to query params are required turn indexes" },
+          { status: 400 },
+        );
+      }
+      await options.sessions.getSession(sessionId, context?.orgId);
+      return Response.json({ diff: await snapshots.diff(sessionId, from, to) });
+    }
+
+    if (
+      request.method === "GET" &&
+      parts.length === 4 &&
+      parts[2] === "snapshots"
+    ) {
+      const turnIndex = parseTurnIndex(parts[3]);
+      if (turnIndex === null) return notFound();
+      const snapshots = requireSnapshots(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      return Response.json({
+        files: Object.fromEntries(
+          await snapshots.restore(sessionId, turnIndex),
+        ),
+      });
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 5 &&
+      parts[2] === "snapshots" &&
+      parts[4] === "restore"
+    ) {
+      const turnIndex = parseTurnIndex(parts[3]);
+      if (turnIndex === null) return notFound();
+      const snapshots = requireSnapshots(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      await snapshots.restoreToSandbox(sessionId, turnIndex);
+      return Response.json({ ok: true });
+    }
+
+    if (
       request.method === "POST" &&
       parts.length === 3 &&
       parts[2] === "permission"
@@ -827,8 +894,11 @@ async function handleRequest(
     ) {
       const compaction = requireCompaction(options);
       await options.sessions.getSession(sessionId, context?.orgId);
-      const summary = await compaction.compact(sessionId);
-      return Response.json({ compacted: summary !== null, summary });
+      const result = await compaction.compact(sessionId);
+      return Response.json({
+        compacted: result !== null,
+        summary: result?.summary.content ?? null,
+      });
     }
 
     if (
@@ -1207,6 +1277,14 @@ function requireCompaction(options: DaemonServerOptions): DaemonCompaction {
   return options.compaction;
 }
 
+function requireSnapshots(options: DaemonServerOptions): DaemonSnapshots {
+  if (!options.snapshots) {
+    throw new Error("SnapshotController is not configured");
+  }
+
+  return options.snapshots;
+}
+
 function requirePermissions(options: DaemonServerOptions): DaemonPermissions {
   if (!options.permissions) {
     throw new Error("PermissionGate is not configured");
@@ -1580,6 +1658,14 @@ function mergeLiveContextStats(
     ...merged,
     available: Math.max(0, merged.budget - used),
   };
+}
+
+function parseTurnIndex(value: string | null | undefined): number | null {
+  if (value === null || value === undefined || !/^\d+$/.test(value)) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function toErrorResponse(

@@ -88,6 +88,15 @@ export interface PIVEngineOptions {
   memoryBlock?: string;
   permissionGate?: PermissionRequester;
   hookRunner?: Pick<HookRunner, "fire" | "gate">;
+  compactionService?: { maybeCompact(sessionId: string): Promise<unknown> };
+  snapshotStore?: {
+    saveFilesFromSandbox(
+      sessionId: string,
+      turnIndex: number,
+      filePaths: readonly string[],
+    ): Promise<void>;
+    restoreToSandbox(sessionId: string, turnIndex: number): Promise<void>;
+  };
   requireApproval?: boolean;
   autoApprove?: boolean;
   repoMapBuilder?: (
@@ -183,6 +192,10 @@ export class PIVEngine {
   #effort: EffortLevel;
   readonly #permissionGate: PermissionRequester | undefined;
   readonly #hookRunner: Pick<HookRunner, "fire" | "gate"> | undefined;
+  readonly #compactionService:
+    | { maybeCompact(sessionId: string): Promise<unknown> }
+    | undefined;
+  readonly #snapshotStore: PIVEngineOptions["snapshotStore"];
   readonly #requireApproval: boolean;
   readonly #autoApprove: boolean;
   readonly #repoMapBuilder: NonNullable<PIVEngineOptions["repoMapBuilder"]>;
@@ -200,6 +213,8 @@ export class PIVEngine {
   #nextPlanId: string | undefined;
   #retryCount = 0;
   #validateAttempt = 0;
+  #snapshotTurnIndex = 0;
+  #lastPreApplySnapshotTurn: number | null = null;
 
   constructor(options: PIVEngineOptions) {
     this.#sessionId = options.sessionId;
@@ -219,6 +234,8 @@ export class PIVEngine {
     this.#effort = options.effort ?? "normal";
     this.#permissionGate = options.permissionGate;
     this.#hookRunner = options.hookRunner;
+    this.#compactionService = options.compactionService;
+    this.#snapshotStore = options.snapshotStore;
     this.#requireApproval = options.requireApproval ?? false;
     this.#autoApprove = options.autoApprove ?? false;
     this.#repoMapBuilder = options.repoMapBuilder ?? buildRepoMap;
@@ -359,6 +376,7 @@ export class PIVEngine {
       }
 
       const passed = await this.#validate();
+      await this.#compactionService?.maybeCompact(this.#sessionId);
 
       if (passed) {
         return;
@@ -413,8 +431,26 @@ export class PIVEngine {
       }
     }
 
+    const snapshotFiles = previews.map((preview) => preview.file);
+    if (this.#snapshotStore && snapshotFiles.length > 0) {
+      const preApplyTurn = this.#snapshotTurnIndex++;
+      await this.#snapshotStore.saveFilesFromSandbox(
+        this.#sessionId,
+        preApplyTurn,
+        snapshotFiles,
+      );
+      this.#lastPreApplySnapshotTurn = preApplyTurn;
+    }
+
     try {
       await this.#diffEngine.apply(this.#sessionId, content);
+      if (this.#snapshotStore && snapshotFiles.length > 0) {
+        await this.#snapshotStore.saveFilesFromSandbox(
+          this.#sessionId,
+          this.#snapshotTurnIndex++,
+          snapshotFiles,
+        );
+      }
       return true;
     } catch (error) {
       if (!(error instanceof DiffApplyError)) {
@@ -494,6 +530,12 @@ export class PIVEngine {
     });
 
     if (!run.passed) {
+      if (this.#snapshotStore && this.#lastPreApplySnapshotTurn !== null) {
+        await this.#snapshotStore.restoreToSandbox(
+          this.#sessionId,
+          this.#lastPreApplySnapshotTurn,
+        );
+      }
       await this.#insertMessage(
         "tool_result",
         "validate",
@@ -504,6 +546,7 @@ export class PIVEngine {
     }
 
     await this.#sandbox.syncToHost(this.#sessionId);
+    this.#lastPreApplySnapshotTurn = null;
     const checkpoint = await this.#gitManager.checkpoint(
       this.#sessionId,
       `iquantum: ${shortTask(this.#taskPrompt ?? "validated change")}`,

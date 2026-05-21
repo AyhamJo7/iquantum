@@ -142,6 +142,42 @@ describe("PIVEngine", () => {
     ).toBe(true);
   });
 
+  it("restores the pre-apply snapshot before retrying failed validation", async () => {
+    const snapshots = {
+      saved: [] as Array<{ turnIndex: number; filePaths: readonly string[] }>,
+      restored: [] as number[],
+      async saveFilesFromSandbox(
+        _sessionId: string,
+        turnIndex: number,
+        filePaths: readonly string[],
+      ) {
+        this.saved.push({ turnIndex, filePaths });
+      },
+      async restoreToSandbox(_sessionId: string, turnIndex: number) {
+        this.restored.push(turnIndex);
+      },
+    };
+    const harness = createHarness({
+      completions: ["plan", validDiff("bad"), validDiff("good")],
+      validationResults: [
+        execResult("", "tests failed", 1),
+        execResult("ok", "", 0),
+      ],
+      snapshotStore: snapshots,
+    });
+
+    const plan = await harness.engine.startTask("fix tests");
+    await harness.engine.approve(plan.id);
+
+    expect(snapshots.saved).toEqual([
+      { turnIndex: 0, filePaths: ["src/a.ts"] },
+      { turnIndex: 1, filePaths: ["src/a.ts"] },
+      { turnIndex: 2, filePaths: ["src/a.ts"] },
+      { turnIndex: 3, filePaths: ["src/a.ts"] },
+    ]);
+    expect(snapshots.restored).toEqual([0]);
+  });
+
   it("previews diffs and waits for approval before applying them", async () => {
     const harness = createHarness({
       completions: ["plan", validDiff()],
@@ -414,13 +450,12 @@ describe("PIVEngine", () => {
 
     await harness.engine.startTask("edit code");
 
+    const content = String(harness.completionCalls[0]?.messages[0]?.content);
     expect(harness.completionCalls[0]?.messages[0]).toMatchObject({
       role: "system",
       content: expect.stringContaining("## Your Memory"),
     });
-    expect(String(harness.completionCalls[0]?.messages[0]?.content)).toContain(
-      "this project uses Bun",
-    );
+    expect(content).toContain("this project uses Bun");
   });
 
   it("retries implementation without writing when the user rejects a diff", async () => {
@@ -581,6 +616,7 @@ interface HarnessOptions {
     typeof PIVEngine
   >[0]["webToolRateLimiter"];
   hookRunner?: ConstructorParameters<typeof PIVEngine>[0]["hookRunner"];
+  snapshotStore?: ConstructorParameters<typeof PIVEngine>[0]["snapshotStore"];
 }
 
 function createHarness(options: HarnessOptions) {
@@ -726,6 +762,9 @@ function createHarness(options: HarnessOptions) {
     ...(options.hookRunner === undefined
       ? {}
       : { hookRunner: options.hookRunner }),
+    ...(options.snapshotStore === undefined
+      ? {}
+      : { snapshotStore: options.snapshotStore }),
     repoMapBuilder: async () => {
       if (options.repoMapError) {
         throw options.repoMapError;

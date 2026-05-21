@@ -1,6 +1,11 @@
 import type { ExecFileException } from "node:child_process";
 import { execFile as nodeExecFile } from "node:child_process";
+import {
+  StructuredOutputParseError,
+  StructuredOutputRouter,
+} from "@iquantum/llm";
 import type { LLMMessage } from "@iquantum/types";
+import { z } from "zod";
 
 export type ReviewSeverity = "critical" | "high" | "medium" | "low";
 
@@ -55,7 +60,18 @@ export interface ReviewEngineOptions {
 
 const REVIEW_TIMEOUT_MS = 30_000;
 const REVIEW_MAX_TOKENS = 4096;
-const severities = new Set(["critical", "high", "medium", "low"]);
+const reviewFindingSchema = z.object({
+  severity: z.enum(["critical", "high", "medium", "low"]),
+  title: z.string(),
+  file: z.string(),
+  line: z.number().finite().nullable(),
+  description: z.string(),
+  suggestion: z.string(),
+});
+const reviewResultSchema = z.object({
+  findings: z.array(reviewFindingSchema),
+  summary: z.string(),
+});
 const defaultExecFile: ExecFileFn = (file, args, options, callback) => {
   nodeExecFile(file, args, { ...options, encoding: "utf8" }, callback);
 };
@@ -82,12 +98,12 @@ export class ReviewParseError extends Error {
 }
 
 export class ReviewEngine {
-  readonly #completer: ReviewCompleter;
+  readonly #structuredOutput: StructuredOutputRouter;
   readonly #execFile: ExecFileFn;
   readonly #now: () => number;
 
   constructor(options: ReviewEngineOptions) {
-    this.#completer = options.completer;
+    this.#structuredOutput = new StructuredOutputRouter(options.completer);
     this.#execFile = options.execFile ?? defaultExecFile;
     this.#now = options.now ?? Date.now;
   }
@@ -107,15 +123,7 @@ export class ReviewEngine {
       return;
     }
 
-    let raw = "";
-    for await (const delta of this.#completer.complete(
-      this.#buildReviewPrompt(diff),
-      { maxTokens: REVIEW_MAX_TOKENS },
-    )) {
-      raw += delta;
-    }
-
-    const parsed = parseReview(raw);
+    const parsed = await this.#completeReview(this.#buildReviewPrompt(diff));
     for (const finding of parsed.findings) {
       yield finding;
     }
@@ -144,6 +152,23 @@ export class ReviewEngine {
         );
       case "pr":
         return this.#run("gh", ["pr", "diff", target.ref], repoPath);
+    }
+  }
+
+  async #completeReview(
+    messages: LLMMessage[],
+  ): Promise<Pick<ReviewResult, "findings" | "summary">> {
+    try {
+      return await this.#structuredOutput.completeStructured(
+        messages,
+        reviewResultSchema,
+        { maxTokens: REVIEW_MAX_TOKENS },
+      );
+    } catch (error) {
+      if (error instanceof StructuredOutputParseError) {
+        throw new ReviewParseError(error.raw);
+      }
+      throw error;
     }
   }
 
@@ -189,68 +214,4 @@ export class ReviewEngine {
       );
     });
   }
-}
-
-function parseReview(raw: string): Pick<ReviewResult, "findings" | "summary"> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stripJsonFence(raw));
-  } catch {
-    throw new ReviewParseError(raw);
-  }
-
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new ReviewParseError(raw);
-  }
-  const candidate = parsed as { findings?: unknown; summary?: unknown };
-  if (
-    !Array.isArray(candidate.findings) ||
-    typeof candidate.summary !== "string"
-  ) {
-    throw new ReviewParseError(raw);
-  }
-
-  return {
-    summary: candidate.summary,
-    findings: candidate.findings.map((finding) =>
-      validateFinding(finding, raw),
-    ),
-  };
-}
-
-function validateFinding(value: unknown, raw: string): ReviewFinding {
-  if (typeof value !== "object" || value === null) {
-    throw new ReviewParseError(raw);
-  }
-
-  const finding = value as Partial<ReviewFinding>;
-  if (
-    typeof finding.severity !== "string" ||
-    !severities.has(finding.severity) ||
-    typeof finding.title !== "string" ||
-    typeof finding.file !== "string" ||
-    !(
-      finding.line === null ||
-      (typeof finding.line === "number" && Number.isFinite(finding.line))
-    ) ||
-    typeof finding.description !== "string" ||
-    typeof finding.suggestion !== "string"
-  ) {
-    throw new ReviewParseError(raw);
-  }
-
-  return {
-    severity: finding.severity as ReviewSeverity,
-    title: finding.title,
-    file: finding.file,
-    line: finding.line,
-    description: finding.description,
-    suggestion: finding.suggestion,
-  };
-}
-
-function stripJsonFence(raw: string): string {
-  const trimmed = raw.trim();
-  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  return match?.[1]?.trim() ?? trimmed;
 }
