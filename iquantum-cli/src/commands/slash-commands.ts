@@ -196,6 +196,34 @@ const commandDefs: LocalCommand[] = [
     },
   },
   {
+    name: "agents",
+    description: "List child agents for this coordinator session",
+    async run(_, ctx) {
+      try {
+        const agents = await ctx.client.listAgents(ctx.sessionId);
+        if (!agents.length) {
+          sysInfo(ctx, "No agents running.");
+          return;
+        }
+
+        sysInfo(
+          ctx,
+          `Agents:\n${agents
+            .map(
+              (agent) =>
+                `  ${agent.name.padEnd(16)} ${agent.status.padEnd(8)} ${agent.sessionId}`,
+            )
+            .join("\n")}`,
+        );
+      } catch (e) {
+        sysError(
+          ctx,
+          `Agents failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  },
+  {
     name: "model",
     description: "Show current model configuration",
     run(_, ctx) {

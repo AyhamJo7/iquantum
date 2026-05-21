@@ -391,6 +391,76 @@ describe("ConversationController — tool loop", () => {
     ]);
   });
 
+  it("merges agent tools into the tool loop", async () => {
+    const store = new InMemoryConversationStore();
+    const seenToolNames: string[][] = [];
+    const calls: unknown[][] = [];
+    let nextId = 1;
+
+    const controller = new ConversationController({
+      store,
+      completer: {
+        async *complete() {
+          yield "";
+        },
+        async *completeWithTools(_messages, tools) {
+          seenToolNames.push(tools.map((tool) => tool.name));
+          if (seenToolNames.length === 1) {
+            yield {
+              type: "tool_use" as const,
+              id: "agent-call-1",
+              name: "agent_spawn",
+              input: {
+                name: "api",
+                prompt: "build api",
+                inheritMemory: true,
+                worktree: true,
+              },
+            };
+          } else {
+            yield { type: "token" as const, delta: "done" };
+          }
+        },
+      },
+      streams: { publish: () => {} },
+      agentTools: {
+        async spawn(sessionId, manifest) {
+          calls.push(["spawn", sessionId, manifest]);
+          return "child-1";
+        },
+        list: vi.fn(),
+        message: vi.fn(),
+        wait: vi.fn(),
+        kill: vi.fn(),
+      },
+      now: () => fixedNow,
+      createId: () => `id-${nextId++}`,
+      tokenCounter: () => 0,
+    });
+
+    await controller.addMessage("session-1", "spawn workers");
+
+    expect(seenToolNames[0]).toEqual([
+      "agent_spawn",
+      "agent_list",
+      "agent_task",
+      "agent_wait",
+      "agent_kill",
+    ]);
+    expect(calls).toEqual([
+      [
+        "spawn",
+        "session-1",
+        {
+          name: "api",
+          prompt: "build api",
+          inheritMemory: true,
+          worktree: true,
+        },
+      ],
+    ]);
+  });
+
   it("snapshots mutated builtin file tool paths", async () => {
     const store = new InMemoryConversationStore();
     const snapshotCalls: Array<{

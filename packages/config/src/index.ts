@@ -166,6 +166,11 @@ const envSchema = z
     IQUANTUM_SNAPSHOT_MAX_TURNS: z.coerce.number().int().min(1).default(100),
     IQUANTUM_MAX_AGENTS: z.coerce.number().int().min(1).default(4),
     IQUANTUM_AGENT_MAX_TURNS: z.coerce.number().int().min(1).default(50),
+    IQUANTUM_AGENT_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .default(1_800_000),
     IQUANTUM_MEMORY_RANKING: envBooleanDefault(true),
     IQUANTUM_MEMORY_RANKING_MODEL: optionalNonEmptyString,
     IQUANTUM_APPROVAL_MODE: z
@@ -252,6 +257,7 @@ export interface IquantumConfig {
   snapshotMaxTurns: number;
   maxAgents: number;
   agentMaxTurns: number;
+  agentTimeoutMs: number;
   memoryRanking: boolean;
   memoryRankingModel: string | undefined;
   approvalMode: "cli" | "webhook" | "slack" | "auto";
@@ -335,6 +341,7 @@ export function loadConfig(
     snapshotMaxTurns: parsed.IQUANTUM_SNAPSHOT_MAX_TURNS,
     maxAgents: parsed.IQUANTUM_MAX_AGENTS,
     agentMaxTurns: parsed.IQUANTUM_AGENT_MAX_TURNS,
+    agentTimeoutMs: parsed.IQUANTUM_AGENT_TIMEOUT_MS,
     memoryRanking: parsed.IQUANTUM_MEMORY_RANKING,
     memoryRankingModel: parsed.IQUANTUM_MEMORY_RANKING_MODEL,
     approvalMode: parsed.IQUANTUM_APPROVAL_MODE,

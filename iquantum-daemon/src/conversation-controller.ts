@@ -4,6 +4,8 @@ import type { HookRunner } from "@iquantum/hooks";
 import { type BuiltinTool, createFileToolBuiltins } from "@iquantum/llm";
 import type { SandboxManager } from "@iquantum/sandbox";
 import type {
+  AgentEntry,
+  AgentManifest,
   CompletionEvent,
   IMcpClient,
   LLMContentBlock,
@@ -15,6 +17,8 @@ import {
   createWebToolBuiltins,
   type WebToolExecutor,
 } from "@iquantum/web-tools";
+import { z } from "zod";
+import { agentManifestSchema } from "./agent-manifest-schema";
 import { messagesSinceLastBoundary } from "./conversation-history";
 import type {
   ConversationContentBlock,
@@ -72,6 +76,22 @@ export interface ConversationMemoryManager {
   materialize(userId: string, orgId: string | null): Promise<void>;
 }
 
+export interface ConversationAgentTools {
+  spawn(coordinatorSessionId: string, manifest: AgentManifest): Promise<string>;
+  list(coordinatorSessionId: string): AgentEntry[];
+  message(
+    coordinatorSessionId: string,
+    agentName: string,
+    content: string,
+  ): Promise<string>;
+  wait(coordinatorSessionId: string, agentName: string): Promise<string>;
+  kill(
+    coordinatorSessionId: string,
+    agentName: string,
+    reason: string,
+  ): Promise<void>;
+}
+
 export interface ConversationControllerOptions {
   store: ConversationStore;
   completer: ConversationCompleter;
@@ -85,6 +105,7 @@ export interface ConversationControllerOptions {
   webTools?: WebToolExecutor;
   webSearchRateLimiter?: RateLimiter;
   permissionChecker?: PermissionChecker;
+  agentTools?: ConversationAgentTools;
   memoryManager?: ConversationMemoryManager;
   memoryUserId?: string;
   memoryOrgId?: string | null;
@@ -121,6 +142,7 @@ export class ConversationController {
   readonly #webTools: WebToolExecutor | undefined;
   readonly #webSearchRateLimiter: RateLimiter | undefined;
   readonly #permissionChecker: PermissionChecker | undefined;
+  readonly #agentTools: ConversationAgentTools | undefined;
   readonly #memoryManager: ConversationMemoryManager | undefined;
   readonly #memoryUserId: string;
   readonly #memoryOrgId: string | null;
@@ -148,6 +170,7 @@ export class ConversationController {
     this.#webTools = options.webTools;
     this.#webSearchRateLimiter = options.webSearchRateLimiter;
     this.#permissionChecker = options.permissionChecker;
+    this.#agentTools = options.agentTools;
     this.#memoryManager = options.memoryManager;
     this.#memoryUserId = options.memoryUserId ?? "local";
     this.#memoryOrgId = options.memoryOrgId ?? null;
@@ -202,6 +225,11 @@ export class ConversationController {
           )
         : [];
       builtinTools.push(...webTools);
+      if (this.#agentTools) {
+        builtinTools.push(
+          ...createAgentToolBuiltins(this.#agentTools, sessionId),
+        );
+      }
       const tools = [...mcpTools, ...builtinTools];
       const useTools = tools.length > 0 && !!this.#completer.completeWithTools;
 
@@ -630,6 +658,117 @@ interface ToolUseCall {
   id: string;
   name: string;
   input: Record<string, unknown>;
+}
+
+const agentNameSchema = z.object({ name: z.string().min(1) });
+const agentMessageSchema = z.object({
+  name: z.string().min(1),
+  content: z.string().min(1),
+});
+const agentKillSchema = z.object({
+  name: z.string().min(1),
+  reason: z.string().min(1).default("killed by coordinator"),
+});
+
+function createAgentToolBuiltins(
+  agentTools: ConversationAgentTools,
+  sessionId: string,
+): BuiltinTool[] {
+  return [
+    {
+      name: "agent_spawn",
+      description: "Spawn a child coding agent for an isolated subtask.",
+      inputSchema: {
+        type: "object",
+        required: ["name", "prompt"],
+        properties: {
+          name: { type: "string" },
+          prompt: { type: "string" },
+          inheritMemory: { type: "boolean", default: true },
+          worktree: { type: "boolean", default: true },
+          tools: { type: "array", items: { type: "string" } },
+          maxTurns: { type: "number" },
+        },
+      },
+      mutates: true,
+      async execute(input) {
+        const parsed = agentManifestSchema.parse(input);
+        const childSessionId = await agentTools.spawn(sessionId, {
+          name: parsed.name,
+          prompt: parsed.prompt,
+          inheritMemory: parsed.inheritMemory,
+          worktree: parsed.worktree,
+          ...(parsed.tools === undefined ? {} : { tools: parsed.tools }),
+          ...(parsed.maxTurns === undefined
+            ? {}
+            : { maxTurns: parsed.maxTurns }),
+        });
+        return JSON.stringify({ sessionId: childSessionId });
+      },
+    },
+    {
+      name: "agent_list",
+      description: "List child agents for this coordinator session.",
+      inputSchema: { type: "object", properties: {} },
+      async execute() {
+        return JSON.stringify(agentTools.list(sessionId));
+      },
+    },
+    {
+      name: "agent_task",
+      description:
+        "Submit a follow-up PIV task to a named child agent that has finished its previous task. Returns the plan ID of the new task.",
+      inputSchema: {
+        type: "object",
+        required: ["name", "content"],
+        properties: {
+          name: { type: "string" },
+          content: { type: "string" },
+        },
+      },
+      mutates: true,
+      async execute(input) {
+        const parsed = agentMessageSchema.parse(input);
+        const planId = await agentTools.message(
+          sessionId,
+          parsed.name,
+          parsed.content,
+        );
+        return JSON.stringify({ planId });
+      },
+    },
+    {
+      name: "agent_wait",
+      description: "Wait for a named child agent to finish.",
+      inputSchema: {
+        type: "object",
+        required: ["name"],
+        properties: { name: { type: "string" } },
+      },
+      async execute(input) {
+        const parsed = agentNameSchema.parse(input);
+        return agentTools.wait(sessionId, parsed.name);
+      },
+    },
+    {
+      name: "agent_kill",
+      description: "Kill a named child agent.",
+      inputSchema: {
+        type: "object",
+        required: ["name"],
+        properties: {
+          name: { type: "string" },
+          reason: { type: "string" },
+        },
+      },
+      mutates: true,
+      async execute(input) {
+        const parsed = agentKillSchema.parse(input);
+        await agentTools.kill(sessionId, parsed.name, parsed.reason);
+        return "agent killed";
+      },
+    },
+  ];
 }
 
 function toLLMMessage(message: ConversationMessage): LLMMessage {

@@ -12,13 +12,14 @@ import type {
 import { PIVEngine } from "@iquantum/piv-engine";
 import type { SandboxManager } from "@iquantum/sandbox";
 import { loadTestCommand } from "@iquantum/sandbox";
-import type { EffortLevel, Plan, Session } from "@iquantum/types";
+import type { EffortLevel, Plan, Session, ValidateRun } from "@iquantum/types";
 import { CONTEXT_TOKEN_BUDGET } from "@iquantum/types";
 import type { WebToolExecutor } from "@iquantum/web-tools";
 import type { ContextStats, SessionStore } from "./db/stores";
 import type { RateLimiter } from "./rate-limit";
 
 const GIT_REF_RE = /^[a-zA-Z0-9._/~^:-]{1,200}$/;
+const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
 
 export interface SessionEngine {
   readonly status: PIVEngine["status"];
@@ -32,6 +33,7 @@ export interface SessionEngine {
 
 export interface SessionGitManager {
   checkpoint: GitManager["checkpoint"];
+  diff?: GitManager["diff"];
   listCheckpoints: GitManager["listCheckpoints"];
   restore: GitManager["restore"];
   currentHead?(): Promise<string | null>;
@@ -83,6 +85,12 @@ export interface CreateSessionOptions {
   effort?: import("@iquantum/types").EffortLevel;
   extraRepoPaths?: string[];
   worktree?: boolean;
+  parentSessionId?: string;
+  agentName?: string;
+  agentColor?: string;
+  coordinatorMode?: boolean;
+  inheritedMemory?: string;
+  allowedTools?: string[];
 }
 
 export interface SessionContext {
@@ -92,6 +100,20 @@ export interface SessionContext {
 
 export interface CurrentPlanStore {
   getCurrentPlan(sessionId: string): Promise<Plan | null>;
+}
+
+export interface WorkerIntegrationResult {
+  name: string;
+  sessionId: string;
+  status: "done" | "failed";
+  summary: string;
+  commitHash?: string;
+}
+
+export interface MergeIntegrationResult {
+  validateRun: ValidateRun;
+  checkpointHash: string;
+  conflicts: string[];
 }
 
 export class SessionNotFoundError extends Error {
@@ -228,12 +250,22 @@ export class SessionController {
         testCommand,
         requireApproval: options.requireApproval ?? false,
         autoApprove: options.autoApprove ?? false,
+        ...(options.inheritedMemory === undefined
+          ? {}
+          : { inheritedMemory: options.inheritedMemory }),
+        ...(options.allowedTools === undefined
+          ? {}
+          : { allowedTools: options.allowedTools }),
       },
       mode: options.mode ?? "piv",
       effort: options.effort ?? "normal",
       worktreePath,
       worktreeBranch,
       startCheckpointHash,
+      parentSessionId: options.parentSessionId ?? null,
+      agentName: options.agentName ?? null,
+      agentColor: options.agentColor ?? null,
+      coordinatorMode: options.coordinatorMode ?? false,
       userId: context?.userId ?? null,
       orgId: context?.orgId ?? null,
       createdAt,
@@ -423,17 +455,27 @@ export class SessionController {
 
   async updateConfig(
     sessionId: string,
-    config: { effort?: EffortLevel },
+    config: { coordinatorMode?: boolean; effort?: EffortLevel },
   ): Promise<Session> {
     const liveSession = this.#requireLiveSession(sessionId);
     const updated = await this.#sessionStore.update(sessionId, {
       ...(config.effort !== undefined ? { effort: config.effort } : {}),
+      ...(config.coordinatorMode !== undefined
+        ? { coordinatorMode: config.coordinatorMode }
+        : {}),
     });
     if (config.effort !== undefined) {
       liveSession.session.effort = config.effort;
       liveSession.engine.setEffort(config.effort);
     }
+    if (config.coordinatorMode !== undefined) {
+      liveSession.session.coordinatorMode = config.coordinatorMode;
+    }
     return updated;
+  }
+
+  activateCoordinatorMode(sessionId: string): Promise<Session> {
+    return this.updateConfig(sessionId, { coordinatorMode: true });
   }
 
   async getContextStats(sessionId: string): Promise<ContextStats> {
@@ -491,8 +533,130 @@ export class SessionController {
     return stdout;
   }
 
+  async integrateWorkerResults(
+    coordinatorSessionId: string,
+    workerResults: readonly WorkerIntegrationResult[],
+  ): Promise<MergeIntegrationResult> {
+    const coordinator = await this.getSession(coordinatorSessionId);
+    const failed = workerResults.filter((worker) => worker.status !== "done");
+    if (failed.length > 0) {
+      throw new Error(
+        `Cannot merge failed workers: ${failed
+          .map((worker) => worker.name)
+          .join(", ")}`,
+      );
+    }
+
+    const patches = await Promise.all(
+      workerResults.map((worker) => this.#workerPatch(worker)),
+    );
+    // Only include patches that contain actual unified diff hunks; binary-only
+    // patches ("Binary files ... differ") have no applicable content.
+    const combinedPatch = patches
+      .filter((patch) => patch.includes("@@"))
+      .join("\n");
+    if (combinedPatch.trim()) {
+      await new DiffEngine(this.#sandbox).apply(
+        coordinatorSessionId,
+        combinedPatch,
+      );
+    }
+
+    const validateRun = await this.#validateIntegration(
+      coordinator,
+      "coordinator-merge",
+    );
+    if (!validateRun.passed) {
+      throw new Error(
+        `Coordinator merge validation failed: ${
+          validateRun.stderr.trim() || validateRun.stdout.trim() || "no output"
+        }`,
+      );
+    }
+
+    await this.#sandbox.syncToHost(coordinatorSessionId);
+    const checkpoint = await this.#requireLiveSession(
+      coordinatorSessionId,
+    ).gitManager.checkpoint(
+      coordinatorSessionId,
+      `iquantum: merge ${workerResults.length} worker${workerResults.length === 1 ? "" : "s"}`,
+      validateRun.id,
+    );
+
+    const conflicts = detectPatchConflicts(
+      patches,
+      workerResults.map((r) => r.name),
+    );
+    return { validateRun, checkpointHash: checkpoint.commitHash, conflicts };
+  }
+
   getEngine(sessionId: string): SessionEngine {
     return this.#requireLiveSession(sessionId).engine;
+  }
+
+  async #workerPatch(worker: WorkerIntegrationResult): Promise<string> {
+    if (!worker.commitHash || !COMMIT_HASH_RE.test(worker.commitHash)) {
+      throw new Error(`Worker ${worker.name} has no valid commit hash`);
+    }
+
+    const session = await this.getSession(worker.sessionId);
+    if (!session.startCheckpointHash) {
+      throw new Error(`Worker ${worker.name} has no start checkpoint`);
+    }
+
+    const repoPath = session.worktreePath ?? session.repoPath;
+    const gitManager = this.#createGitManager(repoPath);
+    if (!gitManager.diff) {
+      throw new Error("Git manager does not support diff");
+    }
+
+    return gitManager.diff(session.startCheckpointHash, worker.commitHash);
+  }
+
+  async #validateIntegration(
+    session: Session,
+    planId: string,
+  ): Promise<ValidateRun> {
+    const command =
+      typeof session.config.testCommand === "string"
+        ? session.config.testCommand
+        : "true";
+    const result = await this.#sandbox.exec(session.id, command);
+    const collected = await collectExec(result);
+    const validateRun: ValidateRun = {
+      id: this.#createId(),
+      sessionId: session.id,
+      planId,
+      attempt: 1,
+      exitCode: collected.exitCode,
+      stdout: collected.stdout,
+      stderr: collected.stderr,
+      passed: collected.exitCode === 0,
+      createdAt: this.#now(),
+    };
+    await this.#ensureIntegrationPlan(session.id, planId);
+    await this.#pivStore.insertValidateRun(validateRun);
+    return validateRun;
+  }
+
+  async #ensureIntegrationPlan(
+    sessionId: string,
+    planId: string,
+  ): Promise<void> {
+    if (await this.#pivStore.getPlan(planId)) {
+      return;
+    }
+
+    const now = this.#now();
+    await this.#pivStore.insertPlan({
+      id: planId,
+      sessionId,
+      content: "Merge completed worker branches.",
+      status: "approved",
+      feedback: null,
+      createdAt: now,
+      approvedAt: now,
+    });
   }
 
   #requireLiveSession(sessionId: string): LiveSession {
@@ -510,4 +674,64 @@ interface LiveSession {
   engine: SessionEngine;
   gitManager: SessionGitManager;
   session: Session;
+}
+
+async function collectExec(
+  result: Awaited<ReturnType<SessionControllerOptions["sandbox"]["exec"]>>,
+): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}> {
+  let stdout = "";
+  let stderr = "";
+  for await (const chunk of result.output) {
+    if (chunk.stream === "stdout") {
+      stdout += chunk.data;
+    } else {
+      stderr += chunk.data;
+    }
+  }
+
+  return {
+    stdout,
+    stderr,
+    exitCode: await result.exitCode,
+  };
+}
+
+function extractPatchedFiles(patch: string): Set<string> {
+  const files = new Set<string>();
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++ b/")) {
+      files.add(line.slice(6));
+    } else if (line.startsWith("Binary files ")) {
+      // e.g. "Binary files a/img.png and b/img.png differ"
+      const match = /^Binary files a\/.+ and b\/(.+) differ$/.exec(line);
+      if (match?.[1]) {
+        files.add(match[1]);
+      }
+    }
+  }
+  return files;
+}
+
+function detectPatchConflicts(
+  patches: string[],
+  workerNames: string[],
+): string[] {
+  const seen = new Map<string, string>();
+  const conflicts: string[] = [];
+  for (let i = 0; i < patches.length; i++) {
+    const name = workerNames[i] ?? `worker-${i}`;
+    for (const file of extractPatchedFiles(patches[i] ?? "")) {
+      const first = seen.get(file);
+      if (first !== undefined) {
+        conflicts.push(`${file}: ${first} and ${name}`);
+      } else {
+        seen.set(file, name);
+      }
+    }
+  }
+  return conflicts;
 }

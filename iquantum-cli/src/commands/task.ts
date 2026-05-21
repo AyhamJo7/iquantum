@@ -7,6 +7,7 @@ export interface TaskOptions {
   extraRepo?: string[];
   effort?: string;
   worktree?: boolean;
+  coordinator?: boolean;
 }
 
 export type PromptFn = (question: string) => Promise<string>;
@@ -40,6 +41,7 @@ export async function runTask(
         : {}),
       ...(effort !== undefined ? { effort } : {}),
       ...(options.worktree ? { worktree: true } : {}),
+      ...(options.coordinator ? { coordinatorMode: true } : {}),
     });
   } catch (error) {
     if (isDaemonNotRunning(error)) {
@@ -56,10 +58,17 @@ export async function runTask(
   const stream = client.openStream(session.id);
 
   // planning — blocks until plan_ready is emitted
-  let pendingPlan: Promise<import("@iquantum/types").Plan> = client.startTask(
-    session.id,
-    prompt,
-  );
+  let pendingPlan: Promise<import("@iquantum/types").Plan> | undefined =
+    options.coordinator ? undefined : client.startTask(session.id, prompt);
+  if (options.coordinator) {
+    void client
+      .startCoordinatorTask(session.id, prompt)
+      .catch((error: unknown) => {
+        writer.writeln(
+          `Coordinator error: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+  }
 
   try {
     for await (const frame of stream) {
@@ -85,6 +94,9 @@ export async function runTask(
           break;
 
         case "plan_ready": {
+          if (!pendingPlan) {
+            break;
+          }
           const plan = await pendingPlan;
           writer.writeln("\n\n=== Plan ===\n");
           writer.writeln(plan.content);
@@ -112,6 +124,32 @@ export async function runTask(
         case "checkpoint":
           writer.writeln(`\n✓ Committed: ${frame.hash}`);
           return;
+
+        case "agent_spawned":
+          writer.writeln(`\nSpawned agent ${frame.name}: ${frame.sessionId}`);
+          break;
+
+        case "agent_status":
+          writer.writeln(`Agent ${frame.name}: ${frame.status}`);
+          break;
+
+        case "agent_done":
+          writer.writeln(`Agent ${frame.name} done: ${frame.summary}`);
+          break;
+
+        case "agent_failed":
+          writer.writeln(`\nAgent ${frame.name} failed: ${frame.error}`);
+          break;
+
+        case "agent_killed":
+          writer.writeln(`Agent ${frame.name} killed: ${frame.reason}`);
+          break;
+
+        case "done":
+          if (options.coordinator) {
+            return;
+          }
+          break;
 
         case "error":
           throw new Error(`Engine error: ${frame.message}`);

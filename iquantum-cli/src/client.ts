@@ -1,6 +1,7 @@
 import { request as nodeRequest } from "node:http";
 import type { ServerStreamFrame } from "@iquantum/protocol";
 import type {
+  AgentEntry,
   ContextStats,
   EffortLevel,
   FileSnapshotDiff,
@@ -22,6 +23,11 @@ export interface DaemonClient {
   getSession(sessionId: string): Promise<Session>;
   destroySession(sessionId: string): Promise<void>;
   startTask(sessionId: string, prompt: string): Promise<Plan>;
+  startCoordinatorTask(
+    sessionId: string,
+    prompt: string,
+  ): Promise<{ ok: boolean }>;
+  listAgents(sessionId: string): Promise<AgentEntry[]>;
   currentPlan(sessionId: string): Promise<Plan | null>;
   approve(sessionId: string): Promise<void>;
   reject(sessionId: string, feedback: string): Promise<Plan>;
@@ -144,6 +150,7 @@ export interface CreateSessionOptions {
   extraRepoPaths?: string[];
   effort?: EffortLevel;
   worktree?: boolean;
+  coordinatorMode?: boolean;
 }
 
 export class HttpDaemonClient implements DaemonClient {
@@ -174,6 +181,20 @@ export class HttpDaemonClient implements DaemonClient {
 
   startTask(sessionId: string, prompt: string): Promise<Plan> {
     return this.#post(`/sessions/${sessionId}/task`, { prompt });
+  }
+
+  startCoordinatorTask(
+    sessionId: string,
+    prompt: string,
+  ): Promise<{ ok: boolean }> {
+    return this.#post(`/sessions/${sessionId}/coordinator`, { prompt });
+  }
+
+  async listAgents(sessionId: string): Promise<AgentEntry[]> {
+    const response = await this.#get<{ agents: AgentEntry[] }>(
+      `/sessions/${sessionId}/agents`,
+    );
+    return response.agents;
   }
 
   async currentPlan(sessionId: string): Promise<Plan | null> {

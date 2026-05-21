@@ -166,6 +166,53 @@ describe("runTask", () => {
       { requireApproval: true, autoApprove: true, worktree: true },
     ]);
   });
+
+  it("starts coordinator mode when requested", async () => {
+    const harness = createHarness({
+      frames: [
+        {
+          type: "agent_spawned",
+          sessionId: "child-1",
+          name: "api",
+          colorIndex: 0,
+          coordinatorSessionId: "session-1",
+        },
+        {
+          type: "agent_done",
+          sessionId: "child-1",
+          name: "api",
+          summary: "done",
+        },
+        { type: "done" },
+      ],
+      plans: [],
+      promptAnswers: [],
+    });
+
+    await runTask(
+      "large task",
+      { repo: "/repo", coordinator: true },
+      harness.client,
+      harness.prompt,
+      harness.writer,
+    );
+
+    expect(harness.output.join("")).toContain("Spawned agent api");
+    expect(harness.output.join("")).toContain("Agent api done");
+    expect(harness.calls).toEqual([
+      [
+        "createSession",
+        "/repo",
+        {
+          requireApproval: true,
+          autoApprove: true,
+          coordinatorMode: true,
+        },
+      ],
+      ["openStream", "session-1"],
+      ["startCoordinatorTask", "session-1", "large task"],
+    ]);
+  });
 });
 
 interface HarnessOptions {
@@ -203,6 +250,13 @@ function createHarness(options: HarnessOptions) {
     async startTask(sessionId, prompt) {
       calls.push(["startTask", sessionId, prompt]);
       return plans.shift() ?? fakePlan();
+    },
+    async startCoordinatorTask(sessionId, prompt) {
+      calls.push(["startCoordinatorTask", sessionId, prompt]);
+      return { ok: true };
+    },
+    async listAgents() {
+      return [];
     },
     async currentPlan() {
       return null;

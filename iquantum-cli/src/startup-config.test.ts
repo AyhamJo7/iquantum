@@ -63,6 +63,7 @@ describe("resolveStartupConfig", () => {
         snapshotMaxTurns: 100,
         maxAgents: 4,
         agentMaxTurns: 50,
+        agentTimeoutMs: 1_800_000,
         memoryRanking: true,
         memoryRankingModel: undefined,
         approvalMode: "cli",

@@ -54,6 +54,20 @@ export type TranscriptItem =
     }
   | {
       id: string;
+      type: "agent_spawn";
+      sessionId: string;
+      name: string;
+      colorIndex: number;
+    }
+  | {
+      id: string;
+      type: "agent_error";
+      sessionId: string;
+      name: string;
+      error: string;
+    }
+  | {
+      id: string;
       type: "review_finding";
       severity: ReviewSeverity;
       title: string;
@@ -78,6 +92,20 @@ export interface REPLViewState {
   completedPhases: Set<Phase>;
   retryCount: number;
   isFirstSubmit: boolean;
+  agents: AgentView[];
+}
+
+export interface AgentView {
+  sessionId: string;
+  name: string;
+  colorIndex: number;
+  status: "running" | "done" | "failed" | "killed";
+  phase?: Phase | undefined;
+  turnIndex?: number | undefined;
+  maxTurns?: number | undefined;
+  lastMessage?: string | undefined;
+  summary?: string | undefined;
+  error?: string | undefined;
 }
 
 export type REPLAction =
@@ -113,6 +141,7 @@ export const initialREPLViewState: REPLViewState = {
   completedPhases: new Set(),
   retryCount: 0,
   isFirstSubmit: false,
+  agents: [],
 };
 
 type PIVPhase = "planning" | "implementing" | "validating";
@@ -334,38 +363,90 @@ function reduceFrame(
         `[compaction] Saved ${frame.savedTokens} tokens via ${frame.strategy}.`,
       );
     case "agent_spawned":
-      return appendSystemFrame(
-        state,
-        `Spawned agent ${frame.name} (${frame.sessionId}).`,
-      );
-    case "agent_status": {
-      const progress =
-        frame.turnIndex === undefined || frame.maxTurns === undefined
-          ? ""
-          : ` ${frame.turnIndex}/${frame.maxTurns}`;
-      return appendSystemFrame(
-        state,
-        `Agent ${frame.name} is ${frame.status}${frame.phase ? ` in ${frame.phase}` : ""}${progress}.`,
-      );
-    }
+      return {
+        ...state,
+        agents: upsertAgent(state.agents, {
+          sessionId: frame.sessionId,
+          name: frame.name,
+          colorIndex: frame.colorIndex,
+          status: "running",
+        }),
+        messages: [
+          ...state.messages,
+          {
+            id: transcriptId(state.nextTranscriptId),
+            type: "agent_spawn",
+            sessionId: frame.sessionId,
+            name: frame.name,
+            colorIndex: frame.colorIndex,
+          },
+        ],
+        nextTranscriptId: state.nextTranscriptId + 1,
+      };
+    case "agent_status":
+      return {
+        ...state,
+        agents: upsertAgent(state.agents, {
+          sessionId: frame.sessionId,
+          name: frame.name,
+          status: frame.status,
+          ...(frame.phase === undefined ? {} : { phase: frame.phase }),
+          ...(frame.turnIndex === undefined
+            ? {}
+            : { turnIndex: frame.turnIndex }),
+          ...(frame.maxTurns === undefined ? {} : { maxTurns: frame.maxTurns }),
+        }),
+      };
     case "agent_message":
-      return appendSystemFrame(state, `Agent ${frame.name}: ${frame.content}`);
+      return {
+        ...state,
+        agents: upsertAgent(state.agents, {
+          sessionId: frame.sessionId,
+          name: frame.name,
+          lastMessage: frame.content,
+        }),
+      };
     case "agent_done":
-      return appendSystemFrame(
-        state,
-        `Agent ${frame.name} finished: ${frame.summary}`,
-      );
+      return {
+        ...state,
+        agents: upsertAgent(state.agents, {
+          sessionId: frame.sessionId,
+          name: frame.name,
+          status: "done",
+          summary: frame.summary,
+        }),
+      };
     case "agent_failed":
-      return appendSystemFrame(
-        state,
-        `Agent ${frame.name} failed: ${frame.error}`,
-        "error",
-      );
+      return {
+        ...state,
+        agents: upsertAgent(state.agents, {
+          sessionId: frame.sessionId,
+          name: frame.name,
+          status: "failed",
+          error: frame.error,
+        }),
+        messages: [
+          ...state.messages,
+          {
+            id: transcriptId(state.nextTranscriptId),
+            type: "agent_error",
+            sessionId: frame.sessionId,
+            name: frame.name,
+            error: frame.error,
+          },
+        ],
+        nextTranscriptId: state.nextTranscriptId + 1,
+      };
     case "agent_killed":
-      return appendSystemFrame(
-        state,
-        `Agent ${frame.name} stopped: ${frame.reason}`,
-      );
+      return {
+        ...state,
+        agents: upsertAgent(state.agents, {
+          sessionId: frame.sessionId,
+          name: frame.name,
+          status: "killed",
+          summary: frame.reason,
+        }),
+      };
     case "checkpoint":
       return {
         ...state,
@@ -468,6 +549,51 @@ function appendSystemFrame(
     ],
     nextTranscriptId: state.nextTranscriptId + 1,
   };
+}
+
+function upsertAgent(
+  agents: AgentView[],
+  update: Partial<AgentView> & {
+    sessionId: string;
+    name: string;
+  },
+): AgentView[] {
+  const index = agents.findIndex(
+    (agent) => agent.sessionId === update.sessionId,
+  );
+  const existing = index === -1 ? undefined : agents[index];
+  const next: AgentView = {
+    sessionId: update.sessionId,
+    name: update.name,
+    colorIndex: update.colorIndex ?? existing?.colorIndex ?? 0,
+    status: update.status ?? existing?.status ?? "running",
+    ...((update.phase ?? existing?.phase)
+      ? { phase: update.phase ?? existing?.phase }
+      : {}),
+    ...(update.turnIndex !== undefined || existing?.turnIndex !== undefined
+      ? { turnIndex: update.turnIndex ?? existing?.turnIndex }
+      : {}),
+    ...(update.maxTurns !== undefined || existing?.maxTurns !== undefined
+      ? { maxTurns: update.maxTurns ?? existing?.maxTurns }
+      : {}),
+    ...((update.lastMessage ?? existing?.lastMessage)
+      ? { lastMessage: update.lastMessage ?? existing?.lastMessage }
+      : {}),
+    ...((update.summary ?? existing?.summary)
+      ? { summary: update.summary ?? existing?.summary }
+      : {}),
+    ...((update.error ?? existing?.error)
+      ? { error: update.error ?? existing?.error }
+      : {}),
+  };
+
+  if (index === -1) {
+    return [...agents, next];
+  }
+
+  return agents.map((agent, agentIndex) =>
+    agentIndex === index ? next : agent,
+  );
 }
 
 function countDiffChanges(patch: string): {

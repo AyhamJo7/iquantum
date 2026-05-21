@@ -10,8 +10,10 @@ import type { ReviewEvent } from "./review-engine";
 import {
   createRequestHandler,
   createTcpDaemonServer,
+  type DaemonAgents,
   type DaemonCompaction,
   type DaemonConversations,
+  type DaemonCoordinator,
   type DaemonMcpRegistry,
   type DaemonMemory,
   type DaemonPermissions,
@@ -136,6 +138,97 @@ describe("daemon request handler", () => {
         },
       ],
     ]);
+  });
+
+  it("serves agent spawn, list, get, and kill routes", async () => {
+    const { sessions } = fakeSessions();
+    const { agents, calls } = fakeAgents();
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions,
+      streams: fakeStreams(),
+      agents,
+    });
+
+    const spawned = await request(handler, `/sessions/${SESSION_ID}/agents`, {
+      method: "POST",
+      body: {
+        name: "api",
+        prompt: "build API",
+        inheritMemory: true,
+        worktree: true,
+        tools: ["file_read"],
+      },
+    });
+    const list = await request(handler, `/sessions/${SESSION_ID}/agents`);
+    const detail = await request(
+      handler,
+      `/sessions/${SESSION_ID}/agents/00000000-0000-0000-0000-000000000002`,
+    );
+    const killed = await request(
+      handler,
+      `/sessions/${SESSION_ID}/agents/00000000-0000-0000-0000-000000000002`,
+      { method: "DELETE", body: { reason: "stop" } },
+    );
+
+    expect(spawned.status).toBe(201);
+    expect(await spawned.json()).toEqual({
+      sessionId: "00000000-0000-0000-0000-000000000002",
+    });
+    expect(await list.json()).toMatchObject({
+      agents: [{ name: "api", status: "running" }],
+    });
+    expect(await detail.json()).toMatchObject({ name: "api" });
+    expect(killed.status).toBe(204);
+    expect(calls).toEqual([
+      [
+        "spawn",
+        SESSION_ID,
+        {
+          name: "api",
+          prompt: "build API",
+          inheritMemory: true,
+          worktree: true,
+          tools: ["file_read"],
+        },
+      ],
+      ["list", SESSION_ID],
+      ["get", "00000000-0000-0000-0000-000000000002"],
+      ["get", "00000000-0000-0000-0000-000000000002"],
+      ["kill", "00000000-0000-0000-0000-000000000002", "stop"],
+    ]);
+  });
+
+  it("serves coordinator task route", async () => {
+    const { sessions } = fakeSessions();
+    const { coordinator, calls } = fakeCoordinator();
+    const sessionCalls: unknown[][] = [];
+    const handler = createRequestHandler({
+      socketPath: "/tmp/daemon.sock",
+      sessions: {
+        ...sessions,
+        async activateCoordinatorMode(sessionId) {
+          sessionCalls.push(["activateCoordinatorMode", sessionId]);
+          return sessions.getSession(sessionId);
+        },
+      },
+      streams: fakeStreams(),
+      coordinator,
+    });
+
+    const response = await request(
+      handler,
+      `/sessions/${SESSION_ID}/coordinator`,
+      {
+        method: "POST",
+        body: { prompt: "large task" },
+      },
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(sessionCalls).toEqual([["activateCoordinatorMode", SESSION_ID]]);
+    expect(calls).toEqual([["run", SESSION_ID, "large task"]]);
   });
 
   it("rejects malformed plan IDs and commit hashes before dispatch", async () => {
@@ -1623,6 +1716,56 @@ function fakeStreams(): DaemonStreams {
   return {
     attach() {
       return () => undefined;
+    },
+    publish() {},
+  };
+}
+
+function fakeAgents(): { agents: DaemonAgents; calls: unknown[][] } {
+  const calls: unknown[][] = [];
+  const childSessionId = "00000000-0000-0000-0000-000000000002";
+  const entry = {
+    sessionId: childSessionId,
+    name: "api",
+    colorIndex: 0,
+    coordinatorSessionId: SESSION_ID,
+    status: "running" as const,
+  };
+
+  return {
+    calls,
+    agents: {
+      async spawn(coordinatorSessionId, manifest) {
+        calls.push(["spawn", coordinatorSessionId, manifest]);
+        return childSessionId;
+      },
+      list(coordinatorSessionId) {
+        calls.push(["list", coordinatorSessionId]);
+        return [entry];
+      },
+      get(sessionId) {
+        calls.push(["get", sessionId]);
+        return sessionId === childSessionId ? entry : undefined;
+      },
+      async kill(sessionId, reason) {
+        calls.push(["kill", sessionId, reason]);
+      },
+    },
+  };
+}
+
+function fakeCoordinator(): {
+  coordinator: DaemonCoordinator;
+  calls: unknown[][];
+} {
+  const calls: unknown[][] = [];
+
+  return {
+    calls,
+    coordinator: {
+      async run(sessionId, task) {
+        calls.push(["run", sessionId, task]);
+      },
     },
   };
 }

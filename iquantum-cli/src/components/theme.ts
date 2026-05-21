@@ -18,6 +18,14 @@ export const STATUS_COLORS = {
   muted: undefined,
 } as const;
 
+export const agentColors = [
+  { label: "cyan", hex: "#06b6d4" },
+  { label: "green", hex: "#22c55e" },
+  { label: "yellow", hex: "#eab308" },
+  { label: "magenta", hex: "#d946ef" },
+  { label: "orange", hex: "#f97316" },
+] as const;
+
 export const BORDERS = {
   success: { borderStyle: "round", borderColor: "green" },
   warning: { borderStyle: "round", borderColor: "yellow" },

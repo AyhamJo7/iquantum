@@ -1,6 +1,8 @@
 import type { TranscriptItem } from "@iquantum/ui-core";
 import { Box, Text } from "ink";
 import { memo } from "react";
+import { AgentErrorCard } from "./AgentErrorCard";
+import { AgentSpawnCard } from "./AgentSpawnCard";
 import { CommitCard } from "./CommitCard";
 import { ErrorCard } from "./ErrorCard";
 import { renderMarkdownToAnsi } from "./markdown";
@@ -76,6 +78,14 @@ const TranscriptRow = memo(function TranscriptRow({
 
   if (item.type === "checkpoint") {
     return <CommitCard hash={item.hash} message={item.message} />;
+  }
+
+  if (item.type === "agent_spawn") {
+    return <AgentSpawnCard name={item.name} sessionId={item.sessionId} />;
+  }
+
+  if (item.type === "agent_error") {
+    return <AgentErrorCard name={item.name} error={item.error} />;
   }
 
   if (item.type === "system_message") {

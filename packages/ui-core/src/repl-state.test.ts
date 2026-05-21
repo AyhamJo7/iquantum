@@ -426,7 +426,7 @@ describe("reduceREPLViewState", () => {
     });
   });
 
-  it("renders v4 compaction and agent frames as system transcript messages", () => {
+  it("renders v4 compaction and agent frames in transcript and roster state", () => {
     const compacted = reduceREPLViewState(initialREPLViewState, {
       type: "frame",
       frame: { type: "compaction", savedTokens: 42, strategy: "full" },
@@ -447,8 +447,65 @@ describe("reduceREPLViewState", () => {
       text: "[compaction] Saved 42 tokens via full.",
     });
     expect(spawned.messages[1]).toMatchObject({
-      type: "system_message",
-      text: "Spawned agent worker-a (child-1).",
+      type: "agent_spawn",
+      name: "worker-a",
+      sessionId: "child-1",
+    });
+    expect(spawned.agents[0]).toMatchObject({
+      name: "worker-a",
+      sessionId: "child-1",
+      status: "running",
+    });
+
+    const updated = reduceREPLViewState(spawned, {
+      type: "frame",
+      frame: {
+        type: "agent_status",
+        sessionId: "child-1",
+        name: "worker-a",
+        status: "done",
+        phase: "validating",
+        turnIndex: 2,
+        maxTurns: 4,
+      },
+    });
+
+    const done = reduceREPLViewState(updated, {
+      type: "frame",
+      frame: {
+        type: "agent_done",
+        sessionId: "child-1",
+        name: "worker-a",
+        summary: "abc1234",
+      },
+    });
+
+    expect(done.agents[0]).toMatchObject({
+      status: "done",
+      phase: "validating",
+      turnIndex: 2,
+      maxTurns: 4,
+      summary: "abc1234",
+    });
+
+    const failed = reduceREPLViewState(done, {
+      type: "frame",
+      frame: {
+        type: "agent_failed",
+        sessionId: "child-1",
+        name: "worker-a",
+        error: "boom",
+      },
+    });
+
+    expect(failed.agents[0]).toMatchObject({
+      status: "failed",
+      error: "boom",
+    });
+    expect(failed.messages.at(-1)).toMatchObject({
+      type: "agent_error",
+      name: "worker-a",
+      error: "boom",
     });
   });
 });

@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { InvalidTransitionError } from "@iquantum/piv-engine";
 import type {
+  AgentEntry,
+  AgentManifest,
   ContextStats,
   EffortLevel,
   Memory,
@@ -11,6 +13,7 @@ import type {
 import { CONTEXT_TOKEN_BUDGET } from "@iquantum/types";
 import { formatSessionMarkdown } from "@iquantum/ui-core/export-markdown";
 import { ZodError, z } from "zod";
+import { agentManifestSchema } from "./agent-manifest-schema";
 import { type AuthContext, authMiddleware } from "./auth/auth-middleware";
 import {
   type AuthStore,
@@ -54,6 +57,8 @@ export interface DaemonServerOptions {
   compaction?: DaemonCompaction;
   snapshots?: DaemonSnapshots;
   permissions?: DaemonPermissions;
+  agents?: DaemonAgents;
+  coordinator?: DaemonCoordinator;
   mcpRegistry?: DaemonMcpRegistry;
   hooks?: DaemonHooks;
   reviewEngine?: DaemonReviewEngine;
@@ -115,6 +120,12 @@ export interface DaemonSessions {
       effort?: import("@iquantum/types").EffortLevel;
       extraRepoPaths?: string[];
       worktree?: boolean;
+      parentSessionId?: string;
+      agentName?: string;
+      agentColor?: string;
+      coordinatorMode?: boolean;
+      inheritedMemory?: string;
+      allowedTools?: string[];
     },
     context?: AuthContext,
   ): Promise<unknown>;
@@ -135,14 +146,22 @@ export interface DaemonSessions {
   restore(sessionId: string, hash: string): Promise<void>;
   updateConfig?(
     sessionId: string,
-    config: { effort?: import("@iquantum/types").EffortLevel },
+    config: {
+      coordinatorMode?: boolean;
+      effort?: import("@iquantum/types").EffortLevel;
+    },
   ): Promise<Session>;
+  activateCoordinatorMode?(sessionId: string): Promise<Session>;
   getContextStats?(sessionId: string, orgId?: string): Promise<ContextStats>;
   getDiff?(sessionId: string, from?: string, to?: string): Promise<string>;
 }
 
 export interface DaemonStreams {
   attach(sessionId: string, socket: StreamSocket): () => void;
+  publish?(
+    sessionId: string,
+    frame: import("@iquantum/protocol").ServerStreamFrame,
+  ): void;
 }
 
 export interface DaemonConversations {
@@ -188,6 +207,17 @@ export interface DaemonPermissions {
   ): void;
 }
 
+export interface DaemonAgents {
+  spawn(coordinatorSessionId: string, manifest: AgentManifest): Promise<string>;
+  list(coordinatorSessionId: string): AgentEntry[];
+  get(childSessionId: string): AgentEntry | undefined;
+  kill(childSessionId: string, reason: string): Promise<void>;
+}
+
+export interface DaemonCoordinator {
+  run(coordinatorSessionId: string, task: string): Promise<void>;
+}
+
 const effortSchema = z.enum(["fast", "normal", "thorough"]);
 const createSessionSchema = z.object({
   repoPath: z.string().min(1).refine(isAbsolute, {
@@ -205,6 +235,7 @@ const createSessionSchema = z.object({
   mode: z.enum(["piv", "chat"]).default("piv"),
   effort: effortSchema.optional(),
   worktree: z.boolean().optional().default(false),
+  coordinatorMode: z.boolean().optional().default(false),
 });
 const patchConfigSchema = z
   .object({
@@ -214,6 +245,9 @@ const patchConfigSchema = z
     message: "At least one config field is required",
   });
 const taskSchema = z.object({ prompt: z.string().min(1) });
+const agentKillSchema = z.object({
+  reason: z.string().min(1).default("killed by request"),
+});
 const rejectSchema = z.object({ feedback: z.string().min(1) });
 const messageSchema = z.object({
   role: z.literal("user"),
@@ -640,6 +674,7 @@ async function handleRequest(
             : {}),
           ...(body.effort !== undefined ? { effort: body.effort } : {}),
           ...(body.worktree ? { worktree: true } : {}),
+          ...(body.coordinatorMode ? { coordinatorMode: true } : {}),
         },
         context ?? undefined,
       )) as Session;
@@ -792,6 +827,92 @@ async function handleRequest(
       await options.sessions.getSession(sessionId, context?.orgId);
       await snapshots.restoreToSandbox(sessionId, turnIndex);
       return Response.json({ ok: true });
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
+      parts[2] === "coordinator"
+    ) {
+      const coordinator = requireCoordinator(options);
+      const body = taskSchema.parse(await request.json());
+      await options.sessions.getSession(sessionId, context?.orgId);
+      await options.sessions.activateCoordinatorMode?.(sessionId);
+      void coordinator
+        .run(sessionId, body.prompt)
+        .then(() => {
+          options.streams.publish?.(sessionId, { type: "done" });
+        })
+        .catch((err: unknown) => {
+          options.streams.publish?.(sessionId, {
+            type: "error",
+            message: err instanceof Error ? err.message : "coordinator failed",
+          });
+        });
+      return Response.json({ ok: true }, { status: 202 });
+    }
+
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
+      parts[2] === "agents"
+    ) {
+      const agents = requireAgents(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      const body = agentManifestSchema.parse(await request.json());
+      const childSessionId = await agents.spawn(
+        sessionId,
+        toAgentManifest(body),
+      );
+      return Response.json({ sessionId: childSessionId }, { status: 201 });
+    }
+
+    if (
+      request.method === "GET" &&
+      parts.length === 3 &&
+      parts[2] === "agents"
+    ) {
+      const agents = requireAgents(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      return Response.json({ agents: agents.list(sessionId) });
+    }
+
+    if (
+      request.method === "GET" &&
+      parts.length === 4 &&
+      parts[2] === "agents"
+    ) {
+      const agents = requireAgents(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      const childId = parts[3];
+      if (!childId || !isValidSessionId(childId)) {
+        return notFound();
+      }
+      const agent = agents.get(childId);
+      if (!agent || agent.coordinatorSessionId !== sessionId) {
+        return notFound();
+      }
+      return Response.json(agent);
+    }
+
+    if (
+      request.method === "DELETE" &&
+      parts.length === 4 &&
+      parts[2] === "agents"
+    ) {
+      const agents = requireAgents(options);
+      await options.sessions.getSession(sessionId, context?.orgId);
+      const childId = parts[3];
+      if (!childId || !isValidSessionId(childId)) {
+        return notFound();
+      }
+      const agent = agents.get(childId);
+      if (!agent || agent.coordinatorSessionId !== sessionId) {
+        return notFound();
+      }
+      const body = agentKillSchema.parse(await readOptionalJson(request));
+      await agents.kill(childId, body.reason);
+      return new Response(null, { status: 204 });
     }
 
     if (
@@ -1293,12 +1414,54 @@ function requirePermissions(options: DaemonServerOptions): DaemonPermissions {
   return options.permissions;
 }
 
+function requireAgents(options: DaemonServerOptions): DaemonAgents {
+  if (!options.agents) {
+    throw new Error("AgentSpawner is not configured");
+  }
+
+  return options.agents;
+}
+
+function requireCoordinator(options: DaemonServerOptions): DaemonCoordinator {
+  if (!options.coordinator) {
+    throw new Error("CoordinatorEngine is not configured");
+  }
+
+  return options.coordinator;
+}
+
 function requireMemory(options: DaemonServerOptions): DaemonMemory {
   if (!options.memory) {
     throw new Error("MemoryManager is not configured");
   }
 
   return options.memory;
+}
+
+function toAgentManifest(
+  body: z.infer<typeof agentManifestSchema>,
+): AgentManifest {
+  return {
+    name: body.name,
+    prompt: body.prompt,
+    inheritMemory: body.inheritMemory,
+    worktree: body.worktree,
+    ...(body.tools === undefined ? {} : { tools: body.tools }),
+    ...(body.maxTurns === undefined ? {} : { maxTurns: body.maxTurns }),
+  };
+}
+
+async function readOptionalJson(request: Request): Promise<unknown> {
+  const text = await request.text();
+  if (!text.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw Object.assign(new Error("Invalid JSON body"), { status: 400 });
+  }
 }
 
 function streamReview(

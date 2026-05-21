@@ -205,6 +205,7 @@ Type any of these inside the `iq` REPL:
 | `/context` | Show the current context budget |
 | `/diff` | Show the current sandbox diff |
 | `/export` | Export the current session |
+| `/agents` | List child agents for the current coordinator session |
 | `/fast` | Switch to fast effort |
 | `/normal` | Switch to normal effort |
 | `/thorough` | Switch to thorough effort |
@@ -232,6 +233,7 @@ Type any of these inside the `iq` REPL:
 | `iq` | Open the interactive PIV REPL (auto-starts daemon if not running) |
 | `iq chat` | Open chat mode without the PIV loop (auto-starts daemon) |
 | `iq task <prompt>` | Run one PIV task non-interactively (daemon must be running) |
+| `iq task --coordinator <prompt>` | Decompose a large task into parallel worker agents |
 | `iq review` | Review staged changes by default |
 | `iq review --commit <ref>` | Review one commit |
 | `iq review --path <path>` | Review a path against `HEAD` |
@@ -284,6 +286,28 @@ Use `--worktree` to run the task on a dedicated Git worktree branch — useful w
 ```bash
 iq task --worktree "upgrade the auth flow without touching my current checkout"
 ```
+
+## Agent Orchestration
+
+For large tasks with separable workstreams, run coordinator mode:
+
+```bash
+iq task --coordinator "build a REST API and write tests for it"
+```
+
+The coordinator asks the Architect model for a worker manifest, spawns child agents on dedicated worktree branches, waits for their PIV loops to complete, applies their validated diffs into the coordinator sandbox, runs the coordinator test command, and commits the integrated result if validation passes.
+
+In the REPL, agent activity appears in the `AgentRoster` panel below the PIV phase strip. It shows each child agent's name, current phase, turn progress, and status. Spawn and failure frames render as transcript cards, and `/agents` lists the current child sessions with their status.
+
+Chat/tool mode can also use the built-in agent tools:
+
+| Tool | Purpose |
+|---|---|
+| `agent_spawn` | Start a child agent from an `AgentManifest` |
+| `agent_list` | Return the current coordinator's child agents |
+| `agent_task` | Submit a follow-up PIV task to a named child agent |
+| `agent_wait` | Wait for a named child to finish or fail |
+| `agent_kill` | Stop a named child agent |
 
 ---
 
