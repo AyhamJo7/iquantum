@@ -53,6 +53,18 @@ describe("GitManager", () => {
       "changed\n",
     );
   });
+
+  it("returns a diff between refs", async () => {
+    const repoPath = await makeRepo();
+    const store = new InMemoryGitCheckpointStore();
+    const manager = new GitManager({ repoPath, store });
+    const before = await manager.currentHead();
+    await writeFile(join(repoPath, "README.md"), "# test\n\nchanged\n");
+    await manager.checkpoint("session-1", "change readme", "validate-1");
+    const after = await manager.currentHead();
+
+    await expect(manager.diff(before, after)).resolves.toContain("+changed");
+  });
 });
 
 describe("GitManager worktree methods", () => {

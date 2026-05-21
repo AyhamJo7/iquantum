@@ -120,6 +120,40 @@ describe("SqliteSessionStore.getContextStats", () => {
 });
 
 describe("SqliteSessionStore", () => {
+  it("lists persisted child sessions for agent registry rebuild", async () => {
+    let capturedSql = "";
+    const store = new SqliteSessionStore({
+      query(sql: string) {
+        return {
+          all() {
+            capturedSql = sql;
+            return [
+              {
+                ...sessionRow(),
+                id: "child-1",
+                parentSessionId: "coordinator-1",
+                agentName: "api",
+                agentColor: "2",
+              },
+            ];
+          },
+        };
+      },
+    } as never);
+
+    const children = await store.listChildren();
+
+    expect(capturedSql).toContain("parent_session_id IS NOT NULL");
+    expect(children).toMatchObject([
+      {
+        id: "child-1",
+        parentSessionId: "coordinator-1",
+        agentName: "api",
+        agentColor: "2",
+      },
+    ]);
+  });
+
   it("deletes session children before removing the session row", async () => {
     const statements: Array<{ sql: string; params: unknown[] }> = [];
     const execs: string[] = [];
@@ -743,4 +777,28 @@ class RecordingPluginDb implements DbAdapter {
   }
 
   async close(): Promise<void> {}
+}
+
+function sessionRow() {
+  return {
+    id: "session-1",
+    status: "idle",
+    repoPath: "/repo",
+    containerId: "container",
+    volumeId: "volume",
+    config: "{}",
+    mode: "piv",
+    effort: "normal",
+    worktreePath: null,
+    worktreeBranch: null,
+    startCheckpointHash: null,
+    parentSessionId: null,
+    agentName: null,
+    agentColor: null,
+    coordinatorMode: 0,
+    userId: null,
+    orgId: null,
+    createdAt: "2026-05-21T00:00:00.000Z",
+    updatedAt: "2026-05-21T00:00:00.000Z",
+  };
 }

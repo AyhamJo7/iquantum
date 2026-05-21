@@ -1,7 +1,13 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import {
+  AgentColorManager,
+  AgentRegistry,
+  AgentSpawner,
+} from "@iquantum/agent";
 import { loadConfig } from "@iquantum/config";
 import { countTokens } from "@iquantum/context-window";
+import { CoordinatorEngine } from "@iquantum/coordinator";
 import { SandboxFileTools } from "@iquantum/file-tools";
 import { HookLoader, HookRunner } from "@iquantum/hooks";
 import {
@@ -11,11 +17,13 @@ import {
   TokenBudgetExceededError,
 } from "@iquantum/llm";
 import { MemoryManager } from "@iquantum/memory";
+import { buildRepoMap } from "@iquantum/repo-map";
 import { SandboxManager as LocalSandboxManager } from "@iquantum/sandbox";
 import { SnapshotStore } from "@iquantum/snapshots";
 import type { LLMProvider, McpTool } from "@iquantum/types";
 import { WebToolExecutor } from "@iquantum/web-tools";
 import Redis from "ioredis";
+import { AgentWaiter } from "./agent-waiter";
 import { AuthStore } from "./auth/auth-store";
 import { JwtService } from "./auth/jwt-service";
 import { BillingTracker } from "./billing-tracker";
@@ -215,6 +223,118 @@ const sessions = new SessionController({
   memoryUserId: "local",
 });
 streams = new StreamController(sessions);
+const agentRegistry = new AgentRegistry();
+const agentColorManager = new AgentColorManager();
+agentRegistry.rebuildFromDb((await sessionStore.listChildren?.()) ?? []);
+const agentSpawner = new AgentSpawner({
+  sessionController: sessions,
+  memoryManager: {
+    async serializeForSession(sessionId) {
+      const session = await sessions.getSession(sessionId);
+      return (
+        await memoryManager.buildBlock(session.userId ?? "local", session.orgId)
+      ).text;
+    },
+  },
+  agentRegistry,
+  colorManager: agentColorManager,
+  streams,
+  maxAgents: config.maxAgents,
+  defaultMaxTurns: config.agentMaxTurns,
+});
+const agentWaiter = new AgentWaiter(
+  agentRegistry,
+  sessions,
+  config.agentTimeoutMs,
+);
+const agents = {
+  spawn: agentSpawner.spawn.bind(agentSpawner),
+  list: agentRegistry.list.bind(agentRegistry),
+  get: agentRegistry.get.bind(agentRegistry),
+  kill: agentSpawner.kill.bind(agentSpawner),
+};
+const conversationAgentTools = {
+  spawn: agentSpawner.spawn.bind(agentSpawner),
+  list: agentRegistry.list.bind(agentRegistry),
+  async message(
+    coordinatorSessionId: string,
+    agentName: string,
+    content: string,
+  ) {
+    const agent = findAgentByName(
+      agentRegistry,
+      coordinatorSessionId,
+      agentName,
+    );
+    const plan = await sessions.startTask(agent.sessionId, content);
+    return plan.id;
+  },
+  async wait(coordinatorSessionId: string, agentName: string) {
+    const agent = findAgentByName(
+      agentRegistry,
+      coordinatorSessionId,
+      agentName,
+    );
+    return JSON.stringify(
+      await agentWaiter.wait(coordinatorSessionId, agent.name, agent.sessionId),
+    );
+  },
+  async kill(coordinatorSessionId: string, agentName: string, reason: string) {
+    const agent = findAgentByName(
+      agentRegistry,
+      coordinatorSessionId,
+      agentName,
+    );
+    await agentSpawner.kill(agent.sessionId, reason);
+  },
+};
+const coordinatorEngine = new CoordinatorEngine({
+  architect: {
+    complete(messages, options) {
+      return llmRouter.complete("plan", messages, options);
+    },
+  },
+  spawner: agentSpawner,
+  waiter: agentWaiter,
+  merger: {
+    async merge(workerResults, coordinatorSessionId) {
+      const integration = await sessions.integrateWorkerResults(
+        coordinatorSessionId,
+        workerResults,
+      );
+      if (integration.conflicts.length > 0) {
+        streams.publish(coordinatorSessionId, {
+          type: "agent_message",
+          sessionId: coordinatorSessionId,
+          name: "coordinator",
+          content: `Overlap in ${integration.conflicts.length} file(s):\n${integration.conflicts.join("\n")}`,
+        });
+      }
+      streams.publish(coordinatorSessionId, {
+        type: "agent_message",
+        sessionId: coordinatorSessionId,
+        name: "coordinator",
+        content: `Merged ${workerResults.length} workers at ${integration.checkpointHash.slice(0, 7)}.`,
+      });
+      streams.publish(coordinatorSessionId, {
+        type: "checkpoint",
+        hash: integration.checkpointHash,
+        message: `iquantum: merge ${workerResults.length} worker${
+          workerResults.length === 1 ? "" : "s"
+        }`,
+      });
+    },
+  },
+  maxAgents: config.maxAgents,
+});
+const coordinator = {
+  async run(coordinatorSessionId: string, task: string) {
+    const session = await sessions.getSession(coordinatorSessionId);
+    const repoMap = await buildRepoMap(session.repoPath);
+    const manifest = await coordinatorEngine.plan(task, repoMap.map);
+    await coordinatorEngine.execute(manifest, coordinatorSessionId);
+  },
+};
 const reviewModel = config.reviewModel ?? config.architectModel;
 const reviewEngine = new ReviewEngine({
   completer: {
@@ -262,12 +382,29 @@ const conversations = new ConversationController({
   ...(webTools ? { webTools } : {}),
   ...(webSearchRateLimiter ? { webSearchRateLimiter } : {}),
   permissionChecker: permissions,
+  agentTools: conversationAgentTools,
   memoryManager,
   memoryUserId: "local",
   autoMemory: config.autoMemory,
   hookRunner,
   snapshotStore: snapshots,
 });
+
+function findAgentByName(
+  registry: AgentRegistry,
+  coordinatorSessionId: string,
+  agentName: string,
+) {
+  const agent = registry
+    .list(coordinatorSessionId)
+    .find((entry) => entry.name === agentName);
+
+  if (!agent) {
+    throw new Error(`Unknown agent ${agentName}`);
+  }
+
+  return agent;
+}
 
 async function healthCheck(): Promise<{
   db: boolean;
@@ -316,6 +453,8 @@ const server = createDaemonServer({
   compaction,
   snapshots,
   permissions,
+  agents,
+  coordinator,
   reviewEngine,
   ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
   hooks: hookRunner,
@@ -343,6 +482,8 @@ const tcpServer = createTcpDaemonServer(
     compaction,
     snapshots,
     permissions,
+    agents,
+    coordinator,
     reviewEngine,
     ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
     hooks: hookRunner,

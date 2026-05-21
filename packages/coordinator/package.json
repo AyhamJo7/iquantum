@@ -6,8 +6,10 @@
   "exports": "./src/index.ts",
   "peerDependencies": {
     "@iquantum/agent": "workspace:*",
+    "@iquantum/llm": "workspace:*",
     "@iquantum/piv-engine": "workspace:*",
-    "@iquantum/repo-map": "workspace:*"
+    "@iquantum/repo-map": "workspace:*",
+    "@iquantum/types": "workspace:*"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"

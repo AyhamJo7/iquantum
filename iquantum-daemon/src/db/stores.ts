@@ -28,10 +28,11 @@ export interface SessionStore {
   get(sessionId: string, orgId?: string): Promise<Session | null>;
   update(
     sessionId: string,
-    updates: Partial<Pick<Session, "effort">>,
+    updates: Partial<Pick<Session, "coordinatorMode" | "effort">>,
   ): Promise<Session>;
   delete(sessionId: string): Promise<void>;
   listByOrg(orgId: string): Promise<Session[]>;
+  listChildren?(): Promise<Session[]>;
   getContextStats?(sessionId: string): Promise<ContextStats>;
 }
 
@@ -166,13 +167,20 @@ export class SqliteSessionStore implements SessionStore {
 
   async update(
     sessionId: string,
-    updates: Partial<Pick<Session, "effort">>,
+    updates: Partial<Pick<Session, "coordinatorMode" | "effort">>,
   ): Promise<Session> {
     const now = new Date().toISOString();
     if (updates.effort !== undefined) {
       this.#db
         .query("UPDATE sessions SET effort = ?, updated_at = ? WHERE id = ?")
         .run(updates.effort, now, sessionId);
+    }
+    if (updates.coordinatorMode !== undefined) {
+      this.#db
+        .query(
+          "UPDATE sessions SET coordinator_mode = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(Number(updates.coordinatorMode), now, sessionId);
     }
     const session = await this.get(sessionId);
     if (!session) {
@@ -280,6 +288,40 @@ export class SqliteSessionStore implements SessionStore {
         ORDER BY created_at, id`,
       )
       .all(orgId) as SessionRow[];
+    return rows.map((row) => ({
+      ...row,
+      config: JSON.parse(row.config) as Record<string, unknown>,
+    }));
+  }
+
+  async listChildren(): Promise<Session[]> {
+    const rows = this.#db
+      .query(
+        `SELECT
+          id,
+          status,
+          repo_path AS "repoPath",
+          container_id AS "containerId",
+          volume_id AS "volumeId",
+          config,
+          mode,
+          effort,
+          worktree_path AS "worktreePath",
+          worktree_branch AS "worktreeBranch",
+          start_checkpoint_hash AS "startCheckpointHash",
+          parent_session_id AS "parentSessionId",
+          agent_name AS "agentName",
+          agent_color AS "agentColor",
+          coordinator_mode AS "coordinatorMode",
+          user_id AS "userId",
+          org_id AS "orgId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt"
+        FROM sessions
+        WHERE parent_session_id IS NOT NULL
+        ORDER BY created_at, id`,
+      )
+      .all() as SessionRow[];
     return rows.map((row) => ({
       ...row,
       config: JSON.parse(row.config) as Record<string, unknown>,
@@ -1858,13 +1900,19 @@ export class AdapterSessionStore implements SessionStore {
 
   async update(
     sessionId: string,
-    updates: Partial<Pick<Session, "effort">>,
+    updates: Partial<Pick<Session, "coordinatorMode" | "effort">>,
   ): Promise<Session> {
     const now = new Date().toISOString();
     if (updates.effort !== undefined) {
       await this.db.execute(
         "UPDATE sessions SET effort = ?, updated_at = ? WHERE id = ?",
         [updates.effort, now, sessionId],
+      );
+    }
+    if (updates.coordinatorMode !== undefined) {
+      await this.db.execute(
+        "UPDATE sessions SET coordinator_mode = ?, updated_at = ? WHERE id = ?",
+        [Number(updates.coordinatorMode), now, sessionId],
       );
     }
     const session = await this.get(sessionId);
@@ -1945,6 +1993,26 @@ export class AdapterSessionStore implements SessionStore {
               created_at AS "createdAt", updated_at AS "updatedAt"
        FROM sessions WHERE org_id = ? ORDER BY created_at, id`,
       [orgId],
+    );
+    return rows.map((row) => ({
+      ...row,
+      config: JSON.parse(row.config) as Record<string, unknown>,
+    }));
+  }
+
+  async listChildren(): Promise<Session[]> {
+    const rows = await this.db.query<SessionRow>(
+      `SELECT id, status, repo_path AS "repoPath", container_id AS "containerId",
+              volume_id AS "volumeId", config, mode, effort,
+              worktree_path AS "worktreePath", worktree_branch AS "worktreeBranch",
+              start_checkpoint_hash AS "startCheckpointHash",
+              parent_session_id AS "parentSessionId",
+              agent_name AS "agentName",
+              agent_color AS "agentColor",
+              coordinator_mode AS "coordinatorMode",
+              user_id AS "userId", org_id AS "orgId",
+              created_at AS "createdAt", updated_at AS "updatedAt"
+       FROM sessions WHERE parent_session_id IS NOT NULL ORDER BY created_at, id`,
     );
     return rows.map((row) => ({
       ...row,

@@ -14,6 +14,7 @@ import { Box, useInput } from "ink";
 import { useEffect, useMemo, useRef } from "react";
 import type { DaemonClient } from "../client";
 import type { CommandRegistry } from "../commands/registry";
+import { AgentRoster } from "../components/AgentRoster";
 import { ErrorCard } from "../components/ErrorCard";
 import { PermissionRequest } from "../components/PermissionRequest";
 import { PIVPhaseStrip } from "../components/PIVPhaseStrip";
@@ -203,6 +204,7 @@ export function REPL({
           completedPhases={state.completedPhases}
         />
       ) : null}
+      <AgentRoster agents={state.agents} />
       {pendingPermission ? (
         <PermissionRequest
           requestId={pendingPermission.requestId}

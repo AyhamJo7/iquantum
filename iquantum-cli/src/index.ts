@@ -89,6 +89,7 @@ program
     "Effort level: fast | normal | thorough (default: normal)",
   )
   .option("--worktree", "Run the task on a dedicated git worktree branch")
+  .option("--coordinator", "Break the task into parallel worker agents")
   .action(
     async (
       prompt: string,
@@ -97,6 +98,7 @@ program
         extraRepo?: string[];
         effort?: string;
         worktree?: boolean;
+        coordinator?: boolean;
       },
     ) => {
       try {

@@ -77,6 +77,10 @@ export class GitManager {
     await this.#git.reset(["--hard", hash]);
   }
 
+  async diff(from: string, to: string): Promise<string> {
+    return this.#git.diff([from, to, "--unified=3"]);
+  }
+
   async currentHead(): Promise<string> {
     return (await this.#git.revparse(["HEAD"])).trim();
   }

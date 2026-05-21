@@ -24,6 +24,8 @@ function makeContext(overrides?: Partial<CommandContext>): CommandContext {
       }),
       destroySession: vi.fn(),
       startTask: vi.fn(),
+      startCoordinatorTask: vi.fn(),
+      listAgents: vi.fn().mockResolvedValue([]),
       currentPlan: vi.fn().mockResolvedValue(null),
       approve: vi.fn().mockResolvedValue(undefined),
       reject: vi.fn().mockResolvedValue(undefined),
@@ -111,6 +113,30 @@ describe("slash commands", () => {
     const text = (ctx.dispatched[0] as { text: string }).text;
     expect(text).toContain("test-model");
     expect(text).toContain("test-editor-model");
+  });
+
+  it("/agents lists child agent status", async () => {
+    const ctx = makeContext({
+      client: {
+        ...makeContext().client,
+        listAgents: vi.fn().mockResolvedValue([
+          {
+            sessionId: "child-1",
+            name: "api",
+            colorIndex: 0,
+            coordinatorSessionId: "session-1",
+            status: "running",
+          },
+        ]),
+      },
+    }) as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("agents").run("", ctx);
+
+    const text = (ctx.dispatched[0] as { text: string }).text;
+    expect(text).toContain("api");
+    expect(text).toContain("running");
+    expect(text).toContain("child-1");
   });
 
   it("/clear dispatches clear_transcript on success", async () => {

@@ -355,6 +355,21 @@ describe("SessionController", () => {
     expect(harness.effortCalls).toEqual(["fast"]);
   });
 
+  it("activateCoordinatorMode persists coordinator mode in DB and live session", async () => {
+    const harness = createHarness();
+    await harness.controller.createSession("/repo");
+
+    const updated =
+      await harness.controller.activateCoordinatorMode("session-1");
+
+    expect(updated.coordinatorMode).toBe(true);
+    await expect(
+      harness.controller.getSession("session-1"),
+    ).resolves.toMatchObject({
+      coordinatorMode: true,
+    });
+  });
+
   describe("getDiff", () => {
     it("runs git diff <from> --unified=3 when only from is provided", async () => {
       const execCalls: string[] = [];
@@ -465,6 +480,240 @@ describe("SessionController", () => {
       ).rejects.toThrow("Invalid git ref");
       expect(execCalled).toBe(false);
     });
+  });
+
+  it("applies worker patches, validates, syncs, and checkpoints coordinator merge", async () => {
+    const ids = ["coordinator-1", "child-1", "validate-1"];
+    const execCalls: string[] = [];
+    const checkpointCalls: unknown[][] = [];
+    const harness = createHarness({
+      createId: () => ids.shift() ?? "extra-id",
+      exec: (_sessionId, command) => {
+        execCalls.push(command);
+        if (command.startsWith("cat --")) {
+          return fakeExecResult("initial\n", "", 0);
+        }
+        return fakeExecResult("", "", 0);
+      },
+      createGitManager: (repoPath) => ({
+        async checkpoint(sessionId, message, validateRunId) {
+          checkpointCalls.push([repoPath, sessionId, message, validateRunId]);
+          return {
+            id: "checkpoint-merge",
+            sessionId,
+            validateRunId,
+            commitHash: "feed1234",
+            commitMessage: message,
+            createdAt: "2026-05-15T00:00:00.000Z",
+          };
+        },
+        async diff(_from, _to) {
+          return [
+            "diff --git a/README.md b/README.md",
+            "--- a/README.md",
+            "+++ b/README.md",
+            "@@ -1 +1,2 @@",
+            " initial",
+            "+worker change",
+            "",
+          ].join("\n");
+        },
+        async listCheckpoints() {
+          return { checkpoints: [], nextCursor: null };
+        },
+        async restore() {},
+        async currentHead() {
+          return "abc123";
+        },
+        async createWorktree(sessionId) {
+          return {
+            worktreePath: `/tmp/wt-${sessionId}`,
+            branch: `iquantum/${sessionId}`,
+          };
+        },
+        async removeWorktree() {},
+      }),
+    });
+
+    await harness.controller.createSession("/repo");
+    const child = await harness.controller.createSession("/repo", {
+      worktree: true,
+    });
+    const result = await harness.controller.integrateWorkerResults(
+      "coordinator-1",
+      [
+        {
+          name: "api",
+          sessionId: child.id,
+          status: "done",
+          summary: "completed",
+          commitHash: "abc1234",
+        },
+      ],
+    );
+
+    expect(result.checkpointHash).toBe("feed1234");
+    expect(result.conflicts).toEqual([]);
+    expect(execCalls).toEqual([
+      "cat -- 'README.md'",
+      expect.stringContaining("base64 -d > 'README.md'"),
+      "bun test",
+    ]);
+    expect(checkpointCalls).toEqual([
+      ["/repo", "coordinator-1", "iquantum: merge 1 worker", "validate-1"],
+    ]);
+  });
+
+  it("populates conflicts when multiple workers modify the same file", async () => {
+    const ids = ["coordinator-1", "child-1", "child-2", "validate-1"];
+    const harness = createHarness({
+      createId: () => ids.shift() ?? "extra-id",
+      exec: (_sessionId, command) => {
+        if (command.startsWith("cat --")) {
+          return fakeExecResult("initial\n", "", 0);
+        }
+        return fakeExecResult("", "", 0);
+      },
+      createGitManager: (_repoPath) => ({
+        async checkpoint(sessionId, message, validateRunId) {
+          return {
+            id: "checkpoint-merge",
+            sessionId,
+            validateRunId,
+            commitHash: "beef1234",
+            commitMessage: message,
+            createdAt: "2026-05-21T00:00:00.000Z",
+          };
+        },
+        async diff(_from, _to) {
+          return [
+            "diff --git a/README.md b/README.md",
+            "--- a/README.md",
+            "+++ b/README.md",
+            "@@ -1 +1,2 @@",
+            " initial",
+            "+change",
+            "",
+          ].join("\n");
+        },
+        async listCheckpoints() {
+          return { checkpoints: [], nextCursor: null };
+        },
+        async restore() {},
+        async currentHead() {
+          return "abc123";
+        },
+        async createWorktree(sessionId) {
+          return {
+            worktreePath: `/tmp/wt-${sessionId}`,
+            branch: `iquantum/${sessionId}`,
+          };
+        },
+        async removeWorktree() {},
+      }),
+    });
+
+    await harness.controller.createSession("/repo");
+    const child1 = await harness.controller.createSession("/repo", {
+      worktree: true,
+    });
+    const child2 = await harness.controller.createSession("/repo", {
+      worktree: true,
+    });
+
+    const result = await harness.controller.integrateWorkerResults(
+      "coordinator-1",
+      [
+        {
+          name: "api",
+          sessionId: child1.id,
+          status: "done",
+          summary: "completed",
+          commitHash: "abc1234",
+        },
+        {
+          name: "tests",
+          sessionId: child2.id,
+          status: "done",
+          summary: "completed",
+          commitHash: "def5678",
+        },
+      ],
+    );
+
+    expect(result.conflicts).toEqual(["README.md: api and tests"]);
+  });
+
+  it("detects binary file conflicts", async () => {
+    const ids = ["coordinator-1", "child-1", "child-2", "validate-1"];
+    const harness = createHarness({
+      createId: () => ids.shift() ?? "extra-id",
+      exec: (_sessionId, command) => {
+        if (command.startsWith("cat --")) {
+          return fakeExecResult("initial\n", "", 0);
+        }
+        return fakeExecResult("", "", 0);
+      },
+      createGitManager: (_repoPath) => ({
+        async checkpoint(sessionId, message, validateRunId) {
+          return {
+            id: "checkpoint-merge",
+            sessionId,
+            validateRunId,
+            commitHash: "beef5678",
+            commitMessage: message,
+            createdAt: "2026-05-21T00:00:00.000Z",
+          };
+        },
+        async diff(_from, _to) {
+          return "Binary files a/assets/logo.png and b/assets/logo.png differ\n";
+        },
+        async listCheckpoints() {
+          return { checkpoints: [], nextCursor: null };
+        },
+        async restore() {},
+        async currentHead() {
+          return "abc123";
+        },
+        async createWorktree(sessionId) {
+          return {
+            worktreePath: `/tmp/wt-${sessionId}`,
+            branch: `iquantum/${sessionId}`,
+          };
+        },
+        async removeWorktree() {},
+      }),
+    });
+
+    await harness.controller.createSession("/repo");
+    const child1 = await harness.controller.createSession("/repo", {
+      worktree: true,
+    });
+    const child2 = await harness.controller.createSession("/repo", {
+      worktree: true,
+    });
+
+    const result = await harness.controller.integrateWorkerResults(
+      "coordinator-1",
+      [
+        {
+          name: "ui",
+          sessionId: child1.id,
+          status: "done",
+          summary: "completed",
+          commitHash: "abc1234",
+        },
+        {
+          name: "branding",
+          sessionId: child2.id,
+          status: "done",
+          summary: "completed",
+          commitHash: "def5678",
+        },
+      ],
+    );
+
+    expect(result.conflicts).toEqual(["assets/logo.png: ui and branding"]);
   });
 });
 
