@@ -52,6 +52,7 @@ export interface ConversationMessage {
   tokenCount: number;
   compactionBoundary: boolean;
   compactionAnchor?: boolean;
+  bodyCompressed?: Uint8Array | null;
   createdAt: string;
 }
 
@@ -308,8 +309,8 @@ export class SqlitePIVStore implements PIVStore {
         `INSERT INTO messages (
           id, session_id, task_id, role, phase, model, content,
           has_thinking, token_count, compaction_boundary, compaction_anchor,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          body_compressed, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -323,6 +324,7 @@ export class SqlitePIVStore implements PIVStore {
         message.tokenCount,
         Number(message.compactionBoundary),
         Number(message.compactionAnchor ?? false),
+        message.bodyCompressed ?? null,
         message.createdAt,
       );
   }
@@ -345,6 +347,7 @@ export class SqlitePIVStore implements PIVStore {
           token_count AS "tokenCount",
           compaction_boundary AS "compactionBoundary",
           compaction_anchor AS "compactionAnchor",
+          body_compressed AS "bodyCompressed",
           created_at AS "createdAt"
         FROM messages
         WHERE session_id = ? AND task_id = ?
@@ -462,8 +465,8 @@ export class SqliteConversationStore implements ConversationStore {
         `INSERT INTO messages (
           id, session_id, task_id, role, phase, model, content,
           has_thinking, token_count, compaction_boundary, compaction_anchor,
-          created_at
-        ) VALUES (?, ?, NULL, ?, 'plan', NULL, ?, ?, ?, ?, ?, ?)`,
+          body_compressed, created_at
+        ) VALUES (?, ?, NULL, ?, 'plan', NULL, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -474,6 +477,7 @@ export class SqliteConversationStore implements ConversationStore {
         message.tokenCount,
         Number(message.compactionBoundary),
         Number(message.compactionAnchor ?? false),
+        message.bodyCompressed ?? null,
         message.createdAt,
       );
   }
@@ -527,6 +531,7 @@ export class SqliteConversationStore implements ConversationStore {
           token_count AS "tokenCount",
           compaction_boundary AS "compactionBoundary",
           compaction_anchor AS "compactionAnchor",
+          body_compressed AS "bodyCompressed",
           created_at AS "createdAt"
         FROM messages
         WHERE session_id = ? AND task_id IS NULL
@@ -564,6 +569,7 @@ export class SqliteConversationStore implements ConversationStore {
           token_count AS "tokenCount",
           compaction_boundary AS "compactionBoundary",
           compaction_anchor AS "compactionAnchor",
+          body_compressed AS "bodyCompressed",
           created_at AS "createdAt"
         FROM messages
         WHERE session_id = ? AND task_id IS NULL
@@ -1961,7 +1967,7 @@ export class AdapterPIVStore implements PIVStore {
   }
   async insertMessage(message: Message): Promise<void> {
     await this.db.execute(
-      `INSERT INTO messages (id, session_id, task_id, role, phase, model, content, has_thinking, token_count, compaction_boundary, compaction_anchor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (id, session_id, task_id, role, phase, model, content, has_thinking, token_count, compaction_boundary, compaction_anchor, body_compressed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         message.id,
         message.sessionId,
@@ -1974,6 +1980,7 @@ export class AdapterPIVStore implements PIVStore {
         message.tokenCount,
         Number(message.compactionBoundary),
         Number(message.compactionAnchor ?? false),
+        message.bodyCompressed ?? null,
         message.createdAt,
       ],
     );
@@ -1983,7 +1990,7 @@ export class AdapterPIVStore implements PIVStore {
     taskId: string,
   ): Promise<Message[]> {
     const rows = await this.db.query<MessageRow>(
-      `SELECT id, session_id AS "sessionId", task_id AS "taskId", role, phase, model, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", compaction_anchor AS "compactionAnchor", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id = ? ORDER BY created_at, id LIMIT 2000`,
+      `SELECT id, session_id AS "sessionId", task_id AS "taskId", role, phase, model, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", compaction_anchor AS "compactionAnchor", body_compressed AS "bodyCompressed", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id = ? ORDER BY created_at, id LIMIT 2000`,
       [sessionId, taskId],
     );
     return rows.map(toMessage);
@@ -2048,7 +2055,7 @@ export class AdapterConversationStore implements ConversationStore {
   constructor(private readonly db: DbAdapter) {}
   async insert(message: ConversationMessage): Promise<void> {
     await this.db.execute(
-      `INSERT INTO messages (id, session_id, task_id, role, phase, model, content, has_thinking, token_count, compaction_boundary, compaction_anchor, created_at) VALUES (?, ?, NULL, ?, 'plan', NULL, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (id, session_id, task_id, role, phase, model, content, has_thinking, token_count, compaction_boundary, compaction_anchor, body_compressed, created_at) VALUES (?, ?, NULL, ?, 'plan', NULL, ?, ?, ?, ?, ?, ?, ?)`,
       [
         message.id,
         message.sessionId,
@@ -2058,6 +2065,7 @@ export class AdapterConversationStore implements ConversationStore {
         message.tokenCount,
         Number(message.compactionBoundary),
         Number(message.compactionAnchor ?? false),
+        message.bodyCompressed ?? null,
         message.createdAt,
       ],
     );
@@ -2111,7 +2119,7 @@ export class AdapterConversationStore implements ConversationStore {
         ]
       : [sessionId, ...(orgId ? [orgId] : []), options.limit + 1];
     const rows = await this.db.query<ConversationMessageRow>(
-      `SELECT id, session_id AS "sessionId", role, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", compaction_anchor AS "compactionAnchor", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ${beforeClause} ORDER BY created_at DESC, id DESC LIMIT ?`,
+      `SELECT id, session_id AS "sessionId", role, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", compaction_anchor AS "compactionAnchor", body_compressed AS "bodyCompressed", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ${beforeClause} ORDER BY created_at DESC, id DESC LIMIT ?`,
       params,
     );
     const hasMore = rows.length > options.limit;
@@ -2129,7 +2137,7 @@ export class AdapterConversationStore implements ConversationStore {
       ? "AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = messages.session_id AND sessions.org_id = ?)"
       : "";
     const rows = await this.db.query<ConversationMessageRow>(
-      `SELECT id, session_id AS "sessionId", role, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", compaction_anchor AS "compactionAnchor", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ORDER BY created_at, id`,
+      `SELECT id, session_id AS "sessionId", role, content, has_thinking AS "hasThinking", token_count AS "tokenCount", compaction_boundary AS "compactionBoundary", compaction_anchor AS "compactionAnchor", body_compressed AS "bodyCompressed", created_at AS "createdAt" FROM messages WHERE session_id = ? AND task_id IS NULL ${tenantClause} ORDER BY created_at, id`,
       orgId ? [sessionId, orgId] : [sessionId],
     );
     return rows.map(toConversationMessage);

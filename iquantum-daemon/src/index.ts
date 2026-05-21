@@ -12,6 +12,7 @@ import {
 } from "@iquantum/llm";
 import { MemoryManager } from "@iquantum/memory";
 import { SandboxManager as LocalSandboxManager } from "@iquantum/sandbox";
+import { SnapshotStore } from "@iquantum/snapshots";
 import type { LLMProvider, McpTool } from "@iquantum/types";
 import { WebToolExecutor } from "@iquantum/web-tools";
 import Redis from "ioredis";
@@ -24,6 +25,7 @@ import { createDbAdapter, PostgresAdapter, SqliteAdapter } from "./db/adapter";
 import { initializePostgresSchema, initializeSchema } from "./db/schema";
 import {
   AdapterConversationStore,
+  AdapterFileSnapshotStore,
   AdapterGitCheckpointStore,
   AdapterHookRunStore,
   AdapterMemoryStore,
@@ -40,6 +42,7 @@ import { createSandboxManager } from "./sandbox-factory";
 import type { DaemonMcpRegistry } from "./server";
 import { createDaemonServer, createTcpDaemonServer } from "./server";
 import { SessionController } from "./session-controller";
+import { SnapshotController } from "./snapshot-controller";
 import { StreamController } from "./stream-controller";
 import { StripeClient } from "./stripe-client";
 
@@ -66,6 +69,7 @@ const sessionStore = new AdapterSessionStore(dbAdapter);
 const pivStore = new AdapterPIVStore(dbAdapter);
 const conversationStore = new AdapterConversationStore(dbAdapter);
 const checkpointStore = new AdapterGitCheckpointStore(dbAdapter);
+const fileSnapshotStore = new AdapterFileSnapshotStore(dbAdapter);
 const hookRunStore = new AdapterHookRunStore(dbAdapter);
 const memoryStore = new AdapterMemoryStore(dbAdapter);
 const hooks = await HookLoader.load(config.hooksDir, config.hookTimeoutMs);
@@ -118,6 +122,10 @@ const sandbox = createSandboxManager(config);
 if (sandbox instanceof LocalSandboxManager) {
   await sandbox.ensureImageReady((msg) => logger.info({ msg }));
 }
+const snapshots = new SnapshotController({
+  store: new SnapshotStore({ store: fileSnapshotStore }),
+  sandbox,
+});
 const provider: LLMProvider =
   config.provider === "openai"
     ? new OpenAICompatibleProvider({
@@ -159,22 +167,6 @@ const permissions = new PermissionGate({
     streams.publish(sessionId, frame);
   },
 });
-const sessions = new SessionController({
-  sessionStore,
-  pivStore,
-  gitCheckpointStore: checkpointStore,
-  sandbox,
-  maxRetries: config.maxRetries,
-  llmRouterFactory: () => llmRouter,
-  permissionGate: permissions,
-  hookRunner,
-  ...(config.fileTools ? { fileToolMaxBytes: config.fileToolMaxBytes } : {}),
-  ...(webTools ? { webTools } : {}),
-  ...(webSearchRateLimiter ? { webSearchRateLimiter } : {}),
-  memoryManager,
-  memoryUserId: "local",
-});
-streams = new StreamController(sessions);
 const conversationCompleter = {
   complete: llmRouter.complete.bind(llmRouter, "plan"),
   ...(provider.completeWithTools
@@ -190,9 +182,39 @@ const conversationCompleter = {
 const compaction = new CompactionService({
   store: conversationStore,
   completer: conversationCompleter,
-  streams,
+  streams: {
+    publish(sessionId, frame) {
+      streams.publish(sessionId, frame);
+    },
+  },
   modelContextWindow: maxInputTokens,
+  autoThreshold: config.compactionAutoThreshold,
+  keepTurns: config.compactionKeepTurns,
+  maxSummaryTokens: config.compactionSummaryTokens,
 });
+const sessions = new SessionController({
+  sessionStore,
+  pivStore,
+  gitCheckpointStore: checkpointStore,
+  sandbox,
+  maxRetries: config.maxRetries,
+  llmRouterFactory: () => llmRouter,
+  permissionGate: permissions,
+  hookRunner,
+  compactionService: compaction,
+  snapshotStore: snapshots,
+  snapshotKeepTurns: config.snapshotMaxTurns,
+  // Lazy reference — conversations is assigned below after streams is ready.
+  conversations: {
+    clearSession: (sessionId) => conversations.clearSession(sessionId),
+  },
+  ...(config.fileTools ? { fileToolMaxBytes: config.fileToolMaxBytes } : {}),
+  ...(webTools ? { webTools } : {}),
+  ...(webSearchRateLimiter ? { webSearchRateLimiter } : {}),
+  memoryManager,
+  memoryUserId: "local",
+});
+streams = new StreamController(sessions);
 const reviewModel = config.reviewModel ?? config.architectModel;
 const reviewEngine = new ReviewEngine({
   completer: {
@@ -244,6 +266,7 @@ const conversations = new ConversationController({
   memoryUserId: "local",
   autoMemory: config.autoMemory,
   hookRunner,
+  snapshotStore: snapshots,
 });
 
 async function healthCheck(): Promise<{
@@ -291,6 +314,7 @@ const server = createDaemonServer({
   streams,
   conversations,
   compaction,
+  snapshots,
   permissions,
   reviewEngine,
   ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),
@@ -317,6 +341,7 @@ const tcpServer = createTcpDaemonServer(
     streams,
     conversations,
     compaction,
+    snapshots,
     permissions,
     reviewEngine,
     ...(daemonMcpRegistry ? { mcpRegistry: daemonMcpRegistry } : {}),

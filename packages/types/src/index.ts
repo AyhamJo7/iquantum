@@ -147,6 +147,7 @@ export interface Message {
   tokenCount: number;
   compactionBoundary: boolean;
   compactionAnchor?: boolean;
+  bodyCompressed?: Uint8Array | null;
   createdAt: string;
 }
 
@@ -158,6 +159,17 @@ export interface FileSnapshot {
   contentHash: string;
   content: string;
   savedAt: string;
+}
+
+export interface FileSnapshotTurnSummary {
+  turnIndex: number;
+  fileCount: number;
+  savedAt: string;
+}
+
+export interface FileSnapshotDiff {
+  filePath: string;
+  patch: string;
 }
 
 export interface AgentManifest {

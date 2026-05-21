@@ -52,6 +52,12 @@ export interface SessionControllerOptions {
   llmRouterFactory: () => PIVLLMRouter;
   permissionGate?: PIVEngineOptions["permissionGate"];
   hookRunner?: HookRunner;
+  compactionService?: PIVEngineOptions["compactionService"];
+  snapshotStore?: PIVEngineOptions["snapshotStore"] & {
+    evict(sessionId: string, keepTurns: number): Promise<void>;
+  };
+  snapshotKeepTurns?: number;
+  conversations?: { clearSession(sessionId: string): void };
   createEngine?: (options: PIVEngineOptions) => SessionEngine;
   createGitManager?: (repoPath: string) => SessionGitManager;
   fileToolMaxBytes?: number;
@@ -118,6 +124,10 @@ export class SessionController {
   readonly #llmRouterFactory: SessionControllerOptions["llmRouterFactory"];
   readonly #permissionGate: PIVEngineOptions["permissionGate"];
   readonly #hookRunner: HookRunner | undefined;
+  readonly #compactionService: PIVEngineOptions["compactionService"];
+  readonly #snapshotStore: SessionControllerOptions["snapshotStore"];
+  readonly #snapshotKeepTurns: number;
+  readonly #conversations: SessionControllerOptions["conversations"];
   readonly #fileToolMaxBytes: number | undefined;
   readonly #webTools: WebToolExecutor | undefined;
   readonly #webSearchRateLimiter: RateLimiter | undefined;
@@ -142,6 +152,10 @@ export class SessionController {
     this.#llmRouterFactory = options.llmRouterFactory;
     this.#permissionGate = options.permissionGate;
     this.#hookRunner = options.hookRunner;
+    this.#compactionService = options.compactionService;
+    this.#snapshotStore = options.snapshotStore;
+    this.#snapshotKeepTurns = options.snapshotKeepTurns ?? 100;
+    this.#conversations = options.conversations;
     this.#fileToolMaxBytes = options.fileToolMaxBytes;
     this.#webTools = options.webTools;
     this.#webSearchRateLimiter = options.webSearchRateLimiter;
@@ -265,6 +279,12 @@ export class SessionController {
       ...(this.#hookRunner === undefined
         ? {}
         : { hookRunner: this.#hookRunner }),
+      ...(this.#compactionService === undefined
+        ? {}
+        : { compactionService: this.#compactionService }),
+      ...(this.#snapshotStore === undefined
+        ? {}
+        : { snapshotStore: this.#snapshotStore }),
       requireApproval: options.requireApproval ?? false,
       autoApprove: options.autoApprove ?? false,
       ...(this.#maxRetries === undefined
@@ -304,7 +324,9 @@ export class SessionController {
       session.worktreeBranch,
     );
     await this.#sandbox.destroySandbox(sessionId);
+    await this.#snapshotStore?.evict(sessionId, this.#snapshotKeepTurns);
     await this.#sessionStore.delete(sessionId);
+    this.#conversations?.clearSession(sessionId);
     this.#liveSessions.delete(sessionId);
   }
 

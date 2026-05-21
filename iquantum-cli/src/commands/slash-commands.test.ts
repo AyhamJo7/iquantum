@@ -157,6 +157,67 @@ describe("slash commands", () => {
     expect(ctx.dispatched[0]).toMatchObject({ level: "error" });
   });
 
+  it("/restore with a numeric turn restores a snapshot", async () => {
+    const restoreSnapshot = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeContext({
+      client: {
+        ...makeContext().client,
+        restoreSnapshot,
+      },
+    }) as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("restore").run("7", ctx);
+
+    expect(restoreSnapshot).toHaveBeenCalledWith("session-1", 7);
+    expect(ctx.dispatched[0]).toMatchObject({
+      level: "info",
+      text: "Restored snapshot turn 7.",
+    });
+  });
+
+  it("/snapshots lists available snapshot turns", async () => {
+    const ctx = makeContext({
+      client: {
+        ...makeContext().client,
+        listSnapshots: vi
+          .fn()
+          .mockResolvedValue([
+            { turnIndex: 2, fileCount: 3, savedAt: "2026-05-21T00:00:00Z" },
+          ]),
+        diffSnapshots: vi.fn(),
+      },
+    }) as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("snapshots").run("", ctx);
+
+    const text = (ctx.dispatched[0] as { text: string }).text;
+    expect(text).toContain("Snapshots:");
+    expect(text).toContain("2");
+    expect(text).toContain("3 files");
+  });
+
+  it("/snapshots diffs two turns", async () => {
+    const diffSnapshots = vi
+      .fn()
+      .mockResolvedValue([
+        { filePath: "a.ts", patch: "diff --git a/a.ts b/a.ts" },
+      ]);
+    const ctx = makeContext({
+      client: {
+        ...makeContext().client,
+        listSnapshots: vi.fn(),
+        diffSnapshots,
+      },
+    }) as CommandContext & { dispatched: REPLAction[] };
+
+    await getCmd("snapshots").run("1 2", ctx);
+
+    expect(diffSnapshots).toHaveBeenCalledWith("session-1", 1, 2);
+    expect((ctx.dispatched[0] as { text: string }).text).toContain(
+      "diff --git",
+    );
+  });
+
   it("/mcp with no tools dispatches info message", async () => {
     const ctx = makeContext() as CommandContext & { dispatched: REPLAction[] };
     await getCmd("mcp").run("", ctx);

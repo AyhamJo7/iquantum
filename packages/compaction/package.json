@@ -11,5 +11,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@types/pako": "^2.0.4",
+    "pako": "^2.1.0"
   }
 }

@@ -129,13 +129,12 @@ describe("ConversationController", () => {
 
     await harness.controller.addMessage("session-1", "hello");
 
+    const content = String(harness.calls[0]?.messages[0]?.content);
     expect(harness.calls[0]?.messages[0]).toMatchObject({
       role: "system",
       content: expect.stringContaining("## Your Memory"),
     });
-    expect(String(harness.calls[0]?.messages[0]?.content)).toContain(
-      "this project uses Bun",
-    );
+    expect(content).toContain("this project uses Bun");
     expect(harness.controller.getMemoryTokenCount("session-1")).toBe(5);
   });
 
@@ -392,6 +391,68 @@ describe("ConversationController — tool loop", () => {
     ]);
   });
 
+  it("snapshots mutated builtin file tool paths", async () => {
+    const store = new InMemoryConversationStore();
+    const snapshotCalls: Array<{
+      sessionId: string;
+      turnIndex: number;
+      filePaths: readonly string[];
+    }> = [];
+    let nextId = 1;
+
+    const controller = new ConversationController({
+      store,
+      completer: {
+        async *complete() {
+          yield "";
+        },
+        async *completeWithTools(_messages, _tools) {
+          if (snapshotCalls.length === 0) {
+            yield {
+              type: "tool_use" as const,
+              id: "file-call-1",
+              name: "file_write",
+              input: { path: "src/index.ts" },
+            };
+          } else {
+            yield { type: "token" as const, delta: "done" };
+          }
+        },
+      },
+      streams: { publish: () => {} },
+      fileTools: {
+        tools: {
+          getAll: () => [
+            {
+              name: "file_write",
+              description: "write",
+              inputSchema: { type: "object" },
+              mutates: true,
+              async execute(input: unknown) {
+                return `wrote ${JSON.stringify(input)}`;
+              },
+            },
+          ],
+        } as never,
+        sandbox: { exec: vi.fn() },
+      },
+      snapshotStore: {
+        async saveFilesFromSandbox(sessionId, turnIndex, filePaths) {
+          snapshotCalls.push({ sessionId, turnIndex, filePaths });
+        },
+      },
+      now: () => fixedNow,
+      createId: () => `id-${nextId++}`,
+      tokenCounter: () => 0,
+    });
+
+    await controller.addMessage("session-1", "write file");
+
+    expect(snapshotCalls).toEqual([
+      { sessionId: "session-1", turnIndex: 0, filePaths: ["src/index.ts"] },
+    ]);
+  });
+
   it("merges web tools into the tool loop and rate-limits web_search per session", async () => {
     const store = new InMemoryConversationStore();
     const seenToolNames: string[][] = [];
@@ -471,23 +532,22 @@ describe("ConversationController — tool loop", () => {
     const store = new InMemoryConversationStore();
     const seenToolNames: string[][] = [];
     let nextId = 1;
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        Response.json({
-          web: {
-            results: [
-              {
-                title: "Bun v1.2.3",
-                url: "https://bun.sh/blog/bun-v1.2.3",
-                description: "Bun v1.2.3 release notes",
-              },
-            ],
-          },
-        }),
-      ),
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        web: {
+          results: [
+            {
+              title: "Bun v1.2.3",
+              url: "https://bun.sh/blog/bun-v1.2.3",
+              description: "Bun v1.2.3 release notes",
+            },
+          ],
+        },
+      }),
     );
+
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     try {
       const completeWithTools = async function* (
@@ -532,10 +592,10 @@ describe("ConversationController — tool loop", () => {
       );
 
       expect(seenToolNames[0]).toEqual(["web_fetch", "web_search"]);
-      expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).toContain(
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
         "q=what+is+the+latest+version+of+bun%3F",
       );
-      expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
         headers: {
           Accept: "application/json",
           "X-Subscription-Token": "brave-key",
@@ -556,7 +616,7 @@ describe("ConversationController — tool loop", () => {
         { type: "text", text: "Bun v1.2.3 is latest." },
       ]);
     } finally {
-      vi.unstubAllGlobals();
+      globalThis.fetch = originalFetch;
     }
   });
 

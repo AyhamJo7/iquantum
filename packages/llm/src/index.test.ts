@@ -5,11 +5,15 @@ import type {
 } from "@iquantum/types";
 import { APIError } from "openai";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   AnthropicProvider,
+  ContextBudgetGuard,
   createFileToolBuiltins,
   LLMRouter,
   OpenAICompatibleProvider,
+  StructuredOutputParseError,
+  StructuredOutputRouter,
   TokenBudgetExceededError,
   type TokenUsage,
   ToolLoopExceededError,
@@ -329,15 +333,17 @@ describe("LLMRouter", () => {
       maxInputTokens: 100,
     });
 
-    await expect(async () => {
-      for await (const _ of router.complete(
-        "plan",
-        [{ role: "user", content: "Too much" }],
-        { maxTokens: 10 },
-      )) {
-        // Exhaust the stream to surface async generator errors.
-      }
-    }).rejects.toBeInstanceOf(TokenBudgetExceededError);
+    await expect(
+      (async () => {
+        for await (const _ of router.complete(
+          "plan",
+          [{ role: "user", content: "Too much" }],
+          { maxTokens: 10 },
+        )) {
+          // Exhaust the stream to surface async generator errors.
+        }
+      })(),
+    ).rejects.toBeInstanceOf(TokenBudgetExceededError);
     expect(provider.calls).toEqual([]);
   });
 
@@ -430,6 +436,76 @@ describe("LLMRouter", () => {
     expect(defaultRouter.supportsThinking).toBe(true);
     expect(openaiRouter.supportsThinking).toBe(false);
   });
+
+  it("warns near the context limit and compacts before hard failure", async () => {
+    const warnings: number[] = [];
+    const provider = new MockProvider("ok", 96);
+    const router = new LLMRouter({
+      architect: { provider, model: "architect-model" },
+      editor: { provider, model: "editor-model" },
+      maxInputTokens: 100,
+      budgetGuard: new ContextBudgetGuard({
+        warnThreshold: 0.8,
+        hardThreshold: 0.95,
+        onWarn(request) {
+          warnings.push(request.inputTokens);
+        },
+        async forceCompact() {
+          return [{ role: "user", content: "small" }];
+        },
+        async countTokens(messages) {
+          return messages[0]?.content === "small" ? 5 : 96;
+        },
+      }),
+    });
+
+    await expect(
+      collect(
+        router.complete("plan", [{ role: "user", content: "large" }], {
+          maxTokens: 10,
+        }),
+      ),
+    ).resolves.toBe("ok");
+
+    expect(warnings).toEqual([96]);
+    expect(provider.seenMessages).toEqual([
+      [{ role: "user", content: "small" }],
+    ]);
+  });
+});
+
+describe("StructuredOutputRouter", () => {
+  it("parses fenced JSON through the provided schema", async () => {
+    const router = new StructuredOutputRouter({
+      async *complete() {
+        yield '```json\n{"summary":"ok","count":1}\n```';
+      },
+    });
+
+    await expect(
+      router.completeStructured(
+        [{ role: "user", content: "respond json" }],
+        z.object({ summary: z.string(), count: z.number() }),
+        { maxTokens: 100 },
+      ),
+    ).resolves.toEqual({ summary: "ok", count: 1 });
+  });
+
+  it("throws a typed parse error for schema mismatches", async () => {
+    const router = new StructuredOutputRouter({
+      async *complete() {
+        yield '{"summary":1}';
+      },
+    });
+
+    await expect(
+      router.completeStructured(
+        [{ role: "user", content: "respond json" }],
+        z.object({ summary: z.string() }),
+        { maxTokens: 100 },
+      ),
+    ).rejects.toBeInstanceOf(StructuredOutputParseError);
+  });
 });
 
 describe("createFileToolBuiltins", () => {
@@ -491,6 +567,7 @@ const baseOptions = {
 
 class MockProvider implements LLMProvider {
   readonly calls: string[] = [];
+  readonly seenMessages: LLMMessage[][] = [];
 
   constructor(
     readonly token: string,
@@ -498,10 +575,11 @@ class MockProvider implements LLMProvider {
   ) {}
 
   async *complete(
-    _messages: LLMMessage[],
+    messages: LLMMessage[],
     options: LLMCompletionOptions,
   ): AsyncIterable<string> {
     this.calls.push(options.model);
+    this.seenMessages.push(messages);
     yield this.token;
   }
 

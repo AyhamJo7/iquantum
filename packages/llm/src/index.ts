@@ -12,6 +12,7 @@ import type {
   PIVPhase,
 } from "@iquantum/types";
 import OpenAI, { APIError } from "openai";
+import type { z } from "zod";
 
 export interface AnthropicProviderOptions {
   client?: AnthropicClient;
@@ -71,6 +72,7 @@ export interface LLMRouterOptions {
   maxInputTokens: number;
   supportsThinking?: boolean;
   usageSink?: TokenUsageSink;
+  budgetGuard?: ContextBudgetGuard;
 }
 
 export interface RoutedCompletionOptions {
@@ -86,6 +88,129 @@ export interface TokenUsage {
 
 export interface TokenUsageSink {
   record(usage: TokenUsage): Promise<void>;
+}
+
+export interface ContextBudgetRequest {
+  phase: PIVPhase;
+  model: string;
+  messages: LLMMessage[];
+  maxTokens: number;
+  maxInputTokens: number;
+  inputTokens: number;
+}
+
+export interface ContextBudgetDecision {
+  messages: LLMMessage[];
+  inputTokens: number;
+}
+
+export interface ContextBudgetGuardOptions {
+  warnThreshold?: number;
+  hardThreshold?: number;
+  onWarn?: (request: ContextBudgetRequest) => Promise<void> | void;
+  forceCompact?: (
+    request: ContextBudgetRequest,
+  ) => Promise<LLMMessage[] | undefined>;
+  countTokens?: (messages: LLMMessage[], model: string) => Promise<number>;
+}
+
+export class ContextBudgetGuard {
+  readonly #warnThreshold: number;
+  readonly #hardThreshold: number;
+  readonly #onWarn: ContextBudgetGuardOptions["onWarn"];
+  readonly #forceCompact: ContextBudgetGuardOptions["forceCompact"];
+  readonly #countTokens: ContextBudgetGuardOptions["countTokens"];
+
+  constructor(options: ContextBudgetGuardOptions = {}) {
+    this.#warnThreshold = options.warnThreshold ?? 0.8;
+    this.#hardThreshold = options.hardThreshold ?? 0.95;
+    this.#onWarn = options.onWarn;
+    this.#forceCompact = options.forceCompact;
+    this.#countTokens = options.countTokens;
+  }
+
+  async enforce(request: ContextBudgetRequest): Promise<ContextBudgetDecision> {
+    if (request.maxInputTokens <= 0) {
+      return {
+        messages: request.messages,
+        inputTokens: request.inputTokens,
+      };
+    }
+
+    const ratio = request.inputTokens / request.maxInputTokens;
+    if (ratio >= this.#warnThreshold) {
+      await this.#onWarn?.(request);
+    }
+
+    if (ratio < this.#hardThreshold || !this.#forceCompact) {
+      return {
+        messages: request.messages,
+        inputTokens: request.inputTokens,
+      };
+    }
+
+    const compactedMessages =
+      (await this.#forceCompact(request)) ?? request.messages;
+    const compactedTokens = this.#countTokens
+      ? await this.#countTokens(compactedMessages, request.model)
+      : estimateTokens(compactedMessages);
+
+    return {
+      messages: compactedMessages,
+      inputTokens: compactedTokens,
+    };
+  }
+}
+
+export interface StructuredCompletionOptions {
+  maxTokens: number;
+  temperature?: number;
+}
+
+export interface StructuredOutputCompleter {
+  complete(
+    messages: LLMMessage[],
+    options: StructuredCompletionOptions,
+  ): AsyncIterable<string>;
+}
+
+export class StructuredOutputParseError extends Error {
+  constructor(readonly raw: string) {
+    super("Failed to parse structured LLM output");
+    this.name = "StructuredOutputParseError";
+  }
+}
+
+export class StructuredOutputRouter {
+  readonly #completer: StructuredOutputCompleter;
+
+  constructor(completer: StructuredOutputCompleter) {
+    this.#completer = completer;
+  }
+
+  async completeStructured<T>(
+    messages: LLMMessage[],
+    schema: z.ZodType<T>,
+    options: StructuredCompletionOptions,
+  ): Promise<T> {
+    let raw = "";
+    for await (const delta of this.#completer.complete(messages, options)) {
+      raw += delta;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripJsonFence(raw));
+    } catch {
+      throw new StructuredOutputParseError(raw);
+    }
+
+    const result = schema.safeParse(parsed);
+    if (!result.success) {
+      throw new StructuredOutputParseError(raw);
+    }
+    return result.data;
+  }
 }
 
 export class TokenBudgetExceededError extends Error {
@@ -359,6 +484,7 @@ export class LLMRouter {
   readonly #thorough: LLMRoute;
   readonly #maxInputTokens: number;
   readonly #usageSink: TokenUsageSink | undefined;
+  readonly #budgetGuard: ContextBudgetGuard | undefined;
   readonly supportsThinking: boolean;
 
   constructor(options: LLMRouterOptions) {
@@ -367,6 +493,7 @@ export class LLMRouter {
     this.#thorough = options.thorough ?? options.architect;
     this.#maxInputTokens = options.maxInputTokens;
     this.#usageSink = options.usageSink;
+    this.#budgetGuard = options.budgetGuard;
     this.supportsThinking = options.supportsThinking ?? true;
   }
 
@@ -376,19 +503,15 @@ export class LLMRouter {
     options: RoutedCompletionOptions,
   ): AsyncIterable<string> {
     const route = this.#routeForPhase(phase);
-    const inputTokens = await route.provider.countTokens(messages, route.model);
-
-    if (inputTokens > this.#maxInputTokens) {
-      throw new TokenBudgetExceededError(inputTokens, this.#maxInputTokens);
-    }
+    const budget = await this.#enforceBudget(route, phase, messages, options);
 
     await this.#usageSink?.record({
       phase,
       model: route.model,
-      inputTokens,
+      inputTokens: budget.inputTokens,
     });
 
-    yield* route.provider.complete(messages, {
+    yield* route.provider.complete(budget.messages, {
       model: route.model,
       maxTokens: options.maxTokens,
       ...(options.temperature === undefined
@@ -411,19 +534,15 @@ export class LLMRouter {
       );
     }
 
-    const inputTokens = await route.provider.countTokens(messages, route.model);
-
-    if (inputTokens > this.#maxInputTokens) {
-      throw new TokenBudgetExceededError(inputTokens, this.#maxInputTokens);
-    }
+    const budget = await this.#enforceBudget(route, phase, messages, options);
 
     await this.#usageSink?.record({
       phase,
       model: route.model,
-      inputTokens,
+      inputTokens: budget.inputTokens,
     });
 
-    yield* route.provider.completeWithTools(messages, tools, {
+    yield* route.provider.completeWithTools(budget.messages, tools, {
       model: route.model,
       maxTokens: options.maxTokens,
       ...(options.temperature === undefined
@@ -438,19 +557,15 @@ export class LLMRouter {
     options: RoutedCompletionOptions,
   ): AsyncIterable<string> {
     const route = this.#routeForEffort(effort);
-    const inputTokens = await route.provider.countTokens(messages, route.model);
-
-    if (inputTokens > this.#maxInputTokens) {
-      throw new TokenBudgetExceededError(inputTokens, this.#maxInputTokens);
-    }
+    const budget = await this.#enforceBudget(route, "plan", messages, options);
 
     await this.#usageSink?.record({
       phase: "plan",
       model: route.model,
-      inputTokens,
+      inputTokens: budget.inputTokens,
     });
 
-    yield* route.provider.complete(messages, {
+    yield* route.provider.complete(budget.messages, {
       model: route.model,
       maxTokens: options.maxTokens,
       ...(options.temperature === undefined
@@ -471,6 +586,34 @@ export class LLMRouter {
     if (effort === "fast") return this.#editor;
     if (effort === "thorough") return this.#thorough;
     return this.#architect;
+  }
+
+  async #enforceBudget(
+    route: LLMRoute,
+    phase: PIVPhase,
+    messages: LLMMessage[],
+    options: RoutedCompletionOptions,
+  ): Promise<ContextBudgetDecision> {
+    const inputTokens = await route.provider.countTokens(messages, route.model);
+    const budget = this.#budgetGuard
+      ? await this.#budgetGuard.enforce({
+          phase,
+          model: route.model,
+          messages,
+          maxTokens: options.maxTokens,
+          maxInputTokens: this.#maxInputTokens,
+          inputTokens,
+        })
+      : { messages, inputTokens };
+
+    if (budget.inputTokens > this.#maxInputTokens) {
+      throw new TokenBudgetExceededError(
+        budget.inputTokens,
+        this.#maxInputTokens,
+      );
+    }
+
+    return budget;
   }
 }
 
@@ -553,6 +696,22 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function estimateTokens(messages: LLMMessage[]): number {
+  return messages.reduce((total, message) => {
+    const text =
+      typeof message.content === "string"
+        ? message.content
+        : JSON.stringify(message.content);
+    return total + Math.ceil(text.length / 4);
+  }, 0);
+}
+
+function stripJsonFence(raw: string): string {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return match?.[1]?.trim() ?? trimmed;
 }
 
 async function sleep(delayMs: number): Promise<void> {
