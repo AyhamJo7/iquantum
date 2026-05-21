@@ -80,55 +80,63 @@ You type a task
 
 ## Requirements
 
-Before installing, make sure you have the following:
-
-| Requirement | Notes |
-|---|---|
-| **Bun 1.3+** | Required to run the `iq` CLI and the local sandbox runtime |
-| **npm** | Comes with [Node.js](https://nodejs.org/) — used to install `iq` globally |
-| **Docker** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) on macOS or Windows; [Docker Engine](https://docs.docker.com/engine/install/) on Linux |
-| **An AI provider API key** | Anthropic is the default; OpenAI-compatible providers can be configured with `IQUANTUM_PROVIDER=openai` |
+| Requirement | Version | How to install |
+|---|---|---|
+| **Bun** | 1.3+ | `curl -fsSL https://bun.sh/install \| bash` |
+| **npm** | any | Comes with [Node.js](https://nodejs.org/) |
+| **Docker** | any | [Docker Desktop](https://www.docker.com/products/docker-desktop/) (macOS/Windows) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux) |
+| **Anthropic API key** | — | Create one at [console.anthropic.com](https://console.anthropic.com/) |
 
 > **Windows users:** run iquantum inside [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install). Docker Desktop must have WSL2 integration enabled.
+
+> **OpenAI-compatible providers:** If you prefer DeepSeek, Ollama, or another OpenAI-compatible endpoint, see the [Configuration](#configuration) section — no Anthropic key required.
 
 ---
 
 ## Quick Start
 
-### Step 1 — Install
+### 1. Install
 
 ```bash
 npm install -g @iquantum/cli
 ```
 
-This installs the `iq` command globally on your machine.
-
-`iq` runs on Bun, so make sure `bun --version` works in the same shell before starting the CLI.
-
-### Step 2 — Set up
+This installs the `iq` command globally. The CLI itself uses Bun at runtime — confirm both are available before continuing:
 
 ```bash
+bun --version   # should print 1.3 or later
+iq --version    # should print 3.x.x
+```
+
+### 2. First-time setup
+
+Navigate to a Git repository you want to work in, then run:
+
+```bash
+cd /path/to/your/project   # must be a Git repo
 iq
 ```
 
-The first time you run `iq`, a short setup wizard appears. It asks for your Anthropic API key, saves your configuration, pulls the sandbox image, and starts the background daemon — all automatically.
+The first time you run `iq`, a short setup wizard appears and asks for your **Anthropic API key** (find it at [console.anthropic.com](https://console.anthropic.com/) → API Keys). It saves your key, pulls the sandbox image from `ghcr.io`, and starts the background daemon — all automatically. This takes about 30 seconds on first run while Docker pulls the image.
 
-### Step 3 — Start coding
+> **Tip:** you can re-run the wizard any time with `iq init` to change your key or swap models.
 
-Navigate to any project and type a task:
+### 3. Describe a task
 
-```bash
-cd /path/to/your/project
-iq
-```
-
-Then describe what you want in plain English:
+Once inside the REPL, type what you want in plain English:
 
 ```
 > add input validation to the sign-up form
 ```
 
-iquantum will plan it, show you the plan, wait for your approval, implement the changes, run your tests, and commit the result.
+The agent will write a numbered plan. **Read it, then either approve or guide it:**
+
+```
+> yes                         ← approve and proceed
+> no, also handle null emails  ← reject and give feedback; agent revises the plan
+```
+
+After approval, the agent implements the changes in the sandbox, runs your tests, and commits the result. You can start your next task immediately.
 
 ---
 
@@ -221,9 +229,9 @@ Type any of these inside the `iq` REPL:
 
 | Command | What it does |
 |---|---|
-| `iq` | Open the interactive PIV REPL |
-| `iq chat` | Open chat mode without the PIV loop |
-| `iq task <prompt>` | Run one PIV task from the terminal |
+| `iq` | Open the interactive PIV REPL (auto-starts daemon if not running) |
+| `iq chat` | Open chat mode without the PIV loop (auto-starts daemon) |
+| `iq task <prompt>` | Run one PIV task non-interactively (daemon must be running) |
 | `iq review` | Review staged changes by default |
 | `iq review --commit <ref>` | Review one commit |
 | `iq review --path <path>` | Review a path against `HEAD` |
@@ -250,13 +258,16 @@ The VS Code extension is available from the [VS Code Marketplace](https://market
 
 ## Non-interactive mode
 
-If you prefer to run a task from a script or another tool, use `iq task`. Make sure the daemon is running first (`iq daemon start`):
+`iq task` runs a single PIV task from the command line without opening the REPL. The daemon must already be running — start it first if needed:
 
 ```bash
+iq daemon start
 iq task "refactor the database connection module to use a connection pool"
 ```
 
-The agent will print the plan, prompt for approval interactively, then proceed. Use `--repo` to target a repository other than the current directory:
+The agent will print the plan, prompt for approval interactively, then proceed.
+
+Use `--repo` to target a repository other than the current directory:
 
 ```bash
 iq task --repo /path/to/project "add OpenAPI documentation to all routes"
@@ -268,7 +279,7 @@ Use `--extra-repo` (repeatable) to pull in context from additional repositories 
 iq task --repo /path/to/server --extra-repo /path/to/shared-lib "update the API to match the types in shared-lib"
 ```
 
-Use `--worktree` to run the task on a dedicated Git worktree branch named `iquantum/<session-id>`:
+Use `--worktree` to run the task on a dedicated Git worktree branch — useful when you have uncommitted changes on your current branch and do not want the agent to touch them:
 
 ```bash
 iq task --worktree "upgrade the auth flow without touching my current checkout"
@@ -278,7 +289,11 @@ iq task --worktree "upgrade the auth flow without touching my current checkout"
 
 ## Daemon management
 
-iquantum runs a small background daemon that manages your sessions and the Docker sandbox. You rarely need to touch it directly, but here are the commands:
+iquantum runs a small background daemon that manages your sessions and the Docker sandbox.
+
+**`iq` and `iq chat` start the daemon automatically** if it is not already running — you do not need to manage it for interactive use.
+
+**`iq task` requires the daemon to be running first.** If you see a connection error with `iq task`, run `iq daemon start` once and retry.
 
 ```bash
 iq daemon start    # Start the daemon in the background
@@ -286,7 +301,7 @@ iq daemon stop     # Gracefully stop the daemon
 iq daemon status   # Check whether the daemon is running
 ```
 
-When you run `iq` (the interactive REPL) or `iq chat`, the daemon starts automatically if it is not already running. The `iq task` command requires the daemon to already be running.
+The daemon persists state to `~/.iquantum/` between restarts. Sessions, memories, and sandbox volumes survive a daemon restart — you can pick up where you left off.
 
 ---
 
@@ -383,21 +398,23 @@ All file paths are sanitized and resolved under the session repositories. `IQUAN
 
 ## Web Tools
 
-Web tools are opt-in:
+Web tools are opt-in. To enable them, add the following to `~/.iquantum/config.json` or set as environment variables:
 
 ```bash
-IQUANTUM_WEB_TOOLS=true
-IQUANTUM_SEARCH_PROVIDER=brave
-BRAVE_API_KEY=...
+iq config set IQUANTUM_WEB_TOOLS true
+iq config set IQUANTUM_SEARCH_PROVIDER brave
+iq config set BRAVE_API_KEY <your-key>
 ```
 
-Set `IQUANTUM_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY` to use Tavily instead. `web_search` returns search results; `web_fetch` fetches and converts pages to readable text. Fetches are protected by SSRF checks that block localhost, private IP ranges, and redirect chains into private networks.
+Get a Brave Search API key at [brave.com/search/api](https://brave.com/search/api/) — there is a free tier. To use Tavily instead, set `IQUANTUM_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY`.
+
+`web_search` returns search results; `web_fetch` fetches and converts pages to readable text. Fetches are protected by SSRF checks that block localhost, private IP ranges, and redirect chains into private networks.
 
 ---
 
 ## Diagnostics
 
-Run:
+Run `iq doctor` to check your local setup before starting a session:
 
 ```bash
 iq doctor
@@ -412,6 +429,8 @@ ok    API key          present
 ok    Daemon socket    reachable at ~/.iquantum/daemon.sock
 warn  Sandbox image    ghcr.io/ayhamjo7/iquantum-sandbox:latest not found locally
 ```
+
+If you see a `warn Sandbox image` line, the image will be pulled automatically on your next `iq` run — no action needed. For any `fail` line, the message describes what to fix (missing key, Docker not running, etc.).
 
 Inside the REPL, `/doctor` runs the same checks without leaving the session.
 
@@ -514,7 +533,15 @@ Default bindings created by `iq init`: `ctrl+k ctrl+c` for compact, `ctrl+k ctrl
 
 ## Worktree Mode
 
-`iq task --worktree` creates a dedicated worktree and branch for the session using the `iquantum/<session-id>` naming convention. The daemon removes the worktree when the session is destroyed; commits created by successful validation remain on the session branch.
+Use `--worktree` when you want the agent to work on a completely separate branch without touching your current checkout:
+
+```bash
+# Your current branch has WIP changes you don't want the agent to touch.
+# --worktree creates iquantum/<session-id> as a sibling worktree directory.
+iq task --worktree "migrate the ORM from Sequelize to Drizzle"
+```
+
+The agent's commits land on the session branch. When the session is destroyed, the worktree directory is removed automatically. The branch and its commits remain — merge them in whenever you are ready.
 
 ---
 
