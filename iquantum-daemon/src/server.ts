@@ -1321,6 +1321,8 @@ async function handleMemoryRequest(
       userId: identity.userId,
       orgId: identity.orgId,
       type: body.type,
+      scope: identity.orgId ? "org" : "user",
+      source: "manual",
       name: body.name,
       description: body.description,
       body: body.body,

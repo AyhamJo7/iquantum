@@ -241,6 +241,8 @@ function memory(
     userId: "user-1",
     orgId: null,
     type: "project",
+    scope: "user",
+    source: "manual",
     name,
     description: "Test memory",
     body,

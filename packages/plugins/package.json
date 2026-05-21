@@ -1,0 +1,15 @@
+{
+  "name": "@iquantum/plugins",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "peerDependencies": {
+    "@iquantum/hooks": "workspace:*",
+    "@iquantum/skills": "workspace:*",
+    "@iquantum/types": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@iquantum/compaction",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "peerDependencies": {
+    "@iquantum/context-window": "workspace:*",
+    "@iquantum/llm": "workspace:*",
+    "@iquantum/types": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

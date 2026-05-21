@@ -1,0 +1,16 @@
+{
+  "name": "@iquantum/agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "peerDependencies": {
+    "@iquantum/memory": "workspace:*",
+    "@iquantum/repo-map": "workspace:*",
+    "@iquantum/sandbox": "workspace:*",
+    "@iquantum/types": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

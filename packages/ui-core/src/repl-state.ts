@@ -34,6 +34,14 @@ export type TranscriptItem =
     }
   | {
       id: string;
+      type: "approval_request";
+      requestId: string;
+      planId: string;
+      status: "pending" | "approved" | "rejected";
+      feedback: string | null;
+    }
+  | {
+      id: string;
       type: "checkpoint";
       hash: string;
       message: string;
@@ -304,6 +312,60 @@ function reduceFrame(
         ],
         nextTranscriptId: state.nextTranscriptId + 1,
       };
+    case "approval_request":
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          {
+            id: transcriptId(state.nextTranscriptId),
+            type: "approval_request",
+            requestId: frame.request.id,
+            planId: frame.request.planId,
+            status: frame.request.status,
+            feedback: frame.request.feedback,
+          },
+        ],
+        nextTranscriptId: state.nextTranscriptId + 1,
+      };
+    case "compaction":
+      return appendSystemFrame(
+        state,
+        `[compaction] Saved ${frame.savedTokens} tokens via ${frame.strategy}.`,
+      );
+    case "agent_spawned":
+      return appendSystemFrame(
+        state,
+        `Spawned agent ${frame.name} (${frame.sessionId}).`,
+      );
+    case "agent_status": {
+      const progress =
+        frame.turnIndex === undefined || frame.maxTurns === undefined
+          ? ""
+          : ` ${frame.turnIndex}/${frame.maxTurns}`;
+      return appendSystemFrame(
+        state,
+        `Agent ${frame.name} is ${frame.status}${frame.phase ? ` in ${frame.phase}` : ""}${progress}.`,
+      );
+    }
+    case "agent_message":
+      return appendSystemFrame(state, `Agent ${frame.name}: ${frame.content}`);
+    case "agent_done":
+      return appendSystemFrame(
+        state,
+        `Agent ${frame.name} finished: ${frame.summary}`,
+      );
+    case "agent_failed":
+      return appendSystemFrame(
+        state,
+        `Agent ${frame.name} failed: ${frame.error}`,
+        "error",
+      );
+    case "agent_killed":
+      return appendSystemFrame(
+        state,
+        `Agent ${frame.name} stopped: ${frame.reason}`,
+      );
     case "checkpoint":
       return {
         ...state,
@@ -386,6 +448,26 @@ function isPIVPhase(phase: Phase): phase is PIVPhase {
 
 function transcriptId(nextId: number): string {
   return `transcript-${nextId}`;
+}
+
+function appendSystemFrame(
+  state: REPLViewState,
+  text: string,
+  level: "info" | "error" = "info",
+): REPLViewState {
+  return {
+    ...state,
+    messages: [
+      ...state.messages,
+      {
+        id: transcriptId(state.nextTranscriptId),
+        type: "system_message",
+        text,
+        level,
+      },
+    ],
+    nextTranscriptId: state.nextTranscriptId + 1,
+  };
 }
 
 function countDiffChanges(patch: string): {

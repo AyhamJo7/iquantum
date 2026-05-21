@@ -542,6 +542,8 @@ export class ConversationController {
       userId: identity.userId,
       orgId: identity.orgId,
       type: "project",
+      scope: identity.orgId ? "org" : "user",
+      source: "auto",
       name: `auto-${sessionId.slice(0, 8)}-${Math.floor(userTurns / 20)}`,
       description: "Auto-generated conversation memory",
       body,

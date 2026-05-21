@@ -107,6 +107,8 @@ export class MemoryManager {
         userId,
         orgId,
         type: parsed.type,
+        scope: orgId ? "org" : "user",
+        source: "manual",
         name: parsed.name,
         description: parsed.description,
         body: parsed.body,

@@ -107,6 +107,15 @@ const TranscriptRow = memo(function TranscriptRow({
     );
   }
 
+  if (item.type === "approval_request") {
+    return (
+      <Text color="yellow">
+        Approval request {item.planId} is {item.status}
+        {item.feedback ? `: ${item.feedback}` : ""}
+      </Text>
+    );
+  }
+
   if (item.role === "user") {
     return <UserMessage text={item.text} />;
   }

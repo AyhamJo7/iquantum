@@ -399,4 +399,56 @@ describe("reduceREPLViewState", () => {
       approved: true,
     });
   });
+
+  it("records approval_request frames in the transcript", () => {
+    const state = reduceREPLViewState(initialREPLViewState, {
+      type: "frame",
+      frame: {
+        type: "approval_request",
+        request: {
+          id: "approval-1",
+          sessionId: "session-1",
+          planId: "plan-1",
+          planContent: "ship it",
+          createdAt: "2026-05-21T00:00:00.000Z",
+          expiresAt: "2026-05-21T00:30:00.000Z",
+          status: "pending",
+          feedback: null,
+        },
+      },
+    });
+
+    expect(state.messages[0]).toMatchObject({
+      type: "approval_request",
+      requestId: "approval-1",
+      planId: "plan-1",
+      status: "pending",
+    });
+  });
+
+  it("renders v4 compaction and agent frames as system transcript messages", () => {
+    const compacted = reduceREPLViewState(initialREPLViewState, {
+      type: "frame",
+      frame: { type: "compaction", savedTokens: 42, strategy: "full" },
+    });
+    const spawned = reduceREPLViewState(compacted, {
+      type: "frame",
+      frame: {
+        type: "agent_spawned",
+        sessionId: "child-1",
+        name: "worker-a",
+        colorIndex: 1,
+        coordinatorSessionId: "session-1",
+      },
+    });
+
+    expect(compacted.messages[0]).toMatchObject({
+      type: "system_message",
+      text: "[compaction] Saved 42 tokens via full.",
+    });
+    expect(spawned.messages[1]).toMatchObject({
+      type: "system_message",
+      text: "Spawned agent worker-a (child-1).",
+    });
+  });
 });
