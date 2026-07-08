@@ -26,6 +26,10 @@
   </a>
 </p>
 
+<p align="center">
+  <img src=".github/assets/iquantum.png" alt="iquantum running in the terminal" width="720" />
+</p>
+
 ---
 
 ## What is iquantum?
