@@ -11,7 +11,7 @@ TypeScript · Bun · Terminal UI · VS Code · Docker
 [![CI](https://github.com/AyhamJo7/iquantum/actions/workflows/ci.yml/badge.svg)](https://github.com/AyhamJo7/iquantum/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-<img src=".github/assets/iquantum.png" alt="iquantum terminal interface" width="800" />
+<img src=".github/assets/banner.png" alt="iquantum" width="800" />
 
 </div>
 
