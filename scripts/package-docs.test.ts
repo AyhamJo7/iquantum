@@ -2,9 +2,9 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { copyPackageDocs, PACKAGE_DOC_FILES } from "../../scripts/package-docs";
+import { copyPackageDocs, PACKAGE_DOC_FILES } from "./package-docs";
 
-const repoRoot = resolve(__dirname, "../..");
+const repoRoot = resolve(__dirname, "..");
 const tempDirs: string[] = [];
 
 afterEach(async () => {
