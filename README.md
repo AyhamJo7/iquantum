@@ -37,6 +37,12 @@ package registry versions can differ from the checked-out source.
 | Extensible workflows | MCP tools, hooks, skills and Anthropic or OpenAI-compatible providers |
 | Multiple clients | Ink terminal UI and VS Code client connected to the same daemon |
 
+## Screenshot
+
+<p align="center">
+  <img src=".github/assets/iquantum.png" alt="iquantum terminal interface" width="800" />
+</p>
+
 ## Quick start
 
 Requirements: **Bun 1.3+**, npm, Git, a reachable Docker daemon for local sandbox
