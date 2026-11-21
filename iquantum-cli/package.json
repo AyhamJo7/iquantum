@@ -1,12 +1,34 @@
 {
   "name": "@iquantum/cli",
   "version": "4.0.0-alpha.2",
+  "description": "An inspectable AI coding workflow: plan, implement, validate.",
+  "license": "Apache-2.0",
+  "author": "Ayham Joumran",
+  "homepage": "https://github.com/AyhamJo7/iquantum#readme",
+  "bugs": {
+    "url": "https://github.com/AyhamJo7/iquantum/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AyhamJo7/iquantum.git",
+    "directory": "iquantum-cli"
+  },
+  "keywords": [
+    "ai-coding-agent",
+    "llm",
+    "cli",
+    "terminal",
+    "devtools",
+    "docker",
+    "mcp"
+  ],
   "type": "module",
   "bin": {
     "iq": "dist/bin.js"
   },
   "files": [
-    "dist/"
+    "dist/",
+    "NOTICE"
   ],
   "engines": {
     "bun": ">=1.3"

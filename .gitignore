@@ -1,6 +1,10 @@
 node_modules/
 dist/
 iquantum-cli/dist/
+# Copied from the repo root by scripts/build-dist.ts so the npm tarball ships them
+iquantum-cli/README.md
+iquantum-cli/LICENSE
+iquantum-cli/NOTICE
 coverage/
 .env
 .DS_Store

@@ -48,6 +48,7 @@ export default defineConfig({
       "packages/**/*.test.ts",
       "iquantum-daemon/**/*.test.ts",
       "iquantum-cli/**/*.test.ts",
+      "scripts/**/*.test.ts",
     ],
   },
 });

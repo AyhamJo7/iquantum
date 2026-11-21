@@ -12,6 +12,7 @@
 import { chmod, copyFile, mkdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { copyPackageDocs, PACKAGE_DOC_FILES } from "./package-docs";
 
 const root = join(import.meta.dir, "..");
 const cliDir = join(root, "iquantum-cli");
@@ -109,5 +110,9 @@ console.log(`  built dist/bin.js (${cliSize} KB)`);
 
 // 7. Make bin executable
 await chmod(join(distDir, "bin.js"), 0o755);
+
+// 8. Ship README, LICENSE and NOTICE in the tarball (publish runs from iquantum-cli/)
+await copyPackageDocs(root, cliDir);
+console.log(`  copied ${PACKAGE_DOC_FILES.join(", ")} into iquantum-cli/`);
 
 console.log(`Done. dist/ is ready for npm publish.`);
